@@ -46,7 +46,8 @@ Requires macOS 13 or newer (Apple silicon and Intel).
 
 1. Download `Squire-<version>.zip` from the
    [latest release](https://github.com/phifogg/squire-gear/releases/latest) and unzip it.
-2. Move `Squire.app` to `/Applications` and open it.
+2. Move `Squire.app` to `/Applications` and open it. If your account cannot write to
+   `/Applications` (no admin rights), `~/Applications` works the same way.
 3. Allow notifications when macOS asks.
 
 **The app is not notarized yet.** It is signed ad hoc, not with an Apple Developer ID, so macOS
