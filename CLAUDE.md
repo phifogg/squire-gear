@@ -21,11 +21,14 @@ squire.py          Python core: device discovery, battery queries, CLI
                    backends: hidapi on macOS, /dev/hidraw directly on Linux (HidrawBackend, stdlib only)
 test_squire.py     unit tests with a fake HID device, no hardware needed (imports squire as rb)
 test_squire_tray.py  tests for the Linux tray logic (no GTK needed)
+test_squire_settings.py  tests for the Linux settings window logic (no GTK needed)
 protocol.json      real replies captured from hardware = shared test vectors (Python and Swift tests read it)
 install.sh         on Linux hands over to linux/install.sh. macOS: venv + hidapi into ~/Library/Application Support/squire-gear, writes SwiftBar plugin
                    squire-gear.5m.sh (runs --swiftbar --notify) with xbar metadata
 README.md          English, public
-linux/             squire_tray.py (AppIndicator + GTK 3 top bar app: one indicator, shield icon from
+linux/             squire_settings.py (GTK 4 + libadwaita settings window, own process, opened from the tray's
+                   "Settings…"; read-only so far; --demo shows protocol.json captures, --screenshot PATH [ZONE]
+                   saves a PNG and quits), squire_tray.py (AppIndicator + GTK 3 top bar app: one indicator, shield icon from
                    linux/icons/ + text label "⌨︎ 78%  🖱︎ 80%" with U+FE0E so no colour emoji; same menu items
                    as the Mac popover; one indicator = one menu, so never split it per device), install.sh (to ~/.local/share/squire-gear, launcher, ~/.local/bin/
                    squire, asks before sudo for the udev rule), 70-squire-gear.rules (uaccess, vendor ifaces),
@@ -55,6 +58,7 @@ Linux: system python3 is fine (no hidapi needed):
 python3 squire.py --list / --debug             # from the repo
 python3 linux/squire_tray.py --debug           # tray app from the repo, prints each read
 python3 squire.py --settings [--json] [--debug] # mouse DPI / LEDs / sensor / power, read-only
+python3 linux/squire_settings.py [--demo]       # settings window from the repo (--demo: no device access)
 ./linux/install.sh [--no-udev] [--no-start]    # install for the current user
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
@@ -64,11 +68,13 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   Linux first (owner's decision 2026-11-10). Helping falchion-light with PRs stays welcome, but Squire has its own
   configuration too; both use the same protocol facts.
 - Linux settings window: a separate GTK 4 + libadwaita process (`squire-settings`), started from the tray menu.
+  squire.device_lock() (flock in XDG_RUNTIME_DIR) keeps tray, window and CLI from interleaving requests.
   The tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process. All three are on Ubuntu 26.04 by default.
 - Settings UI (proposal agreed in direction): devices listed on the left; the selected device drawn in the middle
   (own neutral artwork) with clickable zones and callouts; settings for the selected zone on the right; an apply bar
   with "Show bytes", Revert and Apply. Keris II Origin LED zones: scroll wheel, logo, side (G-Helper calls the side
-  zone "Underglow"; the mouse has no light underneath).
+  zone "Underglow"; the mouse has no light underneath). The DPI button is on the underside: the top-view
+  drawing has no DPI hotspot; DPI is a chip below it, like sensor and power.
 - Writes only via an allowlist in SquireCore: command model with an `isWrite` flag, the transport refuses
   anything not on the allowlist, tests assert the exact bytes, `--dry-run` prints bytes without sending.
 - Order of work: (1) read-only queries for current DPI / stages / LED state, (2) find the write bytes in public
@@ -160,6 +166,11 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] Device configuration (0.3), Linux first, then macOS; see Direction. First step: branch `mouse-read`
       (read current DPI / LED / sensor settings of the Keris II Origin)
 - [x] Linux top bar app (0.2.1, `linux/`): hidraw backend, AppIndicator tray, udev rule, installer
+- [ ] Settings window polish (collect small UI findings here, work through them before or with the write step):
+  - [x] DPI button is on the underside: no hotspot on the top view, DPI is a chip (2026-11-10)
+  - [x] No colour row for multi-colour effects (cycle, rainbow, battery) (2026-11-10)
+  - [ ] Design proposal artifact still shows the DPI button on top (the app is the reference now)
+  - [ ] Polling rate: confirm 1000 vs 8000 Hz in Armoury Crate (raw 0x63), then drop the "not confirmed" note
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

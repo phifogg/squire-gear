@@ -134,6 +134,21 @@ def set_launch_at_login(enabled: bool, path: Path = AUTOSTART_FILE) -> bool:
     return path.exists()
 
 
+def settings_command() -> list[str]:
+    """The settings window (GTK 4) runs as its own process; it sits next to this script."""
+    return [sys.executable, str(Path(__file__).resolve().parent / "squire_settings.py")]
+
+
+def open_settings() -> None:
+    import subprocess
+    try:
+        # Adw.Application is single-instance: a second start raises the open window
+        subprocess.Popen(settings_command(), start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as error:
+        print(f"squire: cannot open settings: {error}", file=sys.stderr)
+
+
 def unsnap_environment() -> None:
     """Started from a snap (e.g. the VS Code terminal), GTK 3 picks up the snap's GSettings schemas and
     aborts. Restore the session's own values before GTK loads."""
@@ -222,6 +237,11 @@ def run() -> int:
                     self.menu.append(item)
                     self.rows[device].append(item)
                 self.menu.append(Gtk.SeparatorMenuItem())
+
+            settings_item = Gtk.MenuItem(label="Settings…")
+            settings_item.connect("activate", lambda _: open_settings())
+            self.menu.append(settings_item)
+            self.menu.append(Gtk.SeparatorMenuItem())
 
             self.notify_item = Gtk.CheckMenuItem(label="Notify when low")
             self.notify_item.connect("toggled", self.on_notify)

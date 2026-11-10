@@ -328,6 +328,33 @@ class HidrawBackend:
         return HidrawDevice()
 
 
+class device_lock:
+    """Serialises device sessions between Squire processes (tray, settings window, CLI) for this user.
+
+    Each process gets its own copy of every reply, so this is about keeping request/reply pairs together,
+    not about safety. Best effort: if the lock file cannot be created, run without it."""
+
+    def __init__(self, path: Optional[Path] = None):
+        runtime = os.environ.get("XDG_RUNTIME_DIR")
+        self.path = path or (Path(runtime) if runtime else state_dir()) / "squire-gear-device.lock"
+        self.handle = None
+
+    def __enter__(self):
+        try:
+            import fcntl
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.handle = open(self.path, "w")
+            fcntl.flock(self.handle, fcntl.LOCK_EX)   # waits; a session takes about a second at most
+        except (ImportError, OSError):
+            self.handle = None
+        return self
+
+    def __exit__(self, *exc):
+        if self.handle is not None:
+            self.handle.close()   # closing releases the lock
+        return False
+
+
 def load_backend():
     if IS_LINUX:
         return HidrawBackend()
@@ -351,6 +378,11 @@ def enumerate_paths(hid, pid: int) -> list[bytes]:
 
 
 def read_all(debug: bool = False, hid=None) -> list[Battery]:
+    with device_lock():
+        return _read_all(debug, hid)
+
+
+def _read_all(debug: bool = False, hid=None) -> list[Battery]:
     hid = hid or load_backend()
     found: dict[str, Battery] = {}
     for target in TARGETS:
@@ -465,6 +497,11 @@ def read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
     """Current settings of the Keris II Origin (active profile only; never switches profiles).
 
     Sends only the read commands in MOUSE_SETTINGS_QUERIES plus the battery query."""
+    with device_lock():
+        return _read_mouse_settings(debug, hid)
+
+
+def _read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
     hid = hid or load_backend()
     result = MouseSettings("ROG Keris II Origin", "", status="not-found")
     for target in (t for t in TARGETS if t.device == "mouse"):

@@ -145,7 +145,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_launchers_point_to_installed_files(self):
         dsts = {dst for dst, _ in self.contents}
-        for launcher in ("squire", "squire-tray"):
+        for launcher in ("squire", "squire-tray", "squire-settings"):
             text = (self.ROOT / "linux/packaging" / launcher).read_text()
             target = text.split("/usr/bin/python3 ")[1].split()[0]
             self.assertIn(target, dsts)

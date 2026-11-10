@@ -1,0 +1,3 @@
+#!/bin/sh
+# Squire settings window (packaged, GTK 4 + libadwaita). Read-only for now.
+exec /usr/bin/python3 /usr/share/squire-gear/squire_settings.py "$@"

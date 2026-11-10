@@ -462,6 +462,24 @@ class ReadMouseSettingsTests(unittest.TestCase):
 
 
 
+class DeviceLockTests(unittest.TestCase):
+    def test_second_process_waits_for_the_first(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock"
+            code = ("import fcntl,sys; f=open(sys.argv[1],'w'); "
+                    "fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)")
+            with rb.device_lock(path):
+                busy = subprocess.run([sys.executable, "-c", code, str(path)], capture_output=True)
+            free = subprocess.run([sys.executable, "-c", code, str(path)], capture_output=True)
+            self.assertNotEqual(busy.returncode, 0)
+            self.assertEqual(free.returncode, 0)
+
+    def test_unusable_lock_path_does_not_block_reading(self):
+        with rb.device_lock(Path("/proc/forbidden/lock")) as lock:
+            self.assertIsNone(lock.handle)
+
+
 class LowBatteryNotificationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
