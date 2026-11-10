@@ -1,0 +1,8 @@
+# Squire (squire-gear): let the logged-in user read the battery of ROG keyboard and mouse without root.
+# Only the vendor-defined HID interfaces are opened; the keyboard and mouse input interfaces are untouched.
+# ROG Omni receiver, interface 2 (vendor pages ff00-ff02)
+ACTION=="add|change", SUBSYSTEM=="hidraw", ENV{ID_VENDOR_ID}=="0b05", ENV{ID_MODEL_ID}=="1ace", ENV{ID_USB_INTERFACE_NUM}=="02", TAG+="uaccess"
+# ROG Falchion RX Low Profile on the USB cable, interface 1 (ff00)
+ACTION=="add|change", SUBSYSTEM=="hidraw", ENV{ID_VENDOR_ID}=="0b05", ENV{ID_MODEL_ID}=="1b04", ENV{ID_USB_INTERFACE_NUM}=="01", TAG+="uaccess"
+# ROG Keris II Origin on the USB cable, interface 0 (ff01)
+ACTION=="add|change", SUBSYSTEM=="hidraw", ENV{ID_VENDOR_ID}=="0b05", ENV{ID_MODEL_ID}=="1c0c", ENV{ID_USB_INTERFACE_NUM}=="00", TAG+="uaccess"

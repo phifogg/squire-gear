@@ -5,3 +5,4 @@ venv/
 *.pcapng
 .DS_Store
 CLAUDE.local.md
+linux/dist/

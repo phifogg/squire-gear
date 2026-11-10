@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import types
@@ -171,20 +172,118 @@ class EnumerateAndReadAllTests(unittest.TestCase):
                 test.devices.setdefault("all", []).append(dev)
                 return dev
 
-        sys.modules["hid"] = FakeHid("hid")
-
-    def tearDown(self):
-        sys.modules.pop("hid", None)
+        self.hid = FakeHid("hid")
 
     def test_paths_dedupe_and_skip_input_collections(self):
-        import hid
-        self.assertEqual(rb.enumerate_paths(hid, rb.PID_OMNI), [b"omni-if2"])
+        self.assertEqual(rb.enumerate_paths(self.hid, rb.PID_OMNI), [b"omni-if2"])
 
     def test_read_all_via_omni(self):
-        results = rb.read_all()
+        results = rb.read_all(hid=self.hid)
         self.assertEqual([(b.device, b.percent) for b in results], [("keyboard", 90), ("mouse", 12)])
         self.assertTrue(all(d.closed for d in self.devices["all"]))
         self.assertTrue(all(d.path == b"omni-if2" for d in self.devices["all"]))
+
+
+# Report descriptors read from /sys/class/hidraw/*/device/report_descriptor on Linux (Omni receiver)
+OMNI_IF2_DESCRIPTOR = bytes.fromhex(
+    "0602ff0901a101850109027508953f150026ff00810209037508953f150026ff009102c0"
+    "0600ff0901a101850209027508953f150026ff00810209037508953f150026ff009102c0"
+    "0601ff0901a101850309027508953f150026ff00810209037508953f150026ff009102c0")
+OMNI_IF0_DESCRIPTOR = bytes.fromhex(  # boot keyboard: must never be opened
+    "05010906a10185010508150025011901290595057501910295017503910305071500250119e029e775019508810275"
+    "08950181010507150026ff0019002998750895068100c005010906a101850275019598150025010507190029988102c0")
+
+
+class DescriptorTests(unittest.TestCase):
+    def test_omni_vendor_interface(self):
+        self.assertEqual(rb.descriptor_collections(OMNI_IF2_DESCRIPTOR),
+                         [(0xFF02, 1), (0xFF00, 1), (0xFF01, 1)])
+
+    def test_omni_keyboard_interface(self):
+        self.assertEqual(rb.descriptor_collections(OMNI_IF0_DESCRIPTOR), [(1, 6), (1, 6)])
+
+    def test_nested_collections_are_not_top_level(self):
+        # page ff00, usage 1, collection(app) { usage 2, collection(logical) {} }, end
+        d = bytes.fromhex("0600ff0901a1010902a102c0c0")
+        self.assertEqual(rb.descriptor_collections(d), [(0xFF00, 1)])
+
+    def test_extended_usage_carries_its_own_page(self):
+        d = bytes.fromhex("0b06000100a101c0")  # usage 0x0001:0006 (4-byte), collection
+        self.assertEqual(rb.descriptor_collections(d), [(1, 6)])
+
+    def test_truncated_descriptor_does_not_crash(self):
+        self.assertEqual(rb.descriptor_collections(b"\x06\x00"), [])
+
+
+class HidrawBackendTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.sysfs = self.root / "sys" / "class" / "hidraw"
+        self.add_node(7, 0x1ACE, 0, OMNI_IF0_DESCRIPTOR)
+        self.add_node(9, 0x1ACE, 2, OMNI_IF2_DESCRIPTOR)
+        self.add_node(12, 0x1C0C, 0, bytes.fromhex("05010902a101c0" "0601ff0901a101c0"))  # mixed
+        self.add_node(3, 0x1939, 2, bytes.fromhex("0672ff09a1a101c0"), vid=0x0B05)
+        self.add_node(1, 0x12E0, 3, OMNI_IF2_DESCRIPTOR, vid=0x1038)
+        self.backend = rb.HidrawBackend(self.sysfs, self.root / "dev")
+
+    def add_node(self, n, pid, iface, descriptor, vid=rb.VID):
+        usb_iface = self.root / "usb" / f"1-1:1.{iface}-{n}"
+        hid_dev = usb_iface / f"0003:{vid:04X}:{pid:04X}.{n:04X}"
+        hid_dev.mkdir(parents=True)
+        (usb_iface / "bInterfaceNumber").write_text(f"{iface:02x}\n")
+        (hid_dev / "uevent").write_text(f"DRIVER=hid-generic\nHID_ID=0003:0000{vid:04X}:0000{pid:04X}\n"
+                                        f"HID_NAME=Test {pid:04x}\n")
+        (hid_dev / "report_descriptor").write_bytes(descriptor)
+        node = self.sysfs / f"hidraw{n}"
+        node.mkdir(parents=True)
+        (node / "device").symlink_to(hid_dev)
+
+    def path(self, n):
+        return str(self.root / "dev" / f"hidraw{n}").encode()
+
+    def test_enumerate_filters_by_vid_pid_and_reads_interface(self):
+        infos = self.backend.enumerate(rb.VID, rb.PID_OMNI)
+        self.assertEqual([(i["path"], i["interface_number"]) for i in infos],
+                         [(self.path(7), 0), (self.path(9), 2)])
+        self.assertEqual(infos[1]["collections"], [(0xFF02, 1), (0xFF00, 1), (0xFF01, 1)])
+        self.assertEqual(len(self.backend.enumerate(rb.VID, 0)), 4)   # not the SteelSeries node
+
+    def test_only_pure_vendor_nodes_are_opened(self):
+        self.assertEqual(rb.enumerate_paths(self.backend, rb.PID_OMNI), [self.path(9)])
+        # interface mixing mouse input and a vendor collection: never opened
+        self.assertEqual(rb.enumerate_paths(self.backend, rb.PID_KERIS_II_ORIGIN), [])
+
+    def test_permission_error_reports_no_access(self):
+        class Denied(FakeDevice):
+            def open_path(self, path):
+                raise PermissionError(13, "Permission denied")
+
+        backend = self.backend
+        backend.device = lambda: Denied([])
+        results = rb.read_all(hid=backend)
+        self.assertEqual([(b.device, b.status) for b in results], [("keyboard", "no-access"), ("mouse", "no-access")])
+
+
+class HidrawDeviceTests(unittest.TestCase):
+    def setUp(self):
+        self.r, self.w = os.pipe()
+        self.dev = rb.HidrawDevice()
+        self.dev.fd = self.r
+        self.addCleanup(os.close, self.w)
+        self.addCleanup(self.dev.close)
+
+    def test_read_returns_one_report(self):
+        os.write(self.w, b"\x02\x12\x01")
+        self.assertEqual(self.dev.read(65, 50), [2, 0x12, 1])
+
+    def test_read_times_out_empty(self):
+        self.assertEqual(self.dev.read(65, 10), [])
+
+    def test_zero_timeout_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.dev.read(65, 0)
 
 
 class LowBatteryNotificationTests(unittest.TestCase):

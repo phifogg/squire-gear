@@ -4,6 +4,10 @@
 # Usage: ./install.sh [SwiftBar-plugin-folder]
 set -euo pipefail
 
+if [ "$(uname -s)" = Linux ]; then
+  exec "$(dirname "$0")/linux/install.sh" "$@"
+fi
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$HOME/Library/Application Support/squire-gear"
 PLUGIN_DIR="${1:-}"

@@ -2,7 +2,8 @@
 
 Squire is a lightweight companion for ASUS ROG peripherals. Version 0.2.0 is a native macOS menu bar app
 (Swift) that shows battery level and charging state of the keyboard and mouse; the original Python script with
-a SwiftBar plugin is kept as a testbed and alternative. Linux support is planned.
+a SwiftBar plugin is kept as a testbed and alternative. 0.2.1 adds a Linux top bar app (Python, AppIndicator)
+on the same Python core; primary Linux target is Ubuntu 26.04 with GNOME.
 Public repo: https://github.com/phifogg/squire-gear (MIT, author Daniel Draes).
 Private working notes (log, contacts, plans) live in `CLAUDE.local.md` (git-ignored, may be missing).
 
@@ -10,17 +11,26 @@ Private working notes (log, contacts, plans) live in `CLAUDE.local.md` (git-igno
 - Keyboard: ASUS ROG Falchion RX Low Profile (wired PID `0b05:1b04`)
 - Mouse: ASUS ROG Keris II Origin (wired PID `0b05:1c0c`)
 - Both also via the ROG Omni receiver `0b05:1ace`
-- Confirmed on macOS: Omni and wired, both devices, Python and Swift. Linux: not tested yet.
+- Confirmed on macOS: Omni and wired, both devices, Python and Swift. Linux (Ubuntu 26.04, GNOME 50): Omni,
+  both devices; wired not tested yet.
 
 ## Layout
 ```
 squire.py          Python core: device discovery, battery queries, CLI
                    (--json, --swiftbar, --notify, --list, --debug, --version)
+                   backends: hidapi on macOS, /dev/hidraw directly on Linux (HidrawBackend, stdlib only)
 test_squire.py     unit tests with a fake HID device, no hardware needed (imports squire as rb)
+test_squire_tray.py  tests for the Linux tray logic (no GTK needed)
 protocol.json      real replies captured from hardware = shared test vectors (Python and Swift tests read it)
-install.sh         macOS: venv + hidapi into ~/Library/Application Support/squire-gear, writes SwiftBar plugin
+install.sh         on Linux hands over to linux/install.sh. macOS: venv + hidapi into ~/Library/Application Support/squire-gear, writes SwiftBar plugin
                    squire-gear.5m.sh (runs --swiftbar --notify) with xbar metadata
 README.md          English, public
+linux/             squire_tray.py (AppIndicator + GTK 3 top bar app: one indicator, shield icon from
+                   linux/icons/ + text label "⌨︎ 78%  🖱︎ 80%" with U+FE0E so no colour emoji; same menu items
+                   as the Mac popover; one indicator = one menu, so never split it per device), install.sh (to ~/.local/share/squire-gear, launcher, ~/.local/bin/
+                   squire, asks before sudo for the udev rule), 70-squire-gear.rules (uaccess, vendor ifaces),
+                   build-packages.sh + packaging/nfpm.yaml (ONE config for .deb and .rpm, arch all; /usr/share/
+                   squire-gear, /usr/bin/squire + squire-tray wrappers, rule in /usr/lib/udev/rules.d)
 macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project (project.yml)
   Sources/SquireCore   pure logic: targets/packets, reply parsing, low-battery rules (Swift Testing tests)
   Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only)
@@ -39,7 +49,13 @@ APP="$HOME/Library/Application Support/squire-gear"
 "$APP/venv/bin/python" "$APP/squire.py" --list   # sends nothing
 "$APP/venv/bin/python" "$APP/squire.py" --debug  # read-only battery queries, raw replies
 ```
-Do not run `squire.py` with system python: it lacks `hidapi`. Use the venv.
+macOS: do not run `squire.py` with system python: it lacks `hidapi`. Use the venv.
+Linux: system python3 is fine (no hidapi needed):
+```sh
+python3 squire.py --list / --debug             # from the repo
+python3 linux/squire_tray.py --debug           # tray app from the repo, prints each read
+./linux/install.sh [--no-udev] [--no-start]    # install for the current user
+```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
 ## Direction
@@ -60,7 +76,12 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   command that writes to a device (lighting, sleep timeout, etc.) must be shown to the owner
   before it is sent, and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
-  keyboard/mouse input collections.
+  keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
+  *every* top-level collection in its report descriptor is vendor-defined (Omni iface 3 mixes them: skipped).
+- Linux: do not use Ubuntu's `python3-hid`/hidapi: it is the libusb backend (no usage pages, detaches
+  kernel drivers). Use HidrawBackend.
+- Linux GUI: the VS Code snap injects GSETTINGS_SCHEMA_DIR etc., which makes GTK 3 abort;
+  `unsnap_environment()` restores the session values before GTK loads. Keep it.
 - hidapi: `read(n, 0)` blocks forever. Always pass a timeout > 0 (tests assert this).
 - IOKit (Swift): never reuse an IOHIDDevice for more than one query. Report callbacks live in a per-device
   set and unregistering (nil callback, with or without the context) does not remove them, so a reused object
@@ -95,6 +116,8 @@ Wired mouse: write `00 12 07` as 65 bytes (the 64-byte fallback is not needed bu
 the vendor collection is interface 0, usage page ff01. Reply has no report ID, same layout as Omni;
 [7..8] = LE mV (~4167 while charging).
 IOKit: unnumbered report = report ID 0 with the leading 00 dropped (64-byte payload).
+Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
+ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).
 Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.cs`,
 `app/Peripherals/Mouse/AsusMouse.cs`, `Models/KerisIIOrigin.cs`.
 
@@ -116,9 +139,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] Backlog (Swift app): optional icon-only menu bar mode (a single Squire icon instead of one entry
       per device; setting in the popover, maybe tint/badge when a device is low)
 - [ ] Device configuration on macOS (0.3), see Direction
-- [ ] Linux support (folder `linux/`): udev rule for `0b05:1ace` (and the wired PIDs), check whether hidapi
-      on Linux reports usage pages (the vendor-page filter may need adjusting), Waybar/Polybar module
-      using `--json`
+- [x] Linux top bar app (0.2.1, `linux/`): hidraw backend, AppIndicator tray, udev rule, installer
+- [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
+      is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects
@@ -132,6 +155,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - The app is not notarized (ad-hoc signed, no Developer ID). Build: `macos/scripts/build-release.sh`
   -> `macos/dist/Squire-<version>.zip` (+ .sha256), universal. Attach both to the GitHub release.
 - Unverified: launch at login from a downloaded copy after logout/restart.
+- Linux: `linux/build-packages.sh` (needs nfpm) -> `linux/dist/squire-gear_<v>-1_all.deb` and
+  `squire-gear-<v>-1.noarch.rpm` (+ .sha256). Attach to the same release. rpm not tested on Fedora yet.
 ```sh
 git tag -a vX.Y.Z -m "Squire X.Y.Z" && git push origin vX.Y.Z
 gh release create vX.Y.Z --title "Squire X.Y.Z" --notes "..." macos/dist/Squire-X.Y.Z.zip macos/dist/Squire-X.Y.Z.zip.sha256

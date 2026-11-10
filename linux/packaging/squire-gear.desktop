@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Squire
+Comment=Battery of ROG keyboard and mouse in the top bar
+Exec=squire-tray
+Icon=squire-gear
+Terminal=false
+Categories=Utility;
+Keywords=battery;keyboard;mouse;ROG;ASUS;

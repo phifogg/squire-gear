@@ -1,0 +1,3 @@
+#!/bin/sh
+# Squire command line (packaged): battery of ROG keyboard and mouse, read-only.
+exec /usr/bin/python3 /usr/share/squire-gear/squire.py "$@"

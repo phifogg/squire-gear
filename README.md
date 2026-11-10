@@ -1,9 +1,9 @@
 # Squire
 
-**A lightweight companion for ASUS ROG peripherals on macOS.**
+**A lightweight companion for ASUS ROG peripherals on macOS and Linux.**
 
 Squire shows the battery level of the **ASUS ROG Falchion RX Low Profile** keyboard and the
-**ASUS ROG Keris II Origin** mouse in the macOS menu bar, without Armoury Crate.
+**ASUS ROG Keris II Origin** mouse in the macOS menu bar or the Linux top bar, without Armoury Crate.
 Like a squire looking after a knight's blades, it keeps an eye on your Falchion and Keris.
 
 ```
@@ -16,19 +16,22 @@ Like a squire looking after a knight's blades, it keeps an eye on your Falchion 
 - Works through the **ROG Omni receiver**, so both devices can share one dongle, and over the
   **USB cable**; a device on the cable is picked up automatically
 - Menu bar item plus a popover with battery bars, connection and warning level
-- **Low-battery notification:** one macOS notification per device when it reaches the warning
+- **Low-battery notification:** one notification per device when it reaches the warning
   level configured on the device itself, reset after charging
 - Optional launch at login
 - **Read-only:** sends only the two battery query commands. It never changes lighting,
   settings or firmware.
 - Opens only vendor-defined HID collections, never the regular keyboard or mouse input
-- No Python, Homebrew or SwiftBar needed
+- macOS: no Python, Homebrew or SwiftBar needed. Linux: only packages that Ubuntu ships by default
 
 ## Status
 
-Version 0.2.0. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
+Version 0.2.1. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
 Battery percentage and charging state are confirmed for both devices, connected through the
 Omni receiver and over a USB cable.
+
+Linux (new in 0.2.1) is tested on Ubuntu 26.04 with GNOME, through the Omni receiver. The USB
+cable connection is not tested on Linux yet.
 
 The warning level for the notification is read from the device's reply (20 % on both test
 devices). It is not yet confirmed that this level follows changes made in Armoury Crate; if a
@@ -39,8 +42,12 @@ Not tested yet:
 - Other ROG keyboards and mice. They may work if they use the same protocol, but the
   device IDs are not included.
 - Launch at login from a downloaded copy of the app.
+- Linux: wired keyboard and mouse, desktops other than GNOME (KDE Plasma should work, it
+  supports the same tray protocol).
 
 ## Installation
+
+### macOS
 
 Requires macOS 13 or newer (Apple silicon and Intel).
 
@@ -75,7 +82,14 @@ cd squire-gear/macos
 ./scripts/build-release.sh          # universal build, writes dist/Squire-<version>.zip
 ```
 
-For a quick local build and run:
+Linux packages (.deb and .rpm from one [nfpm](https://nfpm.goreleaser.com) config,
+`linux/packaging/nfpm.yaml`):
+
+```sh
+linux/build-packages.sh             # writes linux/dist/*.deb and *.rpm with .sha256 files
+```
+
+For a quick local build and run on macOS:
 
 ```sh
 cd macos
@@ -87,6 +101,61 @@ open .build/xcode/Build/Products/Debug/Squire.app
 
 `swift run squire-probe` prints what IOKit sees and the parsed batteries without starting the
 app. `swift test` runs the core tests.
+
+### Linux
+
+Tested on Ubuntu 26.04 (GNOME). Download the package for your distribution from the
+[latest release](https://github.com/phifogg/squire-gear/releases/latest) and install it:
+
+```sh
+sudo apt install ./squire-gear_<version>-1_all.deb       # Ubuntu, Debian
+sudo dnf install ./squire-gear-<version>-1.noarch.rpm    # Fedora (not tested yet)
+```
+
+Then start **Squire** from the app grid. The package installs the dependencies, the commands
+`squire` (command line) and `squire-tray` (top bar app) and a udev rule
+(`/usr/lib/udev/rules.d/70-squire-gear.rules`) that lets the logged-in user read the vendor
+interfaces of the Omni receiver and the wired devices without root. The keyboard and mouse input
+interfaces stay untouched. On Fedora, GNOME also needs the
+[AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) for
+the top bar icon; Ubuntu enables it by default.
+
+#### From source
+
+Needs `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-ayatanaappindicator3-0.1` and `libnotify-bin`;
+Ubuntu Desktop has them installed, and the installer tells you if one is missing.
+
+```sh
+git clone https://github.com/phifogg/squire-gear.git
+cd squire-gear
+./linux/install.sh
+```
+
+The installer copies Squire to `~/.local/share/squire-gear/`, adds a **Squire** launcher to the
+app grid and the command `~/.local/bin/squire`, and starts the app. It asks before it uses `sudo`
+for one thing: the udev rule `/etc/udev/rules.d/70-squire-gear.rules`, which lets the logged-in
+user read the vendor interfaces of the Omni receiver and the wired devices without root. The
+keyboard and mouse input interfaces stay untouched.
+
+Squire shows one entry in the top bar, a small shield followed by both devices
+(`⌨ 78%  🖱 80%`), like the macOS menu bar. Its menu has battery bars, connection, warning level, **Notify when low**, **Launch at login**,
+**Refresh now** and **Quit**, plus a **Debug** submenu (notification service, last update, test
+notification). It reads the devices every 60 seconds. On GNOME the top bar icons need the
+AppIndicator extension, which Ubuntu enables by default.
+
+On Linux Squire talks to `/dev/hidraw*` directly and needs no `hidapi`. It only opens a hidraw
+node if every collection in its report descriptor is vendor-defined.
+
+Use either the package or `install.sh`, not both.
+
+To uninstall the package: `sudo apt remove squire-gear` (or `sudo dnf remove squire-gear`).
+To uninstall the `install.sh` version: turn off **Launch at login**, quit Squire, then
+
+```sh
+rm -r ~/.local/share/squire-gear ~/.local/bin/squire ~/.local/share/applications/squire-gear.desktop
+rm ~/.local/share/icons/hicolor/*/apps/squire-gear.png
+sudo rm /etc/udev/rules.d/70-squire-gear.rules
+```
 
 ## Alternative: command line and SwiftBar
 
@@ -109,7 +178,7 @@ folder to the same path. The plugin runs `squire.py --swiftbar --notify`; allow 
 for SwiftBar when macOS asks. In this version the menu bar text is orange below 30 %, red
 below 15 %, and a dash when a device is asleep or off.
 
-Command line:
+Command line (on Linux: `~/.local/bin/squire` with the same options, no virtual environment):
 
 ```sh
 APP="$HOME/Library/Application Support/squire-gear"
@@ -130,6 +199,9 @@ APP="$HOME/Library/Application Support/squire-gear"
 | No low-battery notification | System Settings → Notifications: allow Squire (or SwiftBar for the plugin) |
 | Python: `Python module 'hid' is missing` | Run the script with the installed Python (see above), or run `install.sh` again |
 | Python: `open … failed` in `--debug` | System Settings → Privacy & Security → **Input Monitoring**: allow Terminal or SwiftBar |
+| Linux: "No access: install the udev rule" | Run `./linux/install.sh` again and allow the udev rule, then re-plug the receiver |
+| Linux: no icons in the top bar | GNOME needs the AppIndicator extension (`gnome-extensions list --enabled` should show `ubuntu-appindicators@ubuntu.com`) |
+| Linux: app does not start from the VS Code snap terminal | Squire cleans the snap environment itself; if it still fails, start it from the app grid |
 
 ## Protocol
 
@@ -157,7 +229,7 @@ captures above. G-Helper is GPL-3.0; this project uses only those protocol facts
 No hardware needed:
 
 ```sh
-python3 -m unittest -v        # Python
+python3 -m unittest -v        # Python core and Linux tray app
 cd macos && swift test        # Swift core, reads the same protocol.json
 ```
 
@@ -167,7 +239,7 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode
 - Notarized builds, depending on interest
-- Linux support
+- Linux: Waybar/Polybar module using `--json`, a PPA for automatic updates
 - Other ROG devices (send `--list` / `--debug` output or `swift run squire-probe` output to help)
 
 ## Disclaimer

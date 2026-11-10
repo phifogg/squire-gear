@@ -1,5 +1,5 @@
 {
-  "_comment": "Real replies captured 2026-11-10 on macOS via ROG Omni receiver (pid 1ace, interface 2). Byte indices in 'notes' include the report-ID byte at [0]. Shared test vectors for the Linux (Python) and macOS (Swift) apps.",
+  "_comment": "Real replies captured 2026-11-10 on macOS (and Linux where noted) via ROG Omni receiver (pid 1ace, interface 2). Byte indices in 'notes' include the report-ID byte at [0]. Shared test vectors for the Linux (Python) and macOS (Swift) apps.",
   "vectors": [
     {
       "device": "keyboard",
@@ -84,6 +84,20 @@
         "low_warning": 20
       },
       "notes": "Captured 2026-11-10 on macOS, USB cable (pid 1c0c). Vendor collection is interface 0, usage page ff01 (not interface 2 as on the Omni receiver). Written as 00 12 07 (65 bytes, accepted first try; no 64-byte fallback needed); reply has NO report ID, 64 bytes, echo starts at [0]. Indices relative to the echoed command: [4]=76 %, [5]=02 auto power-off step, [6]=0x14 low-battery warning 20 %, [7..8]=0x1047 4167 mV while charging, [9]=01 charging, [11]=01 unknown. Omni returned ff aa for the mouse at the same time."
+    },
+    {
+      "device": "mouse",
+      "model": "ROG Keris II Origin",
+      "connection": "omni",
+      "report_id": 3,
+      "query": "12 07",
+      "reply": "03 12 07 00 00 50 02 14 a8 0f 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "expect": {
+        "percent": 80,
+        "charging": false,
+        "low_warning": 20
+      },
+      "notes": "Captured 2026-11-10 on Linux (Ubuntu 26.04, kernel 7.0) via /dev/hidraw, ROG Omni receiver interface 2 (one hidraw node with three top-level collections ff02/ff00/ff01). Written as 03 12 07 (64 bytes); reply includes the report ID like hidapi on macOS. [5]=80 %, [7]=0x14 warning 20 %, [8..9]=0x0fa8 4008 mV?, [10]=00 not charging. Same keyboard reply as the first vector (78 %) at the same time."
     }
   ]
 }

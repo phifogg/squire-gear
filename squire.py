@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Squire: read-only battery monitor for ASUS ROG Falchion RX Low Profile + Keris II Origin on macOS.
+"""Squire: read-only battery monitor for ASUS ROG Falchion RX Low Profile + Keris II Origin (macOS, Linux).
 
 Only sends the two documented *query* commands (keyboard 12 01, mouse 12 07).
 It never changes lighting, settings or firmware.
@@ -9,12 +9,16 @@ Protocol facts (byte positions relative to the echoed command, i.e. without repo
   mouse     12 07 -> [4]  battery %, [9] charging, [6] low-battery warning %
   error reply: ff aa (device asleep / command not supported)
 Source: G-Helper (GPL-3.0) app/Peripherals/{Keyboard,Mouse}; facts only, no code copied.
+
+Backends: hidapi on macOS; on Linux /dev/hidraw* directly (standard library only), because Ubuntu's hidapi
+package uses libusb, which reports no usage pages and would have to detach kernel drivers.
 """
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 import argparse
 import json
 import os
+import select
 import subprocess
 import sys
 import time
@@ -33,7 +37,16 @@ READ_TIMEOUT_MS = 400
 DRAIN_TIMEOUT_MS = 5   # hidapi: timeout 0 means "block forever", so never pass 0
 MAX_READS = 8
 DEFAULT_LOW_WARNING = 20   # used when a device does not report a plausible warning level
-STATE_FILE = Path.home() / "Library" / "Application Support" / "squire-gear" / "notified.json"
+IS_LINUX = sys.platform.startswith("linux")
+
+
+def state_dir() -> Path:
+    if IS_LINUX:
+        return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "squire-gear"
+    return Path.home() / "Library" / "Application Support" / "squire-gear"
+
+
+STATE_FILE = state_dir() / "notified.json"
 
 
 @dataclass
@@ -43,7 +56,7 @@ class Battery:
     connection: str          # "omni" | "wired"
     percent: Optional[int]   # None = not reachable
     charging: bool = False
-    status: str = "ok"       # ok | asleep | no-response | error
+    status: str = "ok"       # ok | asleep | no-response | no-access | error
     low_warning: Optional[int] = None  # device-configured low-battery warning level in %
     raw: str = ""
 
@@ -159,6 +172,125 @@ def query(dev, target: Target, debug: bool = False) -> Battery:
     return result
 
 
+# --- Linux: hidraw backend -------------------------------------------------------------------------------
+
+def descriptor_collections(descriptor: bytes) -> list[tuple[int, int]]:
+    """(usage page, usage) of each top-level collection in a HID report descriptor."""
+    result, page, usage, usage_size, depth, stack, i = [], 0, None, 0, 0, [], 0
+    while i < len(descriptor):
+        prefix = descriptor[i]
+        if prefix == 0xFE:  # long item: [FE, size, tag, data...]
+            i += 3 + (descriptor[i + 1] if i + 1 < len(descriptor) else 0)
+            continue
+        size = (0, 1, 2, 4)[prefix & 0x03]
+        data = descriptor[i + 1:i + 1 + size]
+        value = int.from_bytes(data, "little")
+        kind, tag = (prefix >> 2) & 0x03, prefix >> 4
+        i += 1 + size
+        if kind == 1:            # global
+            if tag == 0x0:
+                page = value
+            elif tag == 0xA:
+                stack.append(page)
+            elif tag == 0xB and stack:
+                page = stack.pop()
+        elif kind == 2:          # local
+            if tag == 0x0 and usage is None:
+                usage, usage_size = value, size
+        elif kind == 0:          # main
+            if tag == 0xA:
+                if depth == 0:
+                    if usage is not None and usage_size == 4:
+                        result.append((usage >> 16, usage & 0xFFFF))  # usage carries its own page
+                    else:
+                        result.append((page, usage or 0))
+                depth += 1
+            elif tag == 0xC:
+                depth = max(0, depth - 1)
+            usage = None         # local items end at every main item
+    return result
+
+
+class HidrawDevice:
+    """Same small interface as hidapi's device (open_path/write/read/close), on a /dev/hidraw node."""
+
+    def __init__(self):
+        self.fd: Optional[int] = None
+
+    def open_path(self, path) -> None:
+        self.fd = os.open(path, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+
+    def write(self, data) -> int:
+        # first byte is the report ID, 0 for unnumbered reports (stripped by the kernel), like hidapi
+        return os.write(self.fd, bytes(data))
+
+    def read(self, size: int, timeout_ms: int) -> list:
+        if timeout_ms <= 0:
+            raise ValueError("timeout must be > 0")  # same rule as with hidapi: never block forever
+        ready, _, _ = select.select([self.fd], [], [], timeout_ms / 1000)
+        if not ready:
+            return []
+        try:
+            return list(os.read(self.fd, size))
+        except BlockingIOError:
+            return []
+
+    def close(self) -> None:
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+class HidrawBackend:
+    """hidapi-like enumerate()/device() for Linux. One entry per hidraw node (= one USB interface).
+
+    usage_page is the *lowest* top-level page, so a node that mixes vendor and input collections is
+    filtered out by enumerate_paths(): we never open a node that also carries keyboard or mouse input."""
+
+    def __init__(self, sysfs: Path = Path("/sys/class/hidraw"), dev: Path = Path("/dev")):
+        self.sysfs, self.dev = sysfs, dev
+
+    def enumerate(self, vid: int = 0, pid: int = 0) -> list[dict]:
+        infos = []
+        nodes = sorted(self.sysfs.glob("hidraw*"), key=lambda n: int(n.name[6:] or 0))
+        for node in nodes:
+            try:
+                uevent = dict(line.split("=", 1) for line in
+                              (node / "device" / "uevent").read_text().splitlines() if "=" in line)
+                _, v, p = uevent.get("HID_ID", "0:0:0").split(":")
+                v, p = int(v, 16), int(p, 16)
+                if (vid and v != vid) or (pid and p != pid):
+                    continue
+                collections = descriptor_collections((node / "device" / "report_descriptor").read_bytes())
+            except (OSError, ValueError):
+                continue
+            try:
+                iface = int((node / "device" / ".." / "bInterfaceNumber").read_text().strip(), 16)
+            except (OSError, ValueError):
+                iface = -1
+            pages = [page for page, _ in collections]
+            infos.append({
+                "path": os.fsencode(self.dev / node.name),
+                "vendor_id": v, "product_id": p, "interface_number": iface,
+                "usage_page": min(pages) if pages else 0,
+                "usage": collections[0][1] if collections else 0,
+                "collections": collections,
+                "product_string": uevent.get("HID_NAME", ""),
+            })
+        return infos
+
+    @staticmethod
+    def device() -> HidrawDevice:
+        return HidrawDevice()
+
+
+def load_backend():
+    if IS_LINUX:
+        return HidrawBackend()
+    import hid  # pip package "hidapi"
+    return hid
+
+
 def enumerate_paths(hid, pid: int) -> list[bytes]:
     """Unique HID paths for vendor-defined collections of a product (macOS lists one entry per collection)."""
     paths = []
@@ -174,8 +306,8 @@ def enumerate_paths(hid, pid: int) -> list[bytes]:
     return paths
 
 
-def read_all(debug: bool = False) -> list[Battery]:
-    import hid  # pip package "hidapi"
+def read_all(debug: bool = False, hid=None) -> list[Battery]:
+    hid = hid or load_backend()
     found: dict[str, Battery] = {}
     for target in TARGETS:
         if target.device in found and found[target.device].percent is not None:
@@ -189,6 +321,11 @@ def read_all(debug: bool = False) -> list[Battery]:
             except (OSError, IOError) as error:
                 if debug:
                     print(f"[{target.device}] open {path!r} failed: {error}", file=sys.stderr)
+                if isinstance(error, PermissionError) and target.device not in found:
+                    # Linux without the udev rule: say so instead of "not found"
+                    found[target.device] = Battery(target.device, target.name,
+                                                   "omni" if target.pid == PID_OMNI else "wired", None,
+                                                   status="no-access", raw=str(error))
                 continue
             try:
                 result = query(dev, target, debug)
@@ -203,16 +340,26 @@ def read_all(debug: bool = False) -> list[Battery]:
     return [found[k] for k in ("keyboard", "mouse") if k in found]
 
 
-def list_devices() -> None:
-    import hid
+def list_devices(hid=None) -> None:
+    hid = hid or load_backend()
     for info in hid.enumerate(VID, 0):
-        print(f"pid={info['product_id']:04x} iface={info.get('interface_number')} "
-              f"usage_page={info.get('usage_page', 0):04x} usage={info.get('usage', 0):04x} "
+        pages = info.get("collections")
+        usage = (" collections=" + ",".join(f"{p:04x}:{u:04x}" for p, u in pages) if pages is not None else
+                 f" usage_page={info.get('usage_page', 0):04x} usage={info.get('usage', 0):04x}")
+        print(f"pid={info['product_id']:04x} iface={info.get('interface_number')}{usage} "
               f"name={info.get('product_string')!r} path={info['path']!r}")
 
 
 def send_notification(title: str, message: str) -> None:
-    """macOS notification via osascript (arguments passed separately, no string interpolation into the script)."""
+    """Desktop notification: notify-send on Linux, osascript on macOS.
+    Arguments are passed separately, never interpolated into a script."""
+    if IS_LINUX:
+        try:
+            subprocess.run(["notify-send", "--app-name=Squire", "--icon=squire-gear", "--", title, message],
+                           check=False, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return
     script = "on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run"
     try:
         subprocess.run(["osascript", "-e", script, title, message], check=False, timeout=10,
@@ -281,7 +428,8 @@ def swiftbar(results: list[Battery]) -> str:
     lowest = min((b for b in results if b.percent is not None), key=lambda b: b.percent, default=None)
     title_color = color_for(lowest) if lowest and color_for(lowest) in ("red", "orange") else ""
     lines = [title + (f" | color={title_color}" if title_color else ""), "---"]
-    status_text = {"asleep": "asleep / not connected", "no-response": "no response", "error": "error"}
+    status_text = {"asleep": "asleep / not connected", "no-response": "no response", "error": "error",
+                   "no-access": "no access (udev rule missing)"}
     for b in results:
         detail = label(b, bolt=False) if b.percent is not None else status_text.get(b.status, b.status)
         extra = " (charging)" if b.charging else ""
@@ -300,7 +448,7 @@ def main() -> int:
     mode.add_argument("--swiftbar", action="store_true", help="SwiftBar/xbar menu bar output")
     mode.add_argument("--list", action="store_true", help="List ASUS HID collections; sends nothing")
     ap.add_argument("--notify", action="store_true",
-                    help="Send a macOS notification when a battery reaches the device's low-battery warning level")
+                    help="Send a desktop notification when a battery reaches the device's low-battery warning level")
     ap.add_argument("--debug", action="store_true", help="Print raw replies to stderr")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = ap.parse_args()

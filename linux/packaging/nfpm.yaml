@@ -1,0 +1,93 @@
+# One config for both Linux packages (nfpm: https://nfpm.goreleaser.com).
+# Build with linux/build-packages.sh from anywhere; paths below are relative to the repository root.
+#   VERSION comes from __version__ in squire.py.
+name: squire-gear
+arch: all            # pure Python; nfpm writes "noarch" for rpm
+platform: linux
+version: ${VERSION}
+release: 1
+section: utils
+priority: optional
+maintainer: Daniel Draes <foggch@gmail.com>
+vendor: Squire
+homepage: https://github.com/phifogg/squire-gear
+license: MIT
+description: |
+  Battery level of ASUS ROG keyboard and mouse in the top bar
+  Squire shows battery level and charging state of the ASUS ROG Falchion RX Low Profile
+  keyboard and the ASUS ROG Keris II Origin mouse, through the ROG Omni receiver or the
+  USB cable. Read-only: it only sends the two battery queries. Not affiliated with ASUS.
+
+overrides:
+  deb:
+    depends:
+      - python3 (>= 3.10)
+      - python3-gi
+      - gir1.2-gtk-3.0
+      - gir1.2-ayatanaappindicator3-0.1
+      - libnotify-bin
+    recommends:
+      - gnome-shell-extension-appindicator
+  rpm:
+    depends:
+      - python3 >= 3.10
+      - python3-gobject
+      - gtk3
+      - libayatana-appindicator-gtk3
+      - libnotify
+
+contents:
+  - src: squire.py
+    dst: /usr/share/squire-gear/squire.py
+    file_info: {mode: 0644}
+  - src: linux/squire_tray.py
+    dst: /usr/share/squire-gear/squire_tray.py
+    file_info: {mode: 0644}
+  - src: linux/icons/squire-gear-symbolic.svg
+    dst: /usr/share/squire-gear/icons/squire-gear-symbolic.svg
+    file_info: {mode: 0644}
+
+  - src: linux/packaging/squire
+    dst: /usr/bin/squire
+    file_info: {mode: 0755}
+  - src: linux/packaging/squire-tray
+    dst: /usr/bin/squire-tray
+    file_info: {mode: 0755}
+  - src: linux/packaging/squire-gear.desktop
+    dst: /usr/share/applications/squire-gear.desktop
+    file_info: {mode: 0644}
+  - src: linux/70-squire-gear.rules
+    dst: /usr/lib/udev/rules.d/70-squire-gear.rules
+    file_info: {mode: 0644}
+
+  - src: macos/App/Assets.xcassets/AppIcon.appiconset/icon_32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/squire-gear.png
+    file_info: {mode: 0644}
+  - src: macos/App/Assets.xcassets/AppIcon.appiconset/icon_64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/squire-gear.png
+    file_info: {mode: 0644}
+  - src: macos/App/Assets.xcassets/AppIcon.appiconset/icon_128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/squire-gear.png
+    file_info: {mode: 0644}
+  - src: macos/App/Assets.xcassets/AppIcon.appiconset/icon_256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/squire-gear.png
+    file_info: {mode: 0644}
+  - src: macos/App/Assets.xcassets/AppIcon.appiconset/icon_512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/squire-gear.png
+    file_info: {mode: 0644}
+
+  - src: README.md
+    dst: /usr/share/doc/squire-gear/README.md
+    file_info: {mode: 0644}
+  - src: LICENSE
+    dst: /usr/share/doc/squire-gear/copyright
+    packager: deb
+    file_info: {mode: 0644}
+  - src: LICENSE
+    dst: /usr/share/licenses/squire-gear/LICENSE
+    packager: rpm
+    file_info: {mode: 0644}
+
+scripts:
+  postinstall: linux/packaging/postinstall.sh
+  postremove: linux/packaging/postremove.sh

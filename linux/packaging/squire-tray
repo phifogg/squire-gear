@@ -1,0 +1,5 @@
+#!/bin/sh
+# Squire top bar app (packaged). SQUIRE_EXEC tells "Launch at login" which command to write.
+SQUIRE_EXEC=/usr/bin/squire-tray
+export SQUIRE_EXEC
+exec /usr/bin/python3 /usr/share/squire-gear/squire_tray.py "$@"
