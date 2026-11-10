@@ -129,7 +129,8 @@ class RealCaptureTests(unittest.TestCase):
         import json
         from pathlib import Path
         data = json.loads((Path(__file__).parent / "protocol.json").read_text())
-        targets = {("keyboard", 2): OMNI_KB, ("mouse", 3): OMNI_MOUSE}
+        targets = {("keyboard", 2): OMNI_KB, ("mouse", 3): OMNI_MOUSE, ("keyboard", None): WIRED_KB,
+                   ("mouse", None): WIRED_MOUSE}
         for v in data["vectors"]:
             with self.subTest(device=v["device"]):
                 reply = list(bytes.fromhex(v["reply"]))

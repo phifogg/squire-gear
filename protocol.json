@@ -56,6 +56,34 @@
         "low_warning": 20
       },
       "notes": "charging via USB power adapter: [9]=01; [12..13]=00 00 while charging (voltage not reported?)"
+    },
+    {
+      "device": "keyboard",
+      "model": "ROG Falchion RX Low Profile",
+      "connection": "wired",
+      "report_id": null,
+      "query": "12 01",
+      "reply": "12 01 00 00 00 4e 02 01 01 14 4e 5b 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "expect": {
+        "percent": 78,
+        "charging": true,
+        "low_warning": 20
+      },
+      "notes": "Captured 2026-11-10 on macOS, USB cable (pid 1b04, interface 1, usage page ff00). Written as 00 12 01 (65 bytes); reply has NO report ID, 64 bytes, echo starts at [0]. Indices here are relative to the echoed command: [5]=78 %, [8]=01 charging, [9]=0x14 low-battery warning 20 %, [10]=78 %, [11..12]=0x105b 4187 mV while charging (Omni reports 00 00 while charging). Omni path returned ff aa for the keyboard at the same time (keyboard asleep on the receiver)."
+    },
+    {
+      "device": "mouse",
+      "model": "ROG Keris II Origin",
+      "connection": "wired",
+      "report_id": null,
+      "query": "12 07",
+      "reply": "12 07 00 00 4c 02 14 47 10 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "expect": {
+        "percent": 76,
+        "charging": true,
+        "low_warning": 20
+      },
+      "notes": "Captured 2026-11-10 on macOS, USB cable (pid 1c0c). Vendor collection is interface 0, usage page ff01 (not interface 2 as on the Omni receiver). Written as 00 12 07 (65 bytes, accepted first try; no 64-byte fallback needed); reply has NO report ID, 64 bytes, echo starts at [0]. Indices relative to the echoed command: [4]=76 %, [5]=02 auto power-off step, [6]=0x14 low-battery warning 20 %, [7..8]=0x1047 4167 mV while charging, [9]=01 charging, [11]=01 unknown. Omni returned ff aa for the mouse at the same time."
     }
   ]
 }

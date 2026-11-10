@@ -23,18 +23,18 @@ It is a small Python script with a [SwiftBar](https://github.com/swiftbar/SwiftB
 
 ## Status
 
-Version 0.1.0. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin, both
-connected through the Omni receiver. Battery percentage and charging state are confirmed
-for both devices.
+Version 0.1.2. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
+Battery percentage and charging state are confirmed for both devices, connected through the
+Omni receiver and over a USB cable.
+
+The plugin also sends a macOS notification once when a battery reaches the low-battery
+warning level the device reports (20 % on both test devices). It is not yet confirmed that
+this level follows changes made in Armoury Crate.
 
 Not tested yet:
-- Wired connection. The keyboard over USB uses the same framing as
-  [falchion-light](https://github.com/ChipGillespie/falchion-light); support for the wired
-  mouse is experimental.
+
 - Other ROG keyboards and mice. They may work if they use the same protocol, but the
   device IDs are not included.
-
-Menu text and installer messages are currently in German.
 
 ## Requirements
 
