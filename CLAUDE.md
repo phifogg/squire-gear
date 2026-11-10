@@ -17,7 +17,7 @@ Private working notes (log, contacts, plans) live in `CLAUDE.local.md` (git-igno
 ## Layout
 ```
 squire.py          Python core: device discovery, battery queries, CLI
-                   (--json, --swiftbar, --notify, --list, --debug, --version)
+                   (--json, --swiftbar, --notify, --list, --settings, --debug, --version)
                    backends: hidapi on macOS, /dev/hidraw directly on Linux (HidrawBackend, stdlib only)
 test_squire.py     unit tests with a fake HID device, no hardware needed (imports squire as rb)
 test_squire_tray.py  tests for the Linux tray logic (no GTK needed)
@@ -54,13 +54,21 @@ Linux: system python3 is fine (no hidapi needed):
 ```sh
 python3 squire.py --list / --debug             # from the repo
 python3 linux/squire_tray.py --debug           # tray app from the repo, prints each read
+python3 squire.py --settings [--json] [--debug] # mouse DPI / LEDs / sensor / power, read-only
 ./linux/install.sh [--no-udev] [--no-start]    # install for the current user
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
 ## Direction
-- 0.2.x stays read-only. From 0.3 the **macOS** app also configures devices (DPI, LEDs, ...). Linux: no writes
-  for now; Linux lighting work goes to falchion-light as PRs, not into Squire.
+- 0.2.x stays read-only. From 0.3 Squire also configures devices (DPI, LEDs, ...) on **Linux and macOS**,
+  Linux first (owner's decision 2026-11-10). Helping falchion-light with PRs stays welcome, but Squire has its own
+  configuration too; both use the same protocol facts.
+- Linux settings window: a separate GTK 4 + libadwaita process (`squire-settings`), started from the tray menu.
+  The tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process. All three are on Ubuntu 26.04 by default.
+- Settings UI (proposal agreed in direction): devices listed on the left; the selected device drawn in the middle
+  (own neutral artwork) with clickable zones and callouts; settings for the selected zone on the right; an apply bar
+  with "Show bytes", Revert and Apply. Keris II Origin LED zones: scroll wheel, logo, side (G-Helper calls the side
+  zone "Underglow"; the mouse has no light underneath).
 - Writes only via an allowlist in SquireCore: command model with an `isWrite` flag, the transport refuses
   anything not on the allowlist, tests assert the exact bytes, `--dry-run` prints bytes without sending.
 - Order of work: (1) read-only queries for current DPI / stages / LED state, (2) find the write bytes in public
@@ -72,9 +80,12 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   fits configuration too. No ASUS/ROG marks, fonts or artwork; similar colour mood only.
 
 ## Rules
-- **Read-only by default.** Squire only sends `12 01` (keyboard) and `12 07` (mouse). Any new
-  command that writes to a device (lighting, sleep timeout, etc.) must be shown to the owner
-  before it is sent, and only once the bytes are known from a source or a capture.
+- **Read-only by default.** Squire only sends commands on `ALLOWED_COMMANDS` in squire.py, and the transport
+  refuses anything else: `12 01` (keyboard battery), `12 07` (mouse battery) and the mouse settings reads
+  `12 00`, `12 04 00`, `12 04 02`, `12 04 03`, `12 03 00..02`, `12 06` (approved by the owner 2026-11-10).
+  All are get requests (first byte `12`); writes start with `50`/`51`. Never send `50 02` (switch profile):
+  read the active profile only. Any new command, read or write, must be shown to the owner before it is sent,
+  and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
   *every* top-level collection in its report descriptor is vendor-defined (Omni iface 3 mixes them: skipped).
@@ -116,6 +127,14 @@ Wired mouse: write `00 12 07` as 65 bytes (the 64-byte fallback is not needed bu
 the vendor collection is interface 0, usage page ff01. Reply has no report ID, same layout as Omni;
 [7..8] = LE mV (~4167 while charging).
 IOKit: unnumbered report = report ID 0 with the leading 00 dropped (64-byte payload).
+Mouse settings reads (Keris II Origin, report ID 03 on the Omni; layout from libratbag SETTINGS_V2/LED_V2 and
+G-Helper, confirmed with captures in protocol.json `mouse_settings`; indices relative to the echo):
+`12 00` [10] profile (0-based), [11] active DPI stage (1-based), [18] stage count, [13..15] firmware.
+`12 04 00` [4..11] DPI (ff ff on this separate-X/Y mouse), [12] polling (low 3 bits: 125/250/500/1000), [14]
+debounce (n*4+4 ms), [16] angle snapping, [18..19] angle tuning (signed LE16). `12 04 02` X/Y per stage from [4]
+(lo/hi each, DPI = v*50+50). `12 04 03` RGB per stage from [4]. `12 03 NN` zone NN (0 logo, 1 wheel, 2 side):
+[4] mode (0 static, 1 breathing, 2 cycle, 3 rainbow, 4 react, 5 comet, 6 battery, f0 off), [5] brightness %,
+[6..8] RGB. `12 06` [7] lift-off (0 low, 1 high). `12 07` also: [5] power-off (0..4 = 1/2/3/5/10 min, ff never).
 Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
 ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).
 Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.cs`,
@@ -138,7 +157,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       Observed: the keyboard stayed at 78 % for a day while mV went ~4088 -> ~4080.
 - [ ] Backlog (Swift app): optional icon-only menu bar mode (a single Squire icon instead of one entry
       per device; setting in the popover, maybe tint/badge when a device is low)
-- [ ] Device configuration on macOS (0.3), see Direction
+- [ ] Device configuration (0.3), Linux first, then macOS; see Direction. First step: branch `mouse-read`
+      (read current DPI / LED / sensor settings of the Keris II Origin)
 - [x] Linux top bar app (0.2.1, `linux/`): hidraw backend, AppIndicator tray, udev rule, installer
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
@@ -146,7 +166,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 
 ## Related projects
 - falchion-light (Linux lighting, wired): https://github.com/ChipGillespie/falchion-light.
-  Lighting work on Linux goes there as PRs, not into Squire.
+  PRs there are welcome alongside Squire's own configuration.
 - G-Helper (GPL-3.0, Windows): https://github.com/seerge/g-helper
 - rogdriver (Zig, Linux): https://github.com/rahulrajaram/rogdriver
 - SwiftBar: https://github.com/swiftbar/SwiftBar

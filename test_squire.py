@@ -286,6 +286,182 @@ class HidrawDeviceTests(unittest.TestCase):
             self.dev.read(65, 0)
 
 
+def settings_reply(command, fields, rid=0x03):
+    """Reply that echoes `command`; fields = {index relative to the echo: byte}."""
+    payload = bytearray(63)
+    payload[0:len(command)] = command
+    for index, value in fields.items():
+        payload[index] = value
+    return list(([rid] if rid is not None else []) + list(payload))
+
+
+def le16(value):
+    return {0: value & 0xFF, 1: value >> 8}
+
+
+def dpi_raw(dpi):
+    return (dpi - 50) // 50
+
+
+class AllowlistTests(unittest.TestCase):
+    def test_every_allowed_command_is_a_get_request(self):
+        for command in rb.ALLOWED_COMMANDS:
+            self.assertEqual(command[0], 0x12, command.hex(" "))
+
+    def test_write_commands_are_refused(self):
+        for command in (bytes([0x51, 0x28, 0x00]), bytes([0x50, 0x02, 0x01]), bytes([0x50, 0x03]),
+                        bytes([0x51, 0x31, 0x00]), bytes([0x12, 0x99])):
+            with self.subTest(command=command.hex(" ")), self.assertRaises(ValueError):
+                rb.packet(0x03, command, 64)
+
+    def test_exact_bytes_omni(self):
+        expected = {
+            "profile": "03 12 00", "settings": "03 12 04 00", "dpi_xy": "03 12 04 02",
+            "dpi_colors": "03 12 04 03", "led_logo": "03 12 03 00", "led_wheel": "03 12 03 01",
+            "led_side": "03 12 03 02", "liftoff": "03 12 06",
+        }
+        self.assertEqual(set(expected), set(rb.MOUSE_SETTINGS_QUERIES))
+        for name, prefix in expected.items():
+            with self.subTest(name=name):
+                data = rb.packet(0x03, rb.MOUSE_SETTINGS_QUERIES[name], 64)
+                head = bytes.fromhex(prefix)
+                self.assertEqual(len(data), 64)
+                self.assertEqual(data[:len(head)], head)
+                self.assertEqual(set(data[len(head):]), {0})
+
+    def test_exact_bytes_wired(self):
+        data = rb.packet(None, rb.MOUSE_SETTINGS_QUERIES["led_side"], 65)
+        self.assertEqual((len(data), data[:4]), (65, bytes.fromhex("00 12 03 02")))
+
+
+class MouseSettingsParseTests(unittest.TestCase):
+    def parse(self, name, fields):
+        s = rb.MouseSettings("m", "omni")
+        command = rb.MOUSE_QUERY if name == "battery" else rb.MOUSE_SETTINGS_QUERIES[name]
+        rb.parse_mouse_settings(s, name, bytes(settings_reply(command, fields, rid=None)))
+        return s
+
+    def test_profile(self):
+        s = self.parse("profile", {10: 2, 11: 3, 13: 0xFF, 14: 0x09, 15: 0x00})
+        self.assertEqual((s.profile, s.dpi_stage, s.firmware), (3, 3, "00.09.FF"))
+        self.assertIsNone(self.parse("profile", {11: 0}).dpi_stage)
+
+    def test_settings(self):
+        fields = {}
+        for i, dpi in enumerate((400, 800, 650, 3200)):   # values libratbag read from this mouse
+            fields.update({4 + 2 * i + k: v for k, v in le16(dpi_raw(dpi)).items()})
+        fields.update({12: 3, 14: 1, 16: 1})
+        fields.update({18 + k: v for k, v in le16(-5 & 0xFFFF).items()})
+        s = self.parse("settings", fields)
+        self.assertEqual(s.dpi, [400, 800, 650, 3200])
+        self.assertEqual((s.polling_hz, s.debounce_index, s.angle_snapping, s.angle_tuning), (1000, 1, True, -5))
+
+    def test_max_dpi(self):
+        s = self.parse("settings", {4 + k: v for k, v in le16(dpi_raw(42000)).items()})
+        self.assertEqual(s.dpi[0], 42000)
+
+    def test_dpi_xy_and_colors(self):
+        s = self.parse("dpi_xy", {**{4 + k: v for k, v in le16(dpi_raw(800)).items()},
+                                  **{6 + k: v for k, v in le16(dpi_raw(1600)).items()}})
+        self.assertEqual(s.dpi_xy[0], [800, 1600])
+        s = self.parse("dpi_colors", {4: 0xFF, 5: 0x00, 6: 0x00, 7: 0x00, 8: 0x00, 9: 0xFF})
+        self.assertEqual(s.dpi_colors[:2], ["#ff0000", "#0000ff"])
+
+    def test_led(self):
+        s = self.parse("led_side", {4: 0x01, 5: 75, 6: 0x3D, 7: 0x8B, 8: 0xFF})
+        self.assertEqual(s.leds["side"], {"mode": "breathing", "brightness": 75, "color": "#3d8bff"})
+        self.assertEqual(self.parse("led_logo", {4: 0xF0}).leds["logo"]["mode"], "off")
+        self.assertEqual(self.parse("led_logo", {4: 0x42}).leds["logo"]["mode"], "0x42")  # unknown: raw
+
+    def test_liftoff_and_power(self):
+        self.assertEqual(self.parse("liftoff", {7: 1}).liftoff, "high")
+        s = self.parse("battery", {4: 80, 5: 2, 6: 20})
+        self.assertEqual((s.power_off_minutes, s.low_warning), (3, 20))
+        self.assertIsNone(self.parse("battery", {4: 80, 5: 0xFF, 6: 20}).power_off_minutes)
+
+    def test_real_battery_capture_gives_power_settings(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())
+        omni_mouse = next(v for v in data["vectors"] if v["device"] == "mouse" and v["report_id"] == 3)
+        s = rb.MouseSettings("m", "omni")
+        rb.parse_mouse_settings(s, "battery", bytes.fromhex(omni_mouse["reply"])[1:])
+        self.assertEqual((s.power_off_minutes, s.low_warning), (3, 20))
+
+
+class RealMouseSettingsCaptureTests(unittest.TestCase):
+    """protocol.json mouse_settings: real replies from the Keris II Origin."""
+
+    def test_captures(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_settings"]
+        s = rb.MouseSettings("m", "omni")
+        for capture in data["captures"]:      # in reading order: settings before dpi_xy
+            reply = bytes.fromhex(capture["reply"])
+            command = rb.MOUSE_SETTINGS_QUERIES[capture["command"]]
+            base = rb.find_echo(reply, command)
+            self.assertEqual(base, 1, capture["command"])
+            rb.parse_mouse_settings(s, capture["command"], reply[base:])
+        for capture in data["captures"]:
+            for key, value in capture["expect"].items():
+                with self.subTest(command=capture["command"], key=key):
+                    actual = s.leds.get(key) if key in rb.LED_ZONES else getattr(s, key)
+                    self.assertEqual(actual, value)
+
+
+class ReadMouseSettingsTests(unittest.TestCase):
+    """Whole read against a fake Omni receiver: only allowlisted get requests go out."""
+
+    def make_backend(self, battery_pct=80):
+        sent = []
+        replies = {
+            rb.MOUSE_QUERY: settings_reply(rb.MOUSE_QUERY, {4: battery_pct, 5: 2, 6: 20}),
+            rb.MOUSE_SETTINGS_QUERIES["profile"]: settings_reply(rb.MOUSE_SETTINGS_QUERIES["profile"], {10: 0, 11: 2}),
+            rb.MOUSE_SETTINGS_QUERIES["settings"]: settings_reply(rb.MOUSE_SETTINGS_QUERIES["settings"], {4: 7, 12: 3}),
+            rb.MOUSE_SETTINGS_QUERIES["led_wheel"]: settings_reply(rb.MOUSE_SETTINGS_QUERIES["led_wheel"], {4: 2, 5: 100}),
+        }
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                sent.append(bytes(data))
+                command = next((c for c in sorted(rb.ALLOWED_COMMANDS, key=len, reverse=True)
+                                if bytes(data[1:1 + len(c)]) == c), None)
+                self.replies = [replies[command]] if command in replies else []
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                if pid != rb.PID_OMNI:
+                    return []
+                return [{"path": b"omni-if2", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}]
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent
+
+    def test_reads_current_profile_only_with_get_requests(self):
+        backend, sent = self.make_backend()
+        s = rb.read_mouse_settings(hid=backend)
+        self.assertEqual((s.status, s.connection, s.profile, s.dpi_stage, s.dpi[0], s.polling_hz),
+                         ("ok", "omni", 1, 2, 400, 1000))
+        self.assertEqual(s.leds["wheel"]["mode"], "color-cycle")
+        self.assertEqual(s.raw["led_logo"], "no-response")     # missing reply: kept, not fatal
+        self.assertTrue(all(packet[0] == 0x03 and packet[1] == 0x12 for packet in sent))
+        self.assertEqual(len(sent), 1 + len(rb.MOUSE_SETTINGS_QUERIES))
+
+    def test_asleep_mouse_sends_nothing_else(self):
+        backend, sent = self.make_backend(battery_pct=0)
+
+        class Asleep(FakeDevice):
+            def write(self, data):
+                sent.append(bytes(data))
+                self.replies = [[0x03, 0xFF, 0xAA] + [0] * 61]
+                return len(data)
+        backend.device = lambda: Asleep([])
+        s = rb.read_mouse_settings(hid=backend)
+        self.assertEqual(s.status, "asleep")
+        self.assertEqual(len(sent), 1)   # only the battery query
+
+
+
 class LowBatteryNotificationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

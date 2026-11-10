@@ -99,5 +99,102 @@
       },
       "notes": "Captured 2026-11-10 on Linux (Ubuntu 26.04, kernel 7.0) via /dev/hidraw, ROG Omni receiver interface 2 (one hidraw node with three top-level collections ff02/ff00/ff01). Written as 03 12 07 (64 bytes); reply includes the report ID like hidapi on macOS. [5]=80 %, [7]=0x14 warning 20 %, [8..9]=0x0fa8 4008 mV?, [10]=00 not charging. Same keyboard reply as the first vector (78 %) at the same time."
     }
-  ]
+  ],
+  "mouse_settings": {
+    "_comment": "Real replies of the ROG Keris II Origin via the ROG Omni receiver, captured 2026-11-10 on Linux (hidraw, report ID 03). Read-only get requests; replies are zero-padded to 64 bytes. 'expect' = what squire.parse_mouse_settings must return.",
+    "captures": [
+      {
+        "command": "profile",
+        "reply": "03 12 00 00 00 02 00 07 00 05 07 00 04 ff ff 09 00 01 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "profile": 1,
+          "dpi_stage": 4,
+          "dpi_stage_count": 4,
+          "firmware": "00.09.FF"
+        },
+        "notes": "Indices relative to the echo: [10]=00 profile 1 (0-based), [11]=04 active DPI stage (1-based), [18]=04 stages in the cycle (G-Helper), [13..15]=ff 09 00 primary firmware 00.09.FF, [4..6]=02 00 07 secondary (receiver) 07.00.02. [8]=05, [9]=07, [16]=01 unknown. Active stage confirmed on the device: from stage 4, the first DPI button press flashed red (stage 1)."
+      },
+      {
+        "command": "settings",
+        "reply": "03 12 04 00 00 ff ff ff ff ff ff ff ff 63 06 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "polling_hz": 1000,
+          "debounce_ms": 12,
+          "angle_snapping": false,
+          "angle_tuning": 0
+        },
+        "notes": "[4..11]=ff: no DPI here (separate X/Y mouse, see dpi_xy). [12]=0x63: low 3 bits 3 = 1000 Hz; high nibble 6 would be 8000 Hz in G-Helper's booster mode (unverified which applies; check the rate in Armoury Crate on Windows). [13]=06 unknown. [14]=02 debounce 12 ms. [16]=00 angle snapping off. [18..19]=0 angle tuning 0."
+      },
+      {
+        "command": "dpi_xy",
+        "reply": "03 12 04 02 00 07 00 07 00 0f 00 0f 00 0c 00 0c 00 3f 00 3f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "dpi": [
+            400,
+            800,
+            650,
+            3200
+          ]
+        },
+        "notes": "Per stage x lo/hi, y lo/hi from [4]; DPI = value * 50 + 50: 400/400, 800/800, 650/650, 3200/3200. Same values libratbag read on 2026-11-09."
+      },
+      {
+        "command": "dpi_colors",
+        "reply": "03 12 04 03 00 ff 00 00 c1 00 ff 00 00 00 31 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "dpi_colors": [
+            "#ff0000",
+            "#c100ff",
+            "#000000",
+            "#31ff00"
+          ]
+        },
+        "notes": "RGB per stage from [4]: red, purple, black (no light), green. Confirmed on the device 2026-11-10: pressing the DPI button flashes the stage colour, cycling purple, none, green, red."
+      },
+      {
+        "command": "led_logo",
+        "reply": "03 12 03 00 00 02 32 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "logo": {
+            "mode": "color-cycle",
+            "brightness": 50,
+            "color": "#ff0000"
+          }
+        },
+        "notes": "[4]=02 color cycle, [5]=0x32 brightness 50 %, [6..8] RGB (last static colour set in the libratbag test)."
+      },
+      {
+        "command": "led_wheel",
+        "reply": "03 12 03 01 00 02 32 00 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "wheel": {
+            "mode": "color-cycle",
+            "brightness": 50,
+            "color": "#00ff00"
+          }
+        },
+        "notes": "Zone 1 = scroll wheel."
+      },
+      {
+        "command": "led_side",
+        "reply": "03 12 03 02 00 02 32 00 00 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "side": {
+            "mode": "color-cycle",
+            "brightness": 50,
+            "color": "#0000ff"
+          }
+        },
+        "notes": "Zone 2 = side strip (called underglow in G-Helper and libratbag; the mouse has no light underneath)."
+      },
+      {
+        "command": "liftoff",
+        "reply": "03 12 06 00 00 00 ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "liftoff": "low"
+        },
+        "notes": "[7]=00 low (G-Helper). [5..6]=ff ff unknown."
+      }
+    ]
+  }
 }

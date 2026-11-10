@@ -235,7 +235,7 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 ## Roadmap
 
-- Device configuration on macOS (DPI, LEDs), planned for 0.3; 0.2.x stays read-only
+- Device configuration (DPI, LEDs) on Linux and macOS, planned for 0.3; 0.2.x stays read-only
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode
 - Notarized builds, depending on interest
