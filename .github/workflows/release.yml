@@ -1,0 +1,119 @@
+# Builds all release files and creates a DRAFT release when a tag vX.Y.Z is pushed:
+#   Squire-X.Y.Z.zip (macOS, universal, ad hoc signed, not notarized), .deb and .rpm (Linux), each with .sha256.
+# Review the draft on GitHub, fill in "What's new", then publish it.
+#
+# Pull requests that touch the build run the same builds without a release (files under the run's Artifacts).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/release-notes.md
+      - macos/scripts/**
+      - macos/project.yml
+      - linux/packaging/**
+      - linux/build-packages.sh
+
+permissions:
+  contents: read
+
+env:
+  NFPM_VERSION: "2.48.0"
+  # sha256 of nfpm_<version>_amd64.deb from https://github.com/goreleaser/nfpm/releases (checksums.txt)
+  NFPM_SHA256: "787af76e172dd5fc7cedf4d7c5a090a2f62be9001557a4db1103e270f90ddefd"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        name: squire.py, project.yml and the tag must agree
+        run: |
+          py="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' squire.py)"
+          mac="$(sed -n 's/^    MARKETING_VERSION: "\(.*\)"/\1/p' macos/project.yml)"
+          echo "squire.py: $py, project.yml: $mac, ref: $GITHUB_REF_NAME"
+          [ -n "$py" ] && [ "$py" = "$mac" ] || { echo "::error::Versions differ: squire.py $py, project.yml $mac"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$py" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $py"; exit 1
+          fi
+          echo "version=$py" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+      - run: pip install pyyaml && python -m unittest
+      - name: Install nfpm (pinned, checksum verified)
+        run: |
+          deb="nfpm_${NFPM_VERSION}_amd64.deb"
+          curl -fsSL -o "$RUNNER_TEMP/$deb" "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/$deb"
+          echo "$NFPM_SHA256  $RUNNER_TEMP/$deb" | sha256sum -c -
+          sudo apt-get install -y "$RUNNER_TEMP/$deb"
+      - run: linux/build-packages.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: linux/dist/*
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift test
+        working-directory: macos
+      - run: brew install xcodegen
+      - run: ./scripts/build-release.sh
+        working-directory: macos
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: macos/dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Check the files
+        working-directory: dist
+        run: |
+          v="${{ needs.version.outputs.version }}"
+          for f in "Squire-$v.zip" "squire-gear_$v-1_all.deb" "squire-gear-$v-1.noarch.rpm"; do
+            [ -f "$f" ] || { echo "::error::Missing $f"; exit 1; }
+          done
+          # the Mac file was written by shasum on macOS; same format as sha256sum
+          sha256sum -c *.sha256
+          ls -l
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          sed "s/{{VERSION}}/$VERSION/g" .github/release-notes.md > "$RUNNER_TEMP/notes.md"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release exists (re-run): replacing its files"
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Squire $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" dist/*
+          fi

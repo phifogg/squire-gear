@@ -1,0 +1,33 @@
+# Tests on every push and pull request: Python core + Linux tray logic (Linux and macOS), Swift core (macOS).
+# No hardware needed; nothing is sent to any device.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]      # tags run the release workflow, which tests too
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+      - run: pip install pyyaml          # for the packaging tests
+      - run: python -m unittest -v
+
+  swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift test
+        working-directory: macos

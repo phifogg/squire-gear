@@ -152,12 +152,18 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - SwiftBar: https://github.com/swiftbar/SwiftBar
 
 ## Release
-- The app is not notarized (ad-hoc signed, no Developer ID). Build: `macos/scripts/build-release.sh`
-  -> `macos/dist/Squire-<version>.zip` (+ .sha256), universal. Attach both to the GitHub release.
-- Unverified: launch at login from a downloaded copy after logout/restart.
-- Linux: `linux/build-packages.sh` (needs nfpm) -> `linux/dist/squire-gear_<v>-1_all.deb` and
-  `squire-gear-<v>-1.noarch.rpm` (+ .sha256). Attach to the same release. rpm not tested on Fedora yet.
+Automated with GitHub Actions (`.github/workflows/release.yml`): pushing a tag `vX.Y.Z` tests and builds on a
+macOS and a Linux runner and creates a **draft** release with all six files (Mac zip, .deb, .rpm, each + .sha256).
+The owner fills in "What's new" in the draft and publishes it. Do not publish the draft yourself unless asked.
 ```sh
+# bump __version__ in squire.py and MARKETING_VERSION in macos/project.yml (the workflow refuses a mismatch), merge, then:
 git tag -a vX.Y.Z -m "Squire X.Y.Z" && git push origin vX.Y.Z
-gh release create vX.Y.Z --title "Squire X.Y.Z" --notes "..." macos/dist/Squire-X.Y.Z.zip macos/dist/Squire-X.Y.Z.zip.sha256
 ```
+- Release notes template: `.github/release-notes.md` (`{{VERSION}}` is replaced). Re-running the workflow for an
+  existing release replaces its files.
+- PRs that touch the build files run the same builds without a release (files under the run's Artifacts).
+- `.github/workflows/ci.yml`: Python tests (Linux + macOS) and `swift test` on every push and PR.
+- nfpm is pinned in release.yml (version + sha256 of the .deb); update both together.
+- Local builds still work: `macos/scripts/build-release.sh` -> `macos/dist/`, `linux/build-packages.sh` -> `linux/dist/`.
+- The app is not notarized (ad hoc signed, no Developer ID). Unverified: launch at login from a downloaded copy
+  after logout/restart. rpm not tested on Fedora yet.
