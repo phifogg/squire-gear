@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs Squire into ~/Library/Application Support/squire-gear (own venv with hidapi)
 # and, if a SwiftBar plugin folder is known, adds the menu bar plugin.
-# Usage: ./install.sh [SwiftBar-Plugin-Ordner]
+# Usage: ./install.sh [SwiftBar-plugin-folder]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -11,11 +11,11 @@ PLUGIN_DIR="${1:-}"
 if [ -z "$PLUGIN_DIR" ]; then
   PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
 elif [ ! -d "$PLUGIN_DIR" ]; then
-  echo "→ Lege Plugin-Ordner an: $PLUGIN_DIR"
+  echo "→ Creating plugin folder: $PLUGIN_DIR"
   mkdir -p "$PLUGIN_DIR"
 fi
 
-echo "→ Installiere nach: $APP_DIR"
+echo "→ Installing to: $APP_DIR"
 mkdir -p "$APP_DIR"
 if [ ! -x "$APP_DIR/venv/bin/python" ]; then
   python3 -m venv "$APP_DIR/venv"
@@ -38,14 +38,14 @@ if [ -n "$PLUGIN_DIR" ] && [ -d "$PLUGIN_DIR" ]; then
 exec "$APP_DIR/venv/bin/python" "$APP_DIR/squire.py" --swiftbar
 EOF
   chmod 0755 "$PLUGIN"
-  echo "→ SwiftBar-Plugin: $PLUGIN"
+  echo "→ SwiftBar plugin: $PLUGIN"
   if [ -e "$PLUGIN_DIR/rog-battery.5m.sh" ]; then
-    echo "→ Hinweis: alte Version gefunden. Entfernen mit:"
+    echo "→ Note: old version found. Remove it with:"
     echo "    rm \"$PLUGIN_DIR/rog-battery.5m.sh\""
     echo "    rm -r \"$HOME/Library/Application Support/rog-battery\""
   fi
 else
-  echo "→ Kein SwiftBar-Plugin-Ordner gefunden. Später: ./install.sh \"<Plugin-Ordner>\""
+  echo "→ No SwiftBar plugin folder found. Later run: ./install.sh \"<plugin-folder>\""
 fi
 
 echo

@@ -10,7 +10,7 @@ Protocol facts (byte positions relative to the echoed command, i.e. without repo
   error reply: ff aa (device asleep / command not supported)
 Source: G-Helper (GPL-3.0) app/Peripherals/{Keyboard,Mouse}; facts only, no code copied.
 """
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 import argparse
 import json
@@ -213,20 +213,20 @@ def label(b: Battery, bolt: bool = True) -> str:
 
 def swiftbar(results: list[Battery]) -> str:
     if not results:
-        return ":keyboard: – :computermouse: – | color=gray\n---\nKeine ASUS-Geräte gefunden\nAktualisieren | refresh=true"
+        return ":keyboard: – :computermouse: – | color=gray\n---\nNo ASUS devices found\nRefresh | refresh=true"
     title = "  ".join(f"{SF_ICONS[b.device]} {label(b)}" for b in results)
     lowest = min((b for b in results if b.percent is not None), key=lambda b: b.percent, default=None)
     title_color = color_for(lowest) if lowest and color_for(lowest) in ("red", "orange") else ""
     lines = [title + (f" | color={title_color}" if title_color else ""), "---"]
-    status_text = {"asleep": "schläft / nicht verbunden", "no-response": "keine Antwort", "error": "Fehler"}
+    status_text = {"asleep": "asleep / not connected", "no-response": "no response", "error": "error"}
     for b in results:
         detail = label(b, bolt=False) if b.percent is not None else status_text.get(b.status, b.status)
-        extra = " (lädt)" if b.charging else ""
+        extra = " (charging)" if b.charging else ""
         c = color_for(b)
         lines.append(f"{b.name}: {detail}{extra} | sfimage={'keyboard' if b.device == 'keyboard' else 'computermouse'}"
                      + (f" color={c}" if c else ""))
-        lines.append(f"--Verbindung: {b.connection}")
-    lines += ["---", "Aktualisieren | refresh=true"]
+        lines.append(f"--Connection: {b.connection}")
+    lines += ["---", "Refresh | refresh=true"]
     return "\n".join(lines)
 
 
@@ -245,7 +245,7 @@ def main() -> int:
             return 0
         results = read_all(args.debug)
     except ImportError:
-        msg = "Python-Modul 'hid' fehlt: pip install hidapi"
+        msg = "Python module 'hid' is missing: pip install hidapi"
         print(f":keyboard: ! | color=red\n---\n{msg}" if args.swiftbar else msg, file=sys.stdout if args.swiftbar else sys.stderr)
         return 0 if args.swiftbar else 1
     if args.json:
@@ -254,9 +254,9 @@ def main() -> int:
         print(swiftbar(results))
     else:
         if not results:
-            print("Keine ASUS-Geräte gefunden.")
+            print("No ASUS devices found.")
         for b in results:
-            print(f"{b.name:<22} {label(b, bolt=False):>5}{' lädt' if b.charging else ''}  ({b.connection}, {b.status})")
+            print(f"{b.name:<22} {label(b, bolt=False):>5}{' charging' if b.charging else ''}  ({b.connection}, {b.status})")
     return 0
 
 

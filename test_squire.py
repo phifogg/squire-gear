@@ -192,10 +192,10 @@ class SwiftBarTests(unittest.TestCase):
     def test_asleep_device(self):
         out = rb.swiftbar([rb.Battery("mouse", "ROG Keris II Origin", "omni", None, status="asleep")])
         self.assertIn(":computermouse: –", out.splitlines()[0])
-        self.assertIn("schläft", out)
+        self.assertIn("asleep", out)
 
     def test_nothing_found(self):
-        self.assertIn("Keine ASUS-Geräte", rb.swiftbar([]))
+        self.assertIn("No ASUS devices", rb.swiftbar([]))
 
 
 if __name__ == "__main__":
