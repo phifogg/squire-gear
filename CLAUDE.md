@@ -181,6 +181,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] Logo zone drawn as the Squire shield in the LED colour, with glow; dark imprint when off (2026-11-10)
   - [x] Connection, profile, firmware only in the Device group, not again under the title (2026-11-10)
   - [ ] Design proposal artifact still shows the DPI button on top (the app is the reference now)
+  - [ ] "Same effect on all three zones" switch in the LED editor (was in the design proposal, missing in the
+        window): one edit sets logo, wheel and side; Apply then writes all three and saves once
   - [ ] Polling rate: confirm 1000 vs 8000 Hz in Armoury Crate (raw 0x63), then drop the "not confirmed" note
   - [ ] LED speed: Armoury Crate on Windows: is there a speed control for the Keris? If so, capture it (the G-Helper
         speed byte has no effect, tested 2026-11-10)
