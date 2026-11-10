@@ -169,6 +169,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] Settings window polish (collect small UI findings here, work through them before or with the write step):
   - [x] DPI button is on the underside: no hotspot on the top view, DPI is a chip (2026-11-10)
   - [x] No colour row for multi-colour effects (cycle, rainbow, battery) (2026-11-10)
+  - [x] Logo zone drawn as the Squire shield in the LED colour, with glow; dark imprint when off (2026-11-10)
   - [ ] Design proposal artifact still shows the DPI button on top (the app is the reference now)
   - [ ] Polling rate: confirm 1000 vs 8000 Hz in Armoury Crate (raw 0x63), then drop the "not confirmed" note
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it

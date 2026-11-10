@@ -84,6 +84,11 @@ def _led_paint(led: Optional[dict], gradient_id: str) -> tuple[str, float]:
     return led["color"], opacity
 
 
+# The Squire shield with a blade (same shape as linux/icons/squire-gear-symbolic.svg, 16x16): the logo zone.
+SHIELD = ("M8 0.8 L14.2 3 V7.8 C14.2 11.4 11.6 13.9 8 15.2 C4.4 13.9 1.8 11.4 1.8 7.8 V3 Z "
+          "M8 3 L7.1 4.4 V9.2 H5.4 V10.4 H7.1 V12.4 H8.9 V10.4 H10.6 V9.2 H8.9 V4.4 Z")
+
+
 def mouse_svg(s: squire.MouseSettings) -> str:
     """Top view of the mouse (own neutral artwork, no ASUS marks) with the three light zones."""
     wheel, wheel_o = _led_paint(s.leds.get("wheel"), "cycle")
@@ -95,6 +100,7 @@ def mouse_svg(s: squire.MouseSettings) -> str:
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="200" height="370" viewBox="0 0 200 370">
 <defs>
 <filter id="glow" x="-60%" y="-20%" width="220%" height="140%"><feGaussianBlur stdDeviation="6"/></filter>
+<filter id="logo-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.6"/></filter>
 <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2f37"/><stop offset="1" stop-color="#1c2026"/></linearGradient>
 <linearGradient id="cycle" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5a5a"/><stop offset="0.5" stop-color="#3ccf7a"/><stop offset="1" stop-color="#3d8bff"/></linearGradient>
 <linearGradient id="cycle-v" x1="0" y1="178" x2="0" y2="300" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff5a5a"/><stop offset="0.5" stop-color="#3ccf7a"/><stop offset="1" stop-color="#3d8bff"/></linearGradient>
@@ -106,8 +112,11 @@ def mouse_svg(s: squire.MouseSettings) -> str:
 <path d="M14 146 C 60 158 140 158 186 146" fill="none" stroke="#0f1115" stroke-width="2"/>
 <rect x="89" y="46" width="22" height="46" rx="11" fill="#14171b" stroke="#3a404a"/>
 <rect x="93" y="52" width="14" height="34" rx="7" fill="{wheel}" opacity="{wheel_o}"/>
-<path d="M100 222 L 122 246 L 100 270 L 78 246 Z" fill="{logo}" opacity="{logo_o}"/>
-<path d="M100 232 L 112 246 L 100 260 L 88 246 Z" fill="#1c2026"/>
+<g transform="translate(76 222) scale(3)">
+<path d="{SHIELD}" fill="{logo}" opacity="{round(logo_o * 0.7, 2)}" filter="url(#logo-glow)"/>
+<path d="{SHIELD}" fill="#14171b" fill-rule="evenodd" stroke="#3a404a" stroke-width="0.35"/>
+<path d="{SHIELD}" fill="{logo}" fill-rule="evenodd" opacity="{logo_o}"/>
+</g>
 </svg>"""
 
 

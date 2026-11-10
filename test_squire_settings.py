@@ -40,6 +40,13 @@ class DrawingTests(unittest.TestCase):
         root = ET.fromstring(ui.mouse_svg(self.settings(logo="static", wheel="off", side="color-cycle")))
         self.assertEqual((root.get("width"), root.get("height")), (str(ui.DRAWING[2]), str(ui.DRAWING[3])))
 
+    def test_logo_is_the_squire_shield_in_the_led_colour(self):
+        svg = ui.mouse_svg(self.settings(logo="static"))
+        self.assertIn(ui.SHIELD, svg)
+        self.assertIn('fill="#3d8bff" fill-rule="evenodd"', svg)
+        icon = (Path(ui.__file__).parent / "icons" / "squire-gear-symbolic.svg").read_text()
+        self.assertEqual(" ".join(ui.SHIELD.split()), " ".join(icon.split('d="')[1].split('"')[0].split()))
+
     def test_zone_paint(self):
         self.assertEqual(ui._led_paint({"mode": "static", "brightness": 100, "color": "#ff0000"}, "g"), ("#ff0000", 1.0))
         self.assertEqual(ui._led_paint({"mode": "off", "brightness": 100, "color": "#ff0000"}, "g"), ("none", 0.0))
