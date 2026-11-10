@@ -3,7 +3,7 @@ import SquireCore
 import SquireHID
 import UserNotifications
 
-/// Polls the mouse in the background and publishes the result. Read-only: see HIDMouseReader.
+/// Polls keyboard and mouse in the background and publishes the result. Read-only: see HIDMouseReader.
 @MainActor
 final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = BatteryStore()
@@ -12,6 +12,7 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
     static let notifyKey = "notifyWhenLow"
     private static let stateKey = "notificationState"
 
+    @Published private(set) var keyboard: Battery?
     @Published private(set) var mouse: Battery?
     @Published private(set) var lastUpdate: Date?
     @Published private(set) var isRefreshing = false
@@ -39,7 +40,7 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
         isRefreshing = true
         // IOKit reads pump a run loop for up to ~1 s: keep them off the main thread.
         DispatchQueue.global(qos: .utility).async {
-            let result = HIDMouseReader().read()
+            let result = HIDReader().read()
             DispatchQueue.main.async { self.apply(result.batteries) }
         }
     }
@@ -47,6 +48,7 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
     private func apply(_ batteries: [Battery]) {
         isRefreshing = false
         lastUpdate = Date()
+        keyboard = batteries.first { $0.device == .keyboard }
         mouse = batteries.first { $0.device == .mouse }
         guard UserDefaults.standard.bool(forKey: Self.notifyKey) else { return }
         let outcome = LowBattery.evaluate(batteries, state: notificationState)

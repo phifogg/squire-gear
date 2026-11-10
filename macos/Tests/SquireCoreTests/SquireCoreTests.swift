@@ -13,6 +13,61 @@ private func mouseReply(percent: UInt8, charging: Bool = false, warning: UInt8 =
     return (reportID.map { [$0] } ?? []) + payload
 }
 
+/// Keyboard reply: [reportID?] 12 01 .. with the documented offsets.
+private func keyboardReply(percent: UInt8, charging: Bool = false, warning: UInt8 = 20,
+                           reportID: UInt8? = 0x02) -> [UInt8] {
+    var payload = [UInt8](repeating: 0, count: 63)
+    payload[0] = 0x12; payload[1] = 0x01
+    payload[5] = percent
+    payload[8] = charging ? 1 : 0
+    payload[9] = warning
+    payload[10] = percent
+    return (reportID.map { [$0] } ?? []) + payload
+}
+
+@Suite struct KeyboardTests {
+    @Test func omniKeyboardPacket() {
+        #expect(Array(Target.omniKeyboard.packet(length: 64).prefix(3)) == [0x02, 0x12, 0x01])
+    }
+
+    @Test func wiredKeyboardPacketIsUnnumbered() {
+        let packet = Target.wiredKeyboard.packet(length: 65)
+        #expect(packet.count == 65)
+        #expect(Array(packet.prefix(3)) == [0x00, 0x12, 0x01])
+    }
+
+    @Test func onlyDocumentedQueriesAreBuilt() {
+        for target in Target.all {
+            #expect(target.query == [0x12, 0x01] || target.query == [0x12, 0x07])
+        }
+    }
+
+    @Test func omniKeyboard() {
+        let b = ReplyParser.interpret(replies: [keyboardReply(percent: 82)], target: .omniKeyboard)
+        #expect(b.percent == 82)
+        #expect(!b.charging)
+        #expect(b.lowWarning == 20)
+    }
+
+    @Test func replyWithoutReportID() {
+        let b = ReplyParser.interpret(replies: [keyboardReply(percent: 55, charging: true, reportID: nil)],
+                                      target: .omniKeyboard)
+        #expect(b.percent == 55)
+        #expect(b.charging)
+    }
+
+    @Test func fallsBackToByte5() {
+        var reply = keyboardReply(percent: 70)
+        reply[1 + 10] = 0xFF   // invalid percentage byte
+        #expect(ReplyParser.interpret(replies: [reply], target: .omniKeyboard).percent == 70)
+    }
+
+    @Test func errorReplyMeansAsleep() {
+        let reply: [UInt8] = [0x02, 0xFF, 0xAA] + [UInt8](repeating: 0, count: 61)
+        #expect(ReplyParser.interpret(replies: [reply], target: .omniKeyboard).status == .asleep)
+    }
+}
+
 @Suite struct PacketTests {
     @Test func omniMousePacket() {
         let packet = Target.omniMouse.packet(length: 64)
@@ -169,16 +224,20 @@ private func mouseReply(percent: UInt8, charging: Bool = false, warning: UInt8 =
         return try JSONDecoder().decode(Vectors.self, from: Data(contentsOf: root.appendingPathComponent("protocol.json")))
     }
 
-    @Test func mouseVectors() throws {
-        let mouseVectors = try Self.load().vectors.filter { $0.device == "mouse" }
-        #expect(mouseVectors.count >= 3)   // omni, omni charging, wired charging
-        for vector in mouseVectors {
+    @Test func allVectors() throws {
+        let vectors = try Self.load().vectors
+        #expect(vectors.filter { $0.device == "mouse" }.count >= 3)      // omni, omni charging, wired charging
+        #expect(vectors.filter { $0.device == "keyboard" }.count >= 3)   // omni, omni charging, wired charging
+        for vector in vectors {
             let bytes = vector.reply.split(separator: " ").compactMap { UInt8($0, radix: 16) }
-            let target = vector.connection == "wired" ? Target.wiredMouse : Target.omniMouse
+            let target = Target.all.first {
+                $0.device.rawValue == vector.device && $0.connection.rawValue == vector.connection
+            }!
             let battery = ReplyParser.interpret(replies: [bytes], target: target)
-            #expect(battery.percent == vector.expect.percent, "\(vector.connection)")
-            #expect(battery.charging == vector.expect.charging, "\(vector.connection)")
-            #expect(battery.lowWarning == vector.expect.lowWarning, "\(vector.connection)")
+            let label = "\(vector.device) \(vector.connection)"
+            #expect(battery.percent == vector.expect.percent, "\(label)")
+            #expect(battery.charging == vector.expect.charging, "\(label)")
+            #expect(battery.lowWarning == vector.expect.lowWarning, "\(label)")
         }
     }
 }

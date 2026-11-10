@@ -14,16 +14,38 @@ func batteryColor(for battery: Battery) -> Color {
 struct MenuBarLabel: View {
     @ObservedObject var store: BatteryStore
 
+    // MenuBarExtra only shows a single image or plain text: inline SF Symbols in Text are dropped and a
+    // second HStack child is ignored. So the whole label is drawn into one template NSImage, which macOS
+    // tints for light/dark mode.
     var body: some View {
+        Image(nsImage: rendered)
+    }
+
+    private var rendered: NSImage {
+        let content = HStack(spacing: 8) {
+            part("keyboard", store.keyboard)
+            part("computermouse", store.mouse)
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.black)   // template images use only the alpha channel
+        .fixedSize()
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        let image = renderer.nsImage ?? NSImage()
+        image.isTemplate = true
+        return image
+    }
+
+    private func part(_ symbol: String, _ battery: Battery?) -> some View {
         HStack(spacing: 3) {
-            Image(systemName: "computermouse")
-            Text(text)
+            Image(systemName: symbol)
+            Text(text(battery))
         }
     }
 
-    private var text: String {
-        guard let percent = store.mouse?.percent else { return "–" }
-        return "\(percent)%" + (store.mouse?.charging == true ? "⚡︎" : "")
+    private func text(_ battery: Battery?) -> String {
+        guard let percent = battery?.percent else { return "–" }
+        return "\(percent)%" + (battery?.charging == true ? "⚡︎" : "")
     }
 }
 
@@ -34,13 +56,13 @@ struct PopoverView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let mouse = store.mouse {
-                DeviceRow(battery: mouse)
-            } else {
-                Label(store.lastUpdate == nil ? "Looking for devices…" : "No ASUS mouse found",
-                      systemImage: "computermouse")
+            if store.keyboard == nil && store.mouse == nil {
+                Label(store.lastUpdate == nil ? "Looking for devices…" : "No ASUS devices found",
+                      systemImage: "keyboard")
                     .foregroundStyle(.secondary)
             }
+            if let keyboard = store.keyboard { DeviceRow(battery: keyboard) }
+            if let mouse = store.mouse { DeviceRow(battery: mouse) }
             Divider()
             Toggle("Notify when low", isOn: $notifyWhenLow)
             Toggle("Launch at login", isOn: $launchAtLogin)
@@ -68,7 +90,8 @@ struct DeviceRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(battery.name, systemImage: "computermouse").font(.headline)
+            Label(battery.name, systemImage: battery.device == .keyboard ? "keyboard" : "computermouse")
+                .font(.headline)
             if let percent = battery.percent {
                 HStack {
                     ProgressView(value: Double(percent), total: 100).tint(batteryColor(for: battery))

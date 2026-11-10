@@ -3,14 +3,16 @@ import IOKit
 import IOKit.hid
 import SquireCore
 
-/// Reads the mouse battery through IOKit. Read-only: the only report ever written is the `12 07` query.
+/// Reads keyboard and mouse batteries through IOKit. Read-only: the only reports ever written are the
+/// `12 01` (keyboard) and `12 07` (mouse) queries.
 ///
 /// Safety rules (same as the Python version, see CLAUDE.md):
 /// - the manager only matches vendor-defined usage pages (>= 0xFF00); the normal keyboard/mouse
 ///   input collections are never opened
 /// - every wait is bounded (no blocking reads)
-public final class HIDMouseReader {
-    /// Vendor pages seen on the Omni receiver interface 2 (ff00-ff02) and the wired mouse interface 0 (ff01).
+public final class HIDReader {
+    /// Vendor pages seen on the Omni receiver interface 2 (ff00-ff02), the wired keyboard interface 1 (ff00)
+    /// and the wired mouse interface 0 (ff01).
     /// The ffc0-ffc2 pages belong to other interfaces and are deliberately not matched.
     static let vendorPages = [0xFF00, 0xFF01, 0xFF02]
 
@@ -52,21 +54,23 @@ public final class HIDMouseReader {
                        + "pages=\(Self.usagePages(device).map { String($0, radix: 16) })")
         }
 
-        var batteries: [Battery] = []
-        for target in Target.mouseTargets {
-            if batteries.contains(where: { $0.percent != nil }) { break }   // already have a value
+        var found: [Battery.Device: Battery] = [:]
+        for target in Target.all {
+            if found[target.device]?.percent != nil { continue }   // already have a value (e.g. via Omni)
             for device in devices where Self.intProperty(device, kIOHIDProductIDKey) == Int(target.productID) {
                 guard Self.usagePages(device).contains(where: { $0 >= SquireProtocol.minVendorUsagePage }) else {
                     continue   // never touch non-vendor collections
                 }
                 let battery = query(device, target: target, log: &log)
-                if batteries.isEmpty || (batteries[0].percent == nil && battery.percent != nil) {
-                    batteries = [battery]
+                if found[target.device] == nil || (found[target.device]?.percent == nil && battery.percent != nil) {
+                    found[target.device] = battery
                 }
-                if battery.percent != nil { break }
+                // macOS lists one entry per collection of the same interface: a definitive answer
+                // ("ok" or "asleep") from the first one is enough.
+                if battery.status == .ok || battery.status == .asleep { break }
             }
         }
-        return Result(batteries: batteries, diagnostics: log)
+        return Result(batteries: [Battery.Device.keyboard, .mouse].compactMap { found[$0] }, diagnostics: log)
     }
 
     private func query(_ device: IOHIDDevice, target: Target, log: inout [String]) -> Battery {
