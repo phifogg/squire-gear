@@ -109,12 +109,15 @@ public enum ReplyParser {
     /// Turns the replies read after one query into a `Battery`. Pure: the IO layer feeds the replies in.
     public static func interpret(replies: [[UInt8]], target: Target) -> Battery {
         var result = Battery(device: target.device, name: target.name, connection: target.connection)
+        var sawError = false
         for reply in replies {
             if reply.isEmpty { break }   // read timeout
             if isError(reply, reportID: target.reportID) {
-                result.status = .asleep
+                // The receiver sometimes sends `ff aa` right before the real reply (seen on the keyboard,
+                // 2026-11-10): keep looking; it only means "asleep" if no valid reply follows.
+                sawError = true
                 result.raw = hex(reply)
-                return result
+                continue
             }
             guard let base = echoIndex(in: reply, query: target.query) else { continue }  // other traffic
             result.raw = hex(reply)
@@ -128,7 +131,7 @@ public enum ReplyParser {
             result.lowWarning = parsed.lowWarning
             return result
         }
-        result.status = .noResponse
+        result.status = sawError ? .asleep : .noResponse
         return result
     }
 

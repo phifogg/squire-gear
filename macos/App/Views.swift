@@ -53,6 +53,9 @@ struct PopoverView: View {
     @ObservedObject var store: BatteryStore
     @AppStorage(BatteryStore.notifyKey) private var notifyWhenLow = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    // Hidden: hold Option while clicking the menu bar item to show the debug section.
+    @State private var showDebug = NSEvent.modifierFlags.contains(.option)
+    @State private var flagsMonitor: Any?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -73,6 +76,17 @@ struct PopoverView: View {
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 }
+            if showDebug {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Debug").font(.caption).bold().foregroundStyle(.secondary)
+                    Text("Notifications: \(store.notificationStatus)").font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Send test notification") { store.sendTestNotification() }
+                        Button("Reset state") { store.resetNotificationState() }
+                    }
+                }
+            }
             Divider()
             HStack {
                 Button("Refresh now") { store.refresh() }.disabled(store.isRefreshing)
@@ -82,6 +96,18 @@ struct PopoverView: View {
         }
         .padding(14)
         .frame(width: 280)
+        .onAppear {
+            showDebug = NSEvent.modifierFlags.contains(.option)
+            store.refreshNotificationStatus()
+            flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+                if event.modifierFlags.contains(.option) { showDebug = true }
+                return event
+            }
+        }
+        .onDisappear {
+            if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+            flagsMonitor = nil
+        }
     }
 }
 

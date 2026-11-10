@@ -66,6 +66,14 @@ private func keyboardReply(percent: UInt8, charging: Bool = false, warning: UInt
         let reply: [UInt8] = [0x02, 0xFF, 0xAA] + [UInt8](repeating: 0, count: 61)
         #expect(ReplyParser.interpret(replies: [reply], target: .omniKeyboard).status == .asleep)
     }
+
+    /// Seen on real hardware: `02 ff aa` immediately followed by the real reply.
+    @Test func errorFollowedByValidReplyIsOk() {
+        let error: [UInt8] = [0x02, 0xFF, 0xAA] + [UInt8](repeating: 0, count: 61)
+        let b = ReplyParser.interpret(replies: [error, keyboardReply(percent: 78)], target: .omniKeyboard)
+        #expect(b.status == .ok)
+        #expect(b.percent == 78)
+    }
 }
 
 @Suite struct PacketTests {

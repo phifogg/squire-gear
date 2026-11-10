@@ -28,30 +28,23 @@ public final class HIDReader {
     public func read() -> Result {
         var log: [String] = []
         let access = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
-        log.append("Input Monitoring before open: \(Self.describe(access))")
+        log.append("Input Monitoring: \(Self.describe(access))")
 
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         let matching = Self.vendorPages.map {
             [kIOHIDVendorIDKey: Int(SquireProtocol.vendorID), kIOHIDDeviceUsagePageKey: $0] as CFDictionary
         }
         IOHIDManagerSetDeviceMatchingMultiple(manager, matching as CFArray)
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
-        let opened = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        log.append("IOHIDManagerOpen: \(Self.describe(opened))")
-        log.append("Input Monitoring after open: \(Self.describe(IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)))")
-        defer {
-            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
-            IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        }
-        guard opened == kIOReturnSuccess else { return Result(batteries: [], diagnostics: log) }
-
-        pump(0.3)   // let the manager enumerate
+        // The manager is only used to find devices; it is never opened. Every query talks to its own,
+        // freshly created IOHIDDevice (see query), like hidapi does.
         let devices = (IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>) ?? []
         for device in devices {
             log.append("device pid=\(String(Self.intProperty(device, kIOHIDProductIDKey) ?? 0, radix: 16)) "
                        + "name=\(Self.stringProperty(device, kIOHIDProductKey) ?? "?") "
                        + "transport=\(Self.stringProperty(device, kIOHIDTransportKey) ?? "?") "
-                       + "pages=\(Self.usagePages(device).map { String($0, radix: 16) })")
+                       + "pages=\(Self.usagePages(device).map { String($0, radix: 16) }) "
+                       + "maxIn=\(Self.intProperty(device, kIOHIDMaxInputReportSizeKey) ?? -1) "
+                       + "maxOut=\(Self.intProperty(device, kIOHIDMaxOutputReportSizeKey) ?? -1)")
         }
 
         var found: [Battery.Device: Battery] = [:]
@@ -73,23 +66,52 @@ public final class HIDReader {
         return Result(batteries: [Battery.Device.keyboard, .mouse].compactMap { found[$0] }, diagnostics: log)
     }
 
-    private func query(_ device: IOHIDDevice, target: Target, log: inout [String]) -> Battery {
+    static let reportBufferSize = 65   // max input report is 64 bytes on all known devices
+
+    /// Owns everything the input-report callback can touch (box + buffer) and frees it only after `transact`
+    /// has returned, i.e. after the private IOHIDDevice that holds the callback registration is gone.
+    ///
+    /// Why: IOKit keeps input-report callbacks in a per-device set and calls every entry for each report.
+    /// Unregistering (callback nil, with or without the original context) did NOT remove the entry, so
+    /// re-using one IOHIDDevice for several queries left stale entries whose freed context was later
+    /// called: use-after-free crashes (reproduced with `squire-probe --repeat`, 2026-11-10). A device
+    /// object that is used for exactly one query and then released cannot call back any more.
+    private func query(_ listed: IOHIDDevice, target: Target, log: inout [String]) -> Battery {
+        let box = ReplyBox()
+        let context = Unmanaged.passRetained(box)
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Self.reportBufferSize)
+        defer {
+            context.release()
+            buffer.deallocate()
+        }
+        return transact(listed, target: target, box: box, context: context.toOpaque(), buffer: buffer, log: &log)
+    }
+
+    private func transact(_ listed: IOHIDDevice, target: Target, box: ReplyBox, context: UnsafeMutableRawPointer,
+                          buffer: UnsafeMutablePointer<UInt8>, log: inout [String]) -> Battery {
         var battery = Battery(device: target.device, name: target.name, connection: target.connection)
+        // Fresh object for this one query, never the manager's shared one.
+        let service = IOHIDDeviceGetService(listed)
+        guard service != MACH_PORT_NULL, let device = IOHIDDeviceCreate(kCFAllocatorDefault, service) else {
+            battery.status = .error; battery.raw = "create failed"; return battery
+        }
         let opened = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
         log.append("[\(target.connection.rawValue)] IOHIDDeviceOpen: \(Self.describe(opened))")
         guard opened == kIOReturnSuccess else { battery.status = .error; battery.raw = "open failed"; return battery }
-        defer { IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone)) }
 
-        let box = ReplyBox()
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 65)
-        defer { buffer.deallocate() }
-        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
-        defer { IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue) }
-        IOHIDDeviceRegisterInputReportCallback(device, buffer, 65, { context, _, _, _, _, report, length in
+        let runLoop: CFRunLoop = CFRunLoopGetCurrent()
+        IOHIDDeviceScheduleWithRunLoop(device, runLoop, CFRunLoopMode.defaultMode.rawValue)
+        IOHIDDeviceRegisterInputReportCallback(device, buffer, Self.reportBufferSize, { context, _, _, _, _, report, length in
             guard let context else { return }
             Unmanaged<ReplyBox>.fromOpaque(context).takeUnretainedValue().replies
                 .append(Array(UnsafeBufferPointer(start: report, count: length)))
-        }, Unmanaged.passUnretained(box).toOpaque())
+        }, context)
+        defer {
+            // Same order as hidapi's hid_close. The object itself is released when this function returns.
+            IOHIDDeviceRegisterInputReportCallback(device, buffer, Self.reportBufferSize, nil, context)
+            IOHIDDeviceUnscheduleFromRunLoop(device, runLoop, CFRunLoopMode.defaultMode.rawValue)
+            IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+        }
         pump(0.01)
         box.replies.removeAll()   // drop stale input
 
@@ -111,8 +133,8 @@ public final class HIDReader {
         let deadline = Date().addingTimeInterval(Double(SquireProtocol.readTimeoutMs) / 1000)
         while Date() < deadline {
             pump(0.02)
-            if box.replies.contains(where: { ReplyParser.isError($0, reportID: target.reportID)
-                                             || ReplyParser.echoIndex(in: $0, query: target.query) != nil }) { break }
+            // Stop at the first echoed reply. An `ff aa` alone does not end the wait: a valid reply may follow.
+            if box.replies.contains(where: { ReplyParser.echoIndex(in: $0, query: target.query) != nil }) { break }
         }
         for reply in box.replies {
             log.append("[\(target.connection.rawValue)] < \(ReplyParser.hex(reply))")

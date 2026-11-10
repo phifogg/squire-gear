@@ -16,6 +16,8 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
     @Published private(set) var mouse: Battery?
     @Published private(set) var lastUpdate: Date?
     @Published private(set) var isRefreshing = false
+    /// Notification permission as macOS reports it (shown in the hidden debug section).
+    @Published private(set) var notificationStatus = "unknown"
 
     private var timer: Timer?
     private var notificationState: NotificationState = {
@@ -54,18 +56,53 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
         let outcome = LowBattery.evaluate(batteries, state: notificationState)
         for battery in outcome.toNotify {
             let level = battery.lowWarning ?? SquireProtocol.defaultLowWarning
-            let content = UNMutableNotificationContent()
-            content.title = "\(battery.name): battery low"
-            content.body = "\(battery.percent ?? 0)% left (device warning level \(level)%)"
-            content.sound = .default
-            UNUserNotificationCenter.current().add(
-                UNNotificationRequest(identifier: "low-\(battery.device.rawValue)", content: content, trigger: nil))
+            post(title: "\(battery.name): battery low",
+                 body: "\(battery.percent ?? 0)% left (device warning level \(level)%)",
+                 identifier: "low-\(battery.device.rawValue)")
         }
-        if outcome.state != notificationState {
-            notificationState = outcome.state
-            if let data = try? JSONEncoder().encode(outcome.state) {
-                UserDefaults.standard.set(data, forKey: Self.stateKey)
+        saveState(outcome.state)
+    }
+
+    private func post(title: String, body: String, identifier: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
+    }
+
+    private func saveState(_ state: NotificationState) {
+        guard state != notificationState else { return }
+        notificationState = state
+        if let data = try? JSONEncoder().encode(state) {
+            UserDefaults.standard.set(data, forKey: Self.stateKey)
+        }
+    }
+
+    // MARK: hidden debug helpers (hold Option while opening the popover)
+
+    /// Same banner path as a real low-battery alert, without a real low battery and without touching the state.
+    func sendTestNotification() {
+        post(title: "Squire test: battery low", body: "This is a test notification. No real battery is low.",
+             identifier: "test-\(UUID().uuidString)")
+        refreshNotificationStatus()
+    }
+
+    /// Re-arms the real alert: forget which devices were already notified.
+    func resetNotificationState() {
+        saveState(NotificationState())
+    }
+
+    func refreshNotificationStatus() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let text: String
+            switch settings.authorizationStatus {
+            case .authorized, .provisional: text = "allowed (\(settings.alertStyle == .none ? "alert style: none" : "banners/alerts"))"
+            case .denied: text = "denied: enable Squire in System Settings → Notifications"
+            case .notDetermined: text = "not asked yet"
+            @unknown default: text = "unknown"
             }
+            DispatchQueue.main.async { self.notificationStatus = text }
         }
     }
 
