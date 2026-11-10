@@ -196,5 +196,55 @@
         "notes": "[7]=00 low (G-Helper). [5..6]=ff ff unknown."
       }
     ]
+  },
+  "mouse_writes": {
+    "_comment": "Write commands confirmed on the ROG Keris II Origin via the ROG Omni receiver (report ID 03), 2026-11-10 on Linux. Each was approved by the owner before the first send. 'packet' = the first bytes of the 64-byte report (rest zero). Not saved (no 50 03): the change lives in the mouse's RAM. Confirmed 2026-11-10: an unsaved LED change is lost when the mouse is switched off and on; afterwards 12 03 00 reads the saved state again (colour cycle 50 %). 50 03 is needed for a change to persist.",
+    "writes": [
+      {
+        "name": "logo static red 100 %",
+        "args": {
+          "zone": "logo",
+          "mode": "static",
+          "brightness": 100,
+          "color": "#ff0000"
+        },
+        "packet": "03 51 28 00 00 00 64 ff 00 00 00 00 00",
+        "read_back": {
+          "mode": "static",
+          "brightness": 100,
+          "color": "#ff0000"
+        },
+        "notes": "51 28 = set LED, [2] zone 0 = logo, [3] 00, [4] mode 00 static, [5] 0x64 = 100 %, [6..8] RGB, [9..11] direction/random/speed = 0. Confirmed by the owner: logo lit steady bright red. Read back with 12 03 00 matched."
+      },
+      {
+        "name": "logo colour cycle 50 % (restore)",
+        "args": {
+          "zone": "logo",
+          "mode": "color-cycle",
+          "brightness": 50,
+          "color": "#ff0000"
+        },
+        "packet": "03 51 28 00 00 02 32 ff 00 00 00 00 00",
+        "read_back": {
+          "mode": "color-cycle",
+          "brightness": 50,
+          "color": "#ff0000"
+        },
+        "notes": "Restored the owner's setting. Read back matched."
+      }
+    ],
+    "save": {
+      "packet": "03 50 03",
+      "notes": "Save to flash. Confirmed 2026-11-10 by the owner in the settings window: logo set to static blue, Apply (write, read back, 50 03), mouse switched off and on: the logo stayed blue. Restored to colour cycle 50 % the same way."
+    },
+    "speed_test": {
+      "packets": [
+        "03 51 28 00 00 02 32 ff 00 00 00 00 05",
+        "03 51 28 00 00 02 32 ff 00 00 00 00 09",
+        "03 51 28 00 00 01 64 35 84 e4 00 00 05",
+        "03 51 28 00 00 01 64 35 84 e4 00 00 09"
+      ],
+      "notes": "2026-11-10, not saved: byte [11] (G-Helper animation speed 05 fast / 09 slow) is stored per zone (read back at [12] of 12 03 NN) but has no visible effect on the Keris II Origin: colour cycle looked the same as the other zones, breathing pulsed 3 times in 10 s with 05 and with 09. Squire does not send it; restored to the owner's saved breathing 100 % #3584e4 with [11] = 00."
+    }
   }
 }

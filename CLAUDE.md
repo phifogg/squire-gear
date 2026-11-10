@@ -90,7 +90,14 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   refuses anything else: `12 01` (keyboard battery), `12 07` (mouse battery) and the mouse settings reads
   `12 00`, `12 04 00`, `12 04 02`, `12 04 03`, `12 03 00..02`, `12 06` (approved by the owner 2026-11-10).
   All are get requests (first byte `12`); writes start with `50`/`51`. Never send `50 02` (switch profile):
-  read the active profile only. Any new command, read or write, must be shown to the owner before it is sent,
+  read the active profile only.
+- **Writes** go through `packet(..., write=True)` and must pass `is_allowed_write()`. Approved and confirmed so far
+  (2026-11-10): `51 28 <zone> 00 <mode> <brightness %> <r g b> 00 00 00` (set one LED zone; modes 00 static,
+  01 breathing, 02 cycle, 04 react, 06 battery, f0 off), and `50 03` (save to flash, approved 2026-11-10) only
+  with an explicit --save / Apply click. set_led() checks the mouse is awake, reads the zone before, writes, reads back, and saves only on a match.
+  Confirmed: an unsaved change (no 50 03) is lost when the mouse is switched off and on; it lives in RAM only.
+  Confirmed: with 50 03 the change survives off/on (owner, settings window, logo blue, 2026-11-10).
+  No LED speed: byte [11] is stored but ignored by the Keris (breathing 3 pulses/10 s at 05 and 09); not sent. Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
@@ -170,8 +177,11 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] DPI button is on the underside: no hotspot on the top view, DPI is a chip (2026-11-10)
   - [x] No colour row for multi-colour effects (cycle, rainbow, battery) (2026-11-10)
   - [x] Logo zone drawn as the Squire shield in the LED colour, with glow; dark imprint when off (2026-11-10)
+  - [x] Connection, profile, firmware only in the Device group, not again under the title (2026-11-10)
   - [ ] Design proposal artifact still shows the DPI button on top (the app is the reference now)
   - [ ] Polling rate: confirm 1000 vs 8000 Hz in Armoury Crate (raw 0x63), then drop the "not confirmed" note
+  - [ ] LED speed: Armoury Crate on Windows: is there a speed control for the Keris? If so, capture it (the G-Helper
+        speed byte has no effect, tested 2026-11-10)
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

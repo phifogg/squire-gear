@@ -480,6 +480,151 @@ class DeviceLockTests(unittest.TestCase):
             self.assertIsNone(lock.handle)
 
 
+class LedWriteTests(unittest.TestCase):
+    def test_exact_bytes_static_red_logo(self):
+        command = rb.led_command("logo", "static", 100, "#ff0000")
+        self.assertEqual(command.hex(" "), "51 28 00 00 00 64 ff 00 00 00 00 00")
+        data = rb.packet(0x03, command, 64, write=True)
+        self.assertEqual((len(data), data[:13].hex(" ")), (64, "03 51 28 00 00 00 64 ff 00 00 00 00 00"))
+        self.assertEqual(set(data[13:]), {0})
+
+    def test_exact_bytes_restore_cycle_and_zones(self):
+        self.assertEqual(rb.led_command("logo", "color-cycle", 50, "#ff0000").hex(" "), "51 28 00 00 02 32 ff 00 00 00 00 00")
+        self.assertEqual(rb.led_command("wheel", "off", 0)[2], 1)
+        self.assertEqual(rb.led_command("side", "off", 0)[2:5], bytes([2, 0, 0xF0]))
+
+    def test_speed_byte_is_not_sent(self):
+        # tested on the device: the Keris ignores it, so the allowlist keeps [9..11] at 00
+        command = rb.led_command("logo", "color-cycle", 50, "#ff0000")
+        self.assertEqual(command[9:], b"\0\0\0")
+        self.assertFalse(rb.is_allowed_write(command[:11] + b"\x05"))
+
+    def test_invalid_values_are_refused(self):
+        for args in (("bottom", "static", 50), ("logo", "rainbow", 50), ("logo", "static", 101),
+                     ("logo", "static", -1), ("logo", "static", 50, "#12345")):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                rb.led_command(*args)
+
+    def test_reads_cannot_send_writes_and_writes_need_the_flag(self):
+        command = rb.led_command("logo", "static", 100, "#ff0000")
+        with self.assertRaises(ValueError):
+            rb.packet(0x03, command, 64)                    # write without write=True
+        with self.assertRaises(ValueError):
+            rb.packet(0x03, rb.MOUSE_QUERY, 64, write=True)  # a read is not a write
+        tampered = command[:9] + b"\x01\x00\x00"           # direction byte set: still refused
+        with self.assertRaises(ValueError):
+            rb.packet(0x03, tampered, 64, write=True)
+        self.assertEqual(rb.packet(0x03, rb.SAVE_COMMAND, 64, write=True)[:3].hex(" "), "03 50 03")
+        with self.assertRaises(ValueError):
+            rb.packet(0x03, bytes([0x50, 0x02, 0x01]), 64, write=True)   # profile switch: never
+
+    def test_dry_run_touches_no_device(self):
+        class NoBackend:
+            def enumerate(self, *a):
+                raise AssertionError("dry run must not enumerate")
+        result = rb.set_led("logo", "static", 100, "#ff0000", dry_run=True, hid=NoBackend())
+        self.assertEqual(result.status, "dry-run")
+        self.assertTrue(result.sent[0].startswith("03 51 28 00 00 00 64 ff 00 00"))
+        self.assertEqual(len(rb.set_led("logo", "static", 100, "#ff0000", save=True, dry_run=True).sent), 3)
+
+
+class RealWriteVectorTests(unittest.TestCase):
+    """protocol.json mouse_writes: the exact bytes confirmed on the device must not change."""
+
+    def test_confirmed_writes(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["writes"]
+        for w in data:
+            with self.subTest(name=w["name"]):
+                a = w["args"]
+                command = rb.led_command(a["zone"], a["mode"], a["brightness"], a["color"])
+                head = bytes.fromhex(w["packet"])
+                packet = rb.packet(0x03, command, 64, write=True)
+                self.assertEqual(packet[:len(head)], head)
+                self.assertEqual(set(packet[len(head):]), {0})
+                self.assertTrue(rb.led_matches(a, w["read_back"]))
+
+
+class SetLedTests(unittest.TestCase):
+    """set_led against a fake mouse that keeps an LED state and answers like the real one."""
+
+    def make(self, awake=True):
+        state = {"logo": [0x02, 50, 0xFF, 0x00, 0x00]}
+        sent = []
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                data = bytes(data)
+                sent.append(data)
+                cmd = data[1:]
+                if not awake:
+                    self.replies = [[0x03, 0xFF, 0xAA] + [0] * 61]
+                elif cmd[:2] == b"\x12\x07":
+                    self.replies = [settings_reply(rb.MOUSE_QUERY, {4: 80})]
+                elif cmd[:3] == b"\x12\x03\x00":
+                    mode, bright, r, g, b = state["logo"]
+                    self.replies = [settings_reply(cmd[:3], {4: mode, 5: bright, 6: r, 7: g, 8: b})]
+                elif cmd[:2] == b"\x51\x28":
+                    state["logo"] = list(cmd[4:9])
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:2] == b"\x50\x03":
+                    self.replies = [settings_reply(cmd[:2], {})]
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                return [{"path": b"omni", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}] \
+                    if pid == rb.PID_OMNI else []
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent, state
+
+    def test_write_then_read_back(self):
+        backend, sent, state = self.make()
+        result = rb.set_led("logo", "static", 100, "#ff0000", hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.before, {"mode": "color-cycle", "brightness": 50, "color": "#ff0000"})
+        self.assertEqual(result.after, {"mode": "static", "brightness": 100, "color": "#ff0000"})
+        self.assertFalse(result.saved)
+        # battery (awake?), read before, the write, read back: and no save without asking
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 03", "51 28", "12 03"])
+
+    def test_save_only_when_asked(self):
+        backend, sent, _ = self.make()
+        result = rb.set_led("logo", "static", 100, "#ff0000", save=True, hid=backend)
+        self.assertTrue(result.saved)
+        self.assertEqual(sent[-1][1:3].hex(" "), "50 03")
+
+    def test_asleep_mouse_gets_no_write(self):
+        backend, sent, state = self.make(awake=False)
+        result = rb.set_led("logo", "static", 100, "#ff0000", hid=backend)
+        self.assertEqual(result.status, "asleep")
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07"])
+
+    def test_mismatch_is_reported_and_not_saved(self):
+        backend, sent, state = self.make()
+        orig = backend.device
+
+        def stubborn():
+            dev = orig()
+            write = dev.write
+
+            def ignore_led(data):
+                if bytes(data)[1:3] == b"\x51\x28":
+                    sent.append(bytes(data))
+                    dev.replies = []
+                    return len(data)
+                return write(data)
+            dev.write = ignore_led
+            return dev
+        backend.device = stubborn
+        result = rb.set_led("logo", "static", 100, "#ff0000", save=True, hid=backend)
+        self.assertEqual(result.status, "mismatch")
+        self.assertFalse(result.saved)
+        self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])
+
+
 class LowBatteryNotificationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

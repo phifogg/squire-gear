@@ -72,6 +72,39 @@ class DrawingTests(unittest.TestCase):
         self.assertTrue(all(zone in ui.ZONE_TITLES for zone in set(ui.HOTSPOTS) | {z for z, _ in ui.CHIPS}))
 
 
+class EditTests(unittest.TestCase):
+    def setUp(self):
+        _, self.s = ui.demo_data()       # logo: colour cycle 50 %, #ff0000
+
+    def test_only_the_logo_is_editable_for_now(self):
+        self.assertEqual(ui.EDITABLE_ZONES, ("logo",))
+        self.assertNotIn("rainbow", ui.EDIT_MODES)
+
+    def test_no_pending_change_means_nothing_to_send(self):
+        self.assertEqual(ui.changed_zones(self.s, {}), [])
+        self.assertEqual(ui.planned_packets(self.s, {}), [])
+        same = {"logo": dict(self.s.leds["logo"])}
+        self.assertEqual(ui.changed_zones(self.s, same), [])
+        self.assertIn("Nothing is sent", ui.apply_status(self.s, same))
+
+    def test_pending_change_previews_and_plans_exact_bytes(self):
+        pending = {"logo": {"mode": "static", "brightness": 100, "color": "#3d8bff"}}
+        preview = ui.preview_settings(self.s, pending)
+        self.assertEqual(preview.leds["logo"]["mode"], "static")
+        self.assertEqual(self.s.leds["logo"]["mode"], "color-cycle")     # original untouched
+        self.assertEqual(ui.zone_summary(preview, "logo"), "Static · 100 %")
+        self.assertEqual(ui.planned_packets(self.s, pending),
+                         ["03 51 28 00 00 00 64 3d 8b ff 00 00 00 …", "03 50 03 …  (save)"])
+        self.assertIn("Logo light", ui.apply_status(self.s, pending))
+
+    def test_wired_mouse_plans_unnumbered_packets(self):
+        import dataclasses
+        wired = dataclasses.replace(self.s, connection="wired")
+        lines = ui.planned_packets(wired, {"logo": {"mode": "off", "brightness": 50, "color": "#ff0000"}})
+        self.assertEqual(lines[0][:17], "00 51 28 00 00 f0")
+        self.assertEqual(lines[1][:5], "00 50")
+
+
 class TrayLinkTests(unittest.TestCase):
     def test_tray_opens_the_settings_script_next_to_it(self):
         command = tray.settings_command()

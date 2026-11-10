@@ -143,6 +143,43 @@ def swatch_svg(color: str) -> str:
             f'fill="{color}" stroke="#00000033" stroke-width="1"/></svg>')
 
 
+# Zones whose writes are confirmed on the device; the others are shown read-only for now.
+EDITABLE_ZONES = ("logo",)
+EDIT_MODES = list(squire.LED_WRITE_MODES)      # static, breathing, color-cycle, react, battery, off
+
+
+def preview_settings(s: squire.MouseSettings, pending: dict) -> squire.MouseSettings:
+    """The settings as they will be after Apply (for the drawing and the callouts)."""
+    import dataclasses
+    return dataclasses.replace(s, leds={**s.leds, **pending})
+
+
+def changed_zones(s: squire.MouseSettings, pending: dict) -> list[str]:
+    return [zone for zone, led in pending.items() if not squire.led_matches(led, s.leds.get(zone))]
+
+
+def apply_status(s: squire.MouseSettings, pending: dict) -> str:
+    zones = changed_zones(s, pending)
+    if not zones:
+        return "Showing the values read from the mouse. Nothing is sent until you click Apply."
+    names = ", ".join(ZONE_TITLES[z] for z in zones)
+    return f"Not sent yet: {names}. Apply writes it to the mouse, reads it back and saves it."
+
+
+def planned_packets(s: squire.MouseSettings, pending: dict) -> list[str]:
+    """Exactly what Apply will send, for "Show bytes"."""
+    report_id = 0x03 if s.connection == "omni" else None
+    length = 64 if s.connection == "omni" else 65
+    lines = []
+    for zone in changed_zones(s, pending):
+        led = pending[zone]
+        command = squire.led_command(zone, led["mode"], led["brightness"], led["color"])
+        lines.append(squire.packet(report_id, command, length, write=True)[:13].hex(" ") + " …")
+    if lines:
+        lines.append(squire.packet(report_id, squire.SAVE_COMMAND, length, write=True)[:3].hex(" ") + " …  (save)")
+    return lines
+
+
 CSS = """
 .squire-stage { background: alpha(@view_fg_color, 0.03); }
 .squire-hotspot { min-width: 0; min-height: 0; padding: 0; background: transparent; box-shadow: none;
@@ -153,6 +190,7 @@ CSS = """
 .squire-callout.selected { outline: 2px solid @accent_bg_color; outline-offset: -2px; }
 .squire-line { min-height: 0; border-top: 1px dashed alpha(@view_fg_color, 0.45); }
 .squire-line.selected { border-top: 1px solid @accent_bg_color; }
+.squire-bytes { font-family: monospace; font-size: 0.9em; }
 """
 
 
@@ -193,6 +231,9 @@ def run(argv: list[str]) -> int:
             self.selected = "logo"
             self.device = "mouse"
             self.loading = False
+            self.applying = False
+            self.pending: dict = {}        # zone -> led dict not sent yet
+            self.value_labels: dict = {}   # zone -> callout/chip value label
 
             split = Adw.NavigationSplitView(min_sidebar_width=240, max_sidebar_width=280)
             split.set_sidebar(self.build_sidebar())
@@ -202,11 +243,12 @@ def run(argv: list[str]) -> int:
             self.refresh_button.connect("clicked", lambda _: self.refresh())
             header.pack_start(self.refresh_button)
             self.content_view.add_top_bar(header)
-            self.banner = Adw.Banner(title="Read-only preview: Squire shows the mouse settings but does not change "
-                                           "them yet.", revealed=True)
+            self.banner = Adw.Banner(title="The logo light can be changed so far; the rest is shown only. "
+                                           "Nothing is sent until you click Apply.", revealed=True)
             self.content_view.add_top_bar(self.banner)
             split.set_content(Adw.NavigationPage(title="Settings", child=self.content_view))
-            self.set_content(split)
+            self.toasts = Adw.ToastOverlay(child=split)
+            self.set_content(self.toasts)
             self.show_status("Reading the mouse…", "Squire reads the current settings. This takes about a second.",
                              spinner=True)
             self.refresh()
@@ -251,7 +293,7 @@ def run(argv: list[str]) -> int:
 
         # reading -------------------------------------------------------------------------------------------
         def refresh(self):
-            if self.loading:
+            if self.loading or self.applying:
                 return
             self.loading = True
             self.refresh_button.set_sensitive(False)
@@ -286,6 +328,12 @@ def run(argv: list[str]) -> int:
             if zone and zone != self.selected:
                 self.select(zone)
                 GLib.timeout_add(400, self.capture)
+                return False
+            if "edit" in SCREENSHOT[2:] and zone in EDITABLE_ZONES and zone not in self.pending:
+                self.on_edit(zone, mode="static", brightness=100, color="#3d8bff")   # sample edit, not sent
+                self.render()
+                self.bytes_toggle.set_active(True)
+                GLib.timeout_add(600, self.capture)
                 return False
             w, h = self.get_width(), self.get_height()
             snapshot = Gtk.Snapshot()
@@ -335,11 +383,16 @@ def run(argv: list[str]) -> int:
             stage_scroll.add_css_class("squire-stage")
             body.append(stage_scroll)
             body.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
-            inspector = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, hexpand=False)
-            inspector.set_size_request(360, -1)
+            column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=False)
+            column.set_size_request(360, -1)
+            inspector = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
             inspector.set_child(self.build_inspector(s))
-            body.append(inspector)
+            column.append(inspector)
+            column.append(Gtk.Separator())
+            column.append(self.build_apply_bar())
+            body.append(column)
             self.content_view.set_content(body)
+            self.update_preview()
 
         def select(self, zone):
             self.selected = zone
@@ -351,14 +404,14 @@ def run(argv: list[str]) -> int:
             title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             title.append(Gtk.Label(label=s.name, xalign=0, css_classes=["title-2"]))
             b = self.batteries.get("mouse")
-            battery = f" · battery {b.percent} %" if b and b.percent is not None else ""
-            title.append(Gtk.Label(label=f"{'Omni receiver' if s.connection == 'omni' else 'Wired'}{battery} · "
-                                         f"profile {s.profile} · firmware {s.firmware}",
-                                   xalign=0, css_classes=["dim-label"]))
+            if b and b.percent is not None:   # connection, profile, firmware: in the Device group on the right
+                title.append(Gtk.Label(label=f"Battery {b.percent} %" + (" · charging" if b.charging else ""),
+                                       xalign=0, css_classes=["dim-label"]))
             fixed.put(title, 32, 24)
 
             x, y, w, h = DRAWING
-            drawing = Gtk.Picture.new_for_paintable(texture(mouse_svg(s)))
+            drawing = Gtk.Picture.new_for_paintable(texture(mouse_svg(preview_settings(s, self.pending))))
+            self.drawing = drawing
             drawing.set_size_request(w, h)
             drawing.set_can_shrink(True)
             drawing.set_alternative_text("Top view of the mouse with its three light zones")
@@ -394,7 +447,9 @@ def run(argv: list[str]) -> int:
             button.set_size_request(width, -1)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             box.append(Gtk.Label(label=title, xalign=0, css_classes=["heading"]))
-            box.append(Gtk.Label(label=value, xalign=0, css_classes=["dim-label", "caption"], wrap=True))
+            value_label = Gtk.Label(label=value, xalign=0, css_classes=["dim-label", "caption"], wrap=True)
+            self.value_labels[zone] = value_label
+            box.append(value_label)
             button.set_child(box)
             button.connect("clicked", lambda _b: self.select(zone))
             return button
@@ -403,7 +458,9 @@ def run(argv: list[str]) -> int:
             page = Adw.PreferencesPage(hexpand=False)
             zone = self.selected
             group = Adw.PreferencesGroup(title=ZONE_TITLES[zone], description=ZONE_KINDS[zone])
-            if zone in squire.LED_ZONES:
+            if zone in EDITABLE_ZONES and s.leds.get(zone):
+                self.build_led_editor(group, zone, self.pending.get(zone) or s.leds[zone])
+            elif zone in squire.LED_ZONES:
                 led = s.leds.get(zone)
                 if led:
                     group.add(row("Effect", mode_name(led["mode"])))
@@ -413,6 +470,7 @@ def run(argv: list[str]) -> int:
                         group.add(row("Color", led["color"], suffix=swatch(led["color"])))
                 else:
                     group.add(row("Not read", ""))
+                group.add(row("Editing", "comes next", "Only the logo light can be changed so far"))
             elif zone == "dpi":
                 count = s.dpi_stage_count or len(s.dpi)
                 for i, dpi in enumerate(s.dpi[:count]):
@@ -444,6 +502,150 @@ def run(argv: list[str]) -> int:
             page.add(info)
             return page
 
+        # editing -------------------------------------------------------------------------------------------
+        def build_led_editor(self, group, zone, led):
+            modes = Gtk.StringList.new([mode_name(m) for m in EDIT_MODES])
+            effect = Adw.ComboRow(title="Effect", model=modes)
+            effect.set_selected(EDIT_MODES.index(led["mode"]) if led["mode"] in EDIT_MODES
+                                else Gtk.INVALID_LIST_POSITION)
+            effect.connect("notify::selected",
+                           lambda r, _p: self.on_edit(zone, mode=EDIT_MODES[r.get_selected()])
+                           if r.get_selected() < len(EDIT_MODES) else None)
+            group.add(effect)
+
+            self.brightness_row = Adw.ActionRow(title="Brightness")
+            scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+            scale.set_value(led["brightness"])
+            scale.set_digits(0)
+            scale.set_draw_value(True)
+            scale.set_value_pos(Gtk.PositionType.RIGHT)
+            scale.set_size_request(180, -1)
+            for mark in (0, 25, 50, 75, 100):
+                scale.add_mark(mark, Gtk.PositionType.BOTTOM, None)
+            scale.connect("value-changed", lambda sc: self.on_edit(zone, brightness=int(round(sc.get_value()))))
+            self.brightness_row.add_suffix(scale)
+            group.add(self.brightness_row)
+
+            self.color_row = Adw.ActionRow(title="Color")
+            button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
+            rgba = Gdk.RGBA()
+            rgba.parse(led["color"])
+            button.set_rgba(rgba)
+
+            def on_color(btn, _p):
+                c = btn.get_rgba()
+                self.on_edit(zone, color="#%02x%02x%02x" % (round(c.red * 255), round(c.green * 255),
+                                                             round(c.blue * 255)))
+            button.connect("notify::rgba", on_color)
+            self.color_row.add_suffix(button)
+            group.add(self.color_row)
+            self.editor_zone = zone
+
+        def on_edit(self, zone, **changes):
+            current = self.settings.leds[zone]
+            led = dict(self.pending.get(zone) or current)
+            led.update(changes)
+            if squire.led_matches(led, current) and led["mode"] == current["mode"]:
+                self.pending.pop(zone, None)       # back to what the mouse has
+            else:
+                self.pending[zone] = led
+            self.update_preview()
+
+        def build_apply_bar(self):
+            bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12,
+                          margin_start=12, margin_end=12)
+            self.apply_label = Gtk.Label(xalign=0, wrap=True, max_width_chars=40, css_classes=["dim-label", "caption"])
+            bar.append(self.apply_label)
+            buttons = Gtk.Box(spacing=8)
+            self.bytes_toggle = Gtk.ToggleButton(label="Show bytes")
+            buttons.append(self.bytes_toggle)
+            buttons.append(Gtk.Box(hexpand=True))
+            self.revert_button = Gtk.Button(label="Revert")
+            self.revert_button.connect("clicked", lambda _b: self.revert())
+            self.apply_button = Gtk.Button(label="Apply", css_classes=["suggested-action"])
+            self.apply_button.connect("clicked", lambda _b: self.apply_changes())
+            buttons.append(self.revert_button)
+            buttons.append(self.apply_button)
+            bar.append(buttons)
+            self.bytes_label = Gtk.Label(xalign=0, selectable=True, wrap=True, max_width_chars=40,
+                                         css_classes=["squire-bytes"])
+            revealer = Gtk.Revealer(child=self.bytes_label)
+            self.bytes_toggle.bind_property("active", revealer, "reveal-child")
+            bar.append(revealer)
+            return bar
+
+        def update_preview(self):
+            s = self.settings
+            if s is None or s.status != "ok":
+                return
+            preview = preview_settings(s, self.pending)
+            if getattr(self, "drawing", None) is not None:
+                self.drawing.set_paintable(texture(mouse_svg(preview)))
+            for zone, label in self.value_labels.items():
+                label.set_label(zone_summary(preview, zone))
+            zone = getattr(self, "editor_zone", None)
+            if zone == self.selected and zone in preview.leds:
+                mode = preview.leds[zone]["mode"]
+                self.brightness_row.set_visible(mode != "off")
+                self.color_row.set_visible(shows_color(mode))
+            if getattr(self, "apply_label", None) is not None:
+                dirty = bool(changed_zones(s, self.pending))
+                self.apply_label.set_label("Applying…" if self.applying else apply_status(s, self.pending))
+                self.apply_button.set_sensitive(dirty and not self.applying)
+                self.revert_button.set_sensitive(dirty and not self.applying)
+                lines = planned_packets(s, self.pending)
+                self.bytes_label.set_label("\n".join(lines) if lines else "Nothing to send.")
+
+        def revert(self):
+            self.pending.clear()
+            self.render()
+
+        def apply_changes(self):
+            if self.applying or not changed_zones(self.settings, self.pending):
+                return
+            self.applying = True
+            self.refresh_button.set_sensitive(False)
+            self.update_preview()
+            work = {zone: dict(self.pending[zone]) for zone in changed_zones(self.settings, self.pending)}
+
+            def worker():
+                results = {}
+                for zone, led in work.items():
+                    if DEMO:   # demo: nothing is sent
+                        results[zone] = squire.WriteResult("ok", after=led, saved=True, message="demo")
+                        continue
+                    try:
+                        results[zone] = squire.set_led(zone, led["mode"], led["brightness"], led["color"], save=True)
+                    except Exception as error:  # keep the window alive
+                        results[zone] = squire.WriteResult("error", message=str(error))
+                GLib.idle_add(self.apply_done, results)
+
+            threading.Thread(target=worker, name="squire-write", daemon=True).start()
+
+        def apply_done(self, results):
+            self.applying = False
+            self.refresh_button.set_sensitive(True)
+            failed = []
+            for zone, result in results.items():
+                if result.status == "ok" and result.saved and result.after:
+                    self.settings.leds[zone] = result.after
+                    self.pending.pop(zone, None)
+                else:
+                    failed.append((zone, result))
+            if failed:
+                texts = {"asleep": "The mouse is asleep. Move it and click Apply again.",
+                         "mismatch": "The mouse did not take the new value (read back differs). Nothing was saved.",
+                         "no-response": "The mouse did not answer. Move it and click Apply again."}
+                body = "\n".join(f"{ZONE_TITLES[z]}: {texts.get(r.status, r.status + ' ' + r.message)}"
+                                  for z, r in failed)
+                dialog = Adw.AlertDialog(heading="Not applied", body=body)
+                dialog.add_response("ok", "OK")
+                dialog.present(self)
+            else:
+                self.toasts.add_toast(Adw.Toast(title="Saved to the mouse" + (" (demo, nothing sent)" if DEMO else "")))
+            self.render()
+            return False
+
     class App(Adw.Application):
         def __init__(self):
             # single instance, except for --screenshot runs, which must not just raise an open window
@@ -473,7 +675,7 @@ def main() -> int:
     args = sys.argv[1:]
     if "--screenshot" in args:
         i = args.index("--screenshot")
-        SCREENSHOT.extend(a for a in args[i + 1:i + 3] if not a.startswith("-"))
+        SCREENSHOT.extend(a for a in args[i + 1:i + 4] if not a.startswith("-"))
         del args[i:i + 1 + len(SCREENSHOT)]
     global DEMO
     DEMO = "--demo" in args
