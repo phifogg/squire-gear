@@ -1,0 +1,57 @@
+{
+  "_comment": "Real replies captured 2026-11-10 on macOS via ROG Omni receiver (pid 1ace, interface 2). Byte indices in 'notes' include the report-ID byte at [0]. Shared test vectors for the Linux (Python) and macOS (Swift) apps.",
+  "vectors": [
+    {
+      "device": "keyboard",
+      "model": "ROG Falchion RX Low Profile",
+      "connection": "omni",
+      "report_id": 2,
+      "query": "12 01",
+      "reply": "02 12 01 00 00 00 4e 02 01 00 14 4e f8 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "expect": {
+        "percent": 78,
+        "charging": false
+      },
+      "notes": "[6]=78 %, [7]=02 sleep step?, [9]=00 charging, [10]=0x14 low-battery warning 20 %?, [11]=78 %, [12..13]=0x0ff8 4088 mV?"
+    },
+    {
+      "device": "mouse",
+      "model": "ROG Keris II Origin",
+      "connection": "omni",
+      "report_id": 3,
+      "query": "12 07",
+      "reply": "03 12 07 00 00 4d 02 14 6d 0f 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "expect": {
+        "percent": 77,
+        "charging": false
+      },
+      "notes": "[5]=77 %, [6]=02 auto power-off step, [7]=0x14 low-battery warning 20 %, [8..9]=0x0f6d 3949 mV?, [10]=00 charging, [12]=01 unknown"
+    },
+    {
+      "device": "mouse",
+      "model": "ROG Keris II Origin",
+      "connection": "omni",
+      "report_id": 3,
+      "query": "12 07",
+      "reply": "03 12 07 00 00 4d 02 14 1f 10 01 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "expect": {
+        "percent": 77,
+        "charging": true
+      },
+      "notes": "charging via USB power adapter: [10]=01, [8..9]=0x101f 4127 mV (up from 3949 mV unplugged) supports the voltage hypothesis"
+    },
+    {
+      "device": "keyboard",
+      "model": "ROG Falchion RX Low Profile",
+      "connection": "omni",
+      "report_id": 2,
+      "query": "12 01",
+      "reply": "02 12 01 00 00 00 4e 02 01 01 14 4e 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "expect": {
+        "percent": 78,
+        "charging": true
+      },
+      "notes": "charging via USB power adapter: [9]=01; [12..13]=00 00 while charging (voltage not reported?)"
+    }
+  ]
+}
