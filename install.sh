@@ -25,9 +25,16 @@ install -m 0755 "$HERE/squire.py" "$APP_DIR/squire.py"
 
 if [ -n "$PLUGIN_DIR" ] && [ -d "$PLUGIN_DIR" ]; then
   PLUGIN="$PLUGIN_DIR/squire-gear.5m.sh"
+  VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$HERE/squire.py")"
   cat > "$PLUGIN" <<EOF
 #!/bin/bash
-# Squire SwiftBar plugin: ASUS ROG keyboard + mouse battery, refreshes every 5 minutes.
+# <xbar.title>Squire</xbar.title>
+# <xbar.version>v$VERSION</xbar.version>
+# <xbar.author>Daniel Draes</xbar.author>
+# <xbar.author.github>phifogg</xbar.author.github>
+# <xbar.desc>Battery level and charging state of ASUS ROG Falchion RX Low Profile and Keris II Origin (Omni receiver), read-only.</xbar.desc>
+# <xbar.dependencies>python3,hidapi</xbar.dependencies>
+# <xbar.abouturl>https://github.com/phifogg/squire-gear</xbar.abouturl>
 exec "$APP_DIR/venv/bin/python" "$APP_DIR/squire.py" --swiftbar
 EOF
   chmod 0755 "$PLUGIN"
