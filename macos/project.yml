@@ -1,0 +1,41 @@
+name: Squire
+options:
+  bundleIdPrefix: io.github.phifogg
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+packages:
+  SquireKit:
+    path: .          # macos/Package.swift: SquireCore + SquireHID
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"            # ad hoc for local runs; set DEVELOPMENT_TEAM later for the App Group
+targets:
+  Squire:
+    type: application
+    platform: macOS
+    sources: [App]
+    dependencies:
+      - package: SquireKit
+        product: SquireCore
+      - package: SquireKit
+        product: SquireHID
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleName: Squire
+        CFBundleDisplayName: Squire
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSUIElement: true               # menu bar only, no Dock icon
+        LSMinimumSystemVersion: "13.0"
+        NSHumanReadableCopyright: "MIT License, Daniel Draes"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.phifogg.squire
+        ENABLE_HARDENED_RUNTIME: NO
+        GENERATE_INFOPLIST_FILE: NO
