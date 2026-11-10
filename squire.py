@@ -10,7 +10,7 @@ Protocol facts (byte positions relative to the echoed command, i.e. without repo
   error reply: ff aa (device asleep / command not supported)
 Source: G-Helper (GPL-3.0) app/Peripherals/{Keyboard,Mouse}; facts only, no code copied.
 """
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 import argparse
 import json
