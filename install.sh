@@ -35,7 +35,7 @@ if [ -n "$PLUGIN_DIR" ] && [ -d "$PLUGIN_DIR" ]; then
 # <xbar.desc>Battery level and charging state of ASUS ROG Falchion RX Low Profile and Keris II Origin (Omni receiver), read-only.</xbar.desc>
 # <xbar.dependencies>python3,hidapi</xbar.dependencies>
 # <xbar.abouturl>https://github.com/phifogg/squire-gear</xbar.abouturl>
-exec "$APP_DIR/venv/bin/python" "$APP_DIR/squire.py" --swiftbar
+exec "$APP_DIR/venv/bin/python" "$APP_DIR/squire.py" --swiftbar --notify
 EOF
   chmod 0755 "$PLUGIN"
   echo "→ SwiftBar plugin: $PLUGIN"

@@ -5,19 +5,22 @@ Only sends the two documented *query* commands (keyboard 12 01, mouse 12 07).
 It never changes lighting, settings or firmware.
 
 Protocol facts (byte positions relative to the echoed command, i.e. without report ID):
-  keyboard  12 01 -> [10] battery %, [5] battery % (copy), [8] charging
-  mouse     12 07 -> [4]  battery %, [9] charging
+  keyboard  12 01 -> [10] battery %, [5] battery % (copy), [8] charging, [9] low-battery warning %
+  mouse     12 07 -> [4]  battery %, [9] charging, [6] low-battery warning %
   error reply: ff aa (device asleep / command not supported)
 Source: G-Helper (GPL-3.0) app/Peripherals/{Keyboard,Mouse}; facts only, no code copied.
 """
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, asdict
-from typing import Optional
+from pathlib import Path
+from typing import Callable, Optional
 
 VID = 0x0B05
 PID_OMNI = 0x1ACE           # ROG Omni receiver (keyboard + mouse share it)
@@ -29,6 +32,8 @@ MOUSE_QUERY = bytes([0x12, 0x07])
 READ_TIMEOUT_MS = 400
 DRAIN_TIMEOUT_MS = 5   # hidapi: timeout 0 means "block forever", so never pass 0
 MAX_READS = 8
+DEFAULT_LOW_WARNING = 20   # used when a device does not report a plausible warning level
+STATE_FILE = Path.home() / "Library" / "Application Support" / "squire-gear" / "notified.json"
 
 
 @dataclass
@@ -39,6 +44,7 @@ class Battery:
     percent: Optional[int]   # None = not reachable
     charging: bool = False
     status: str = "ok"       # ok | asleep | no-response | error
+    low_warning: Optional[int] = None  # device-configured low-battery warning level in %
     raw: str = ""
 
 
@@ -97,6 +103,14 @@ def parse(device: str, reply: bytes, base: int) -> tuple[Optional[int], bool]:
     return pct, charging
 
 
+def parse_warning(device: str, reply: bytes, base: int) -> Optional[int]:
+    """Low-battery warning level (%) configured on the device, or None if absent/implausible."""
+    p = reply[base:]
+    index = 9 if device == "keyboard" else 6
+    value = p[index] if len(p) > index else None
+    return value if value is not None and 1 <= value <= 100 else None
+
+
 def query(dev, target: Target, debug: bool = False) -> Battery:
     result = Battery(target.device, target.name, "omni" if target.pid == PID_OMNI else "wired", None)
     # drain stale input (bounded, short timeout)
@@ -137,6 +151,7 @@ def query(dev, target: Target, debug: bool = False) -> Battery:
             result.status = "asleep"   # G-Helper treats 0 % + not charging as disconnected
             return result
         result.percent, result.charging = pct, charging
+        result.low_warning = parse_warning(target.device, reply, base)
         return result
     result.status = "no-response"
     return result
@@ -194,6 +209,52 @@ def list_devices() -> None:
               f"name={info.get('product_string')!r} path={info['path']!r}")
 
 
+def send_notification(title: str, message: str) -> None:
+    """macOS notification via osascript (arguments passed separately, no string interpolation into the script)."""
+    script = "on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run"
+    try:
+        subprocess.run(["osascript", "-e", script, title, message], check=False, timeout=10,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _load_state(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def check_low_battery(results: list[Battery], state_path: Path = STATE_FILE,
+                      notify: Callable[[str, str], None] = send_notification) -> list[str]:
+    """Notify once per device when the battery falls to the device's own warning level.
+
+    The flag resets when the device charges or recovers above the level. Asleep devices keep their state.
+    Returns the devices that were notified."""
+    state = _load_state(state_path)
+    original = dict(state)
+    notified = []
+    for b in results:
+        if b.percent is None:
+            continue
+        level = b.low_warning if b.low_warning is not None else DEFAULT_LOW_WARNING
+        if b.charging or b.percent > level:
+            state.pop(b.device, None)
+        elif not state.get(b.device):
+            notify(f"{b.name}: battery low", f"{b.percent}% left (device warning level {level}%)")
+            state[b.device] = True
+            notified.append(b.device)
+    if state != original:
+        try:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(json.dumps(state))
+        except OSError:
+            pass
+    return notified
+
+
 SF_ICONS = {"keyboard": ":keyboard:", "mouse": ":computermouse:"}  # SwiftBar renders :name: as SF Symbol
 
 
@@ -236,6 +297,8 @@ def main() -> int:
     mode.add_argument("--json", action="store_true", help="JSON output")
     mode.add_argument("--swiftbar", action="store_true", help="SwiftBar/xbar menu bar output")
     mode.add_argument("--list", action="store_true", help="List ASUS HID collections; sends nothing")
+    ap.add_argument("--notify", action="store_true",
+                    help="Send a macOS notification when a battery reaches the device's low-battery warning level")
     ap.add_argument("--debug", action="store_true", help="Print raw replies to stderr")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = ap.parse_args()
@@ -248,6 +311,8 @@ def main() -> int:
         msg = "Python module 'hid' is missing: pip install hidapi"
         print(f":keyboard: ! | color=red\n---\n{msg}" if args.swiftbar else msg, file=sys.stdout if args.swiftbar else sys.stderr)
         return 0 if args.swiftbar else 1
+    if args.notify:
+        check_low_battery(results)
     if args.json:
         print(json.dumps([asdict(b) for b in results], indent=2, ensure_ascii=False))
     elif args.swiftbar:

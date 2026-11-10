@@ -1,6 +1,9 @@
+import json
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 
 import squire as rb
 
@@ -132,6 +135,7 @@ class RealCaptureTests(unittest.TestCase):
                 reply = list(bytes.fromhex(v["reply"]))
                 b = rb.query(FakeDevice([reply]), targets[(v["device"], v["report_id"])])
                 self.assertEqual((b.percent, b.charging), (v["expect"]["percent"], v["expect"]["charging"]))
+                self.assertEqual(b.low_warning, v["expect"]["low_warning"])
 
 
 class EnumerateAndReadAllTests(unittest.TestCase):
@@ -175,6 +179,65 @@ class EnumerateAndReadAllTests(unittest.TestCase):
         self.assertEqual([(b.device, b.percent) for b in results], [("keyboard", 90), ("mouse", 12)])
         self.assertTrue(all(d.closed for d in self.devices["all"]))
         self.assertTrue(all(d.path == b"omni-if2" for d in self.devices["all"]))
+
+
+class LowBatteryNotificationTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = Path(self.tmp.name) / "sub" / "notified.json"
+        self.sent = []
+
+    def run_check(self, *batteries):
+        return rb.check_low_battery(list(batteries), self.state, lambda t, m: self.sent.append((t, m)))
+
+    @staticmethod
+    def mouse(pct, charging=False, warning=20, status="ok"):
+        return rb.Battery("mouse", "ROG Keris II Origin", "omni", pct, charging, status, low_warning=warning)
+
+    def test_warning_level_is_parsed_from_reply(self):
+        r = mouse_reply(50)
+        r[1 + 6] = 30
+        self.assertEqual(rb.query(FakeDevice([r]), OMNI_MOUSE).low_warning, 30)
+        k = kb_reply(50)
+        k[1 + 9] = 15
+        self.assertEqual(rb.query(FakeDevice([k]), OMNI_KB).low_warning, 15)
+
+    def test_implausible_warning_level_is_none(self):
+        for value in (0, 101, 255):
+            r = mouse_reply(50)
+            r[1 + 6] = value
+            self.assertIsNone(rb.query(FakeDevice([r]), OMNI_MOUSE).low_warning)
+
+    def test_notifies_at_device_level_not_a_fixed_one(self):
+        self.assertEqual(self.run_check(self.mouse(25, warning=30)), ["mouse"])
+        self.assertIn("device warning level 30%", self.sent[0][1])
+
+    def test_no_notification_above_device_level(self):
+        self.assertEqual(self.run_check(self.mouse(25, warning=20)), [])
+        self.assertEqual(self.sent, [])
+
+    def test_notifies_once_until_recovered(self):
+        self.run_check(self.mouse(19))
+        self.run_check(self.mouse(18))
+        self.assertEqual(len(self.sent), 1)
+        self.run_check(self.mouse(18, charging=True))   # charging resets
+        self.run_check(self.mouse(17))
+        self.assertEqual(len(self.sent), 2)
+
+    def test_asleep_device_keeps_state(self):
+        self.run_check(self.mouse(10))
+        self.run_check(self.mouse(None, warning=None, status="asleep"))
+        self.run_check(self.mouse(9))
+        self.assertEqual(len(self.sent), 1)
+
+    def test_falls_back_to_default_without_device_level(self):
+        self.assertEqual(self.run_check(self.mouse(rb.DEFAULT_LOW_WARNING, warning=None)), ["mouse"])
+
+    def test_corrupt_state_file_is_ignored(self):
+        self.state.parent.mkdir(parents=True)
+        self.state.write_text("not json")
+        self.assertEqual(self.run_check(self.mouse(5)), ["mouse"])
 
 
 class SwiftBarTests(unittest.TestCase):
