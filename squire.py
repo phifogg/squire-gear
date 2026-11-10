@@ -10,7 +10,7 @@ Protocol facts (byte positions relative to the echoed command, i.e. without repo
   error reply: ff aa (device asleep / command not supported)
 Source: G-Helper (GPL-3.0) app/Peripherals/{Keyboard,Mouse}; facts only, no code copied.
 """
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 import argparse
 import json
@@ -131,6 +131,7 @@ def query(dev, target: Target, debug: bool = False) -> Battery:
     if written is None or written < 0:
         result.status, result.raw = "error", last_error
         return result
+    saw_error = False
     for _ in range(MAX_READS):
         reply = bytes(dev.read(65, READ_TIMEOUT_MS))
         if not reply:
@@ -140,8 +141,9 @@ def query(dev, target: Target, debug: bool = False) -> Battery:
         if debug:
             print(f"[{target.device}] < {reply.hex(' ')}", file=sys.stderr)
         if is_error(reply, target.report_id):
-            result.status, result.raw = "asleep", reply.hex(" ")
-            return result
+            # the receiver sometimes sends ff aa right before the real reply: keep reading
+            saw_error, result.raw = True, reply.hex(" ")
+            continue
         base = find_echo(reply, target.query)
         if base is None:
             continue  # other traffic (e.g. button/profile events); keep reading
@@ -153,7 +155,7 @@ def query(dev, target: Target, debug: bool = False) -> Battery:
         result.percent, result.charging = pct, charging
         result.low_warning = parse_warning(target.device, reply, base)
         return result
-    result.status = "no-response"
+    result.status = "asleep" if saw_error else "no-response"
     return result
 
 

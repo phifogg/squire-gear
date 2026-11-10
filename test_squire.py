@@ -102,6 +102,11 @@ class QueryTests(unittest.TestCase):
         b = rb.query(FakeDevice([[0x03, 0xFF, 0xAA] + [0] * 61]), OMNI_MOUSE)
         self.assertEqual((b.percent, b.status), (None, "asleep"))
 
+    def test_error_followed_by_valid_reply_is_ok(self):
+        # seen on real hardware: 02 ff aa immediately followed by the real reply
+        b = rb.query(FakeDevice([[0x02, 0xFF, 0xAA] + [0] * 61, kb_reply(78)]), OMNI_KB)
+        self.assertEqual((b.percent, b.status), (78, "ok"))
+
     def test_zero_and_not_charging_means_asleep(self):
         self.assertEqual(rb.query(FakeDevice([mouse_reply(0)]), OMNI_MOUSE).status, "asleep")
 
