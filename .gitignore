@@ -4,3 +4,4 @@ __pycache__/
 venv/
 *.pcapng
 .DS_Store
+CLAUDE.md
