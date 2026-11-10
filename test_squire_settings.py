@@ -76,8 +76,8 @@ class EditTests(unittest.TestCase):
     def setUp(self):
         _, self.s = ui.demo_data()       # logo: colour cycle 50 %, #ff0000
 
-    def test_only_the_logo_is_editable_for_now(self):
-        self.assertEqual(ui.EDITABLE_ZONES, ("logo",))
+    def test_all_light_zones_are_editable(self):
+        self.assertEqual(set(ui.EDITABLE_ZONES), set(squire.LED_ZONES))
         self.assertNotIn("rainbow", ui.EDIT_MODES)
 
     def test_no_pending_change_means_nothing_to_send(self):
@@ -96,6 +96,15 @@ class EditTests(unittest.TestCase):
         self.assertEqual(ui.planned_packets(self.s, pending),
                          ["03 51 28 00 00 00 64 3d 8b ff 00 00 00 …", "03 50 03 …  (save)"])
         self.assertIn("Logo light", ui.apply_status(self.s, pending))
+
+    def test_zone_byte_for_wheel_and_side(self):
+        pending = {"wheel": {"mode": "static", "brightness": 100, "color": "#3d8bff"},
+                   "side": {"mode": "off", "brightness": 50, "color": "#0000ff"}}
+        lines = ui.planned_packets(self.s, pending)
+        self.assertEqual(lines[0], "03 51 28 01 00 00 64 3d 8b ff 00 00 00 …")
+        self.assertEqual(lines[1], "03 51 28 02 00 f0 32 00 00 ff 00 00 00 …")
+        self.assertEqual(lines[2], "03 50 03 …  (save)")
+        self.assertEqual(len(lines), 3)    # one save for all changed zones
 
     def test_wired_mouse_plans_unnumbered_packets(self):
         import dataclasses

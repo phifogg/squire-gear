@@ -143,8 +143,8 @@ def swatch_svg(color: str) -> str:
             f'fill="{color}" stroke="#00000033" stroke-width="1"/></svg>')
 
 
-# Zones whose writes are confirmed on the device; the others are shown read-only for now.
-EDITABLE_ZONES = ("logo",)
+# LED zones that can be changed (51 28 with zone 00 logo, 01 wheel, 02 side; logo confirmed on the device).
+EDITABLE_ZONES = ("logo", "wheel", "side")
 EDIT_MODES = list(squire.LED_WRITE_MODES)      # static, breathing, color-cycle, react, battery, off
 
 
@@ -243,7 +243,7 @@ def run(argv: list[str]) -> int:
             self.refresh_button.connect("clicked", lambda _: self.refresh())
             header.pack_start(self.refresh_button)
             self.content_view.add_top_bar(header)
-            self.banner = Adw.Banner(title="The logo light can be changed so far; the rest is shown only. "
+            self.banner = Adw.Banner(title="The lights can be changed; DPI, sensor and power are shown only so far. "
                                            "Nothing is sent until you click Apply.", revealed=True)
             self.content_view.add_top_bar(self.banner)
             split.set_content(Adw.NavigationPage(title="Settings", child=self.content_view))
@@ -470,7 +470,6 @@ def run(argv: list[str]) -> int:
                         group.add(row("Color", led["color"], suffix=swatch(led["color"])))
                 else:
                     group.add(row("Not read", ""))
-                group.add(row("Editing", "comes next", "Only the logo light can be changed so far"))
             elif zone == "dpi":
                 count = s.dpi_stage_count or len(s.dpi)
                 for i, dpi in enumerate(s.dpi[:count]):
@@ -609,15 +608,24 @@ def run(argv: list[str]) -> int:
             work = {zone: dict(self.pending[zone]) for zone in changed_zones(self.settings, self.pending)}
 
             def worker():
-                results = {}
-                for zone, led in work.items():
+                # write every zone, save once with the last one, and only if all earlier ones matched
+                results, zones = {}, list(work)
+                for i, zone in enumerate(zones):
+                    led = work[zone]
                     if DEMO:   # demo: nothing is sent
                         results[zone] = squire.WriteResult("ok", after=led, saved=True, message="demo")
                         continue
                     try:
-                        results[zone] = squire.set_led(zone, led["mode"], led["brightness"], led["color"], save=True)
+                        last = i == len(zones) - 1
+                        results[zone] = squire.set_led(zone, led["mode"], led["brightness"], led["color"], save=last)
                     except Exception as error:  # keep the window alive
                         results[zone] = squire.WriteResult("error", message=str(error))
+                    if results[zone].status != "ok":
+                        break   # stop: nothing more is written and nothing is saved
+                saved = bool(results) and all(r.status == "ok" for r in results.values()) and len(results) == len(zones) \
+                    and results[zones[-1]].saved
+                for r in results.values():
+                    r.saved = saved
                 GLib.idle_add(self.apply_done, results)
 
             threading.Thread(target=worker, name="squire-write", daemon=True).start()
@@ -634,6 +642,7 @@ def run(argv: list[str]) -> int:
                     failed.append((zone, result))
             if failed:
                 texts = {"asleep": "The mouse is asleep. Move it and click Apply again.",
+                         "ok": "Written, but not saved because another change failed.",
                          "mismatch": "The mouse did not take the new value (read back differs). Nothing was saved.",
                          "no-response": "The mouse did not answer. Move it and click Apply again."}
                 body = "\n".join(f"{ZONE_TITLES[z]}: {texts.get(r.status, r.status + ' ' + r.message)}"

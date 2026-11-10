@@ -97,7 +97,9 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   with an explicit --save / Apply click. set_led() checks the mouse is awake, reads the zone before, writes, reads back, and saves only on a match.
   Confirmed: an unsaved change (no 50 03) is lost when the mouse is switched off and on; it lives in RAM only.
   Confirmed: with 50 03 the change survives off/on (owner, settings window, logo blue, 2026-11-10).
-  No LED speed: byte [11] is stored but ignored by the Keris (breathing 3 pulses/10 s at 05 and 09); not sent. Any new command, read or write, must be shown to the owner before it is sent,
+  No LED speed: byte [11] is stored but ignored by the Keris (breathing 3 pulses/10 s at 05 and 09); not sent.
+  Wheel (zone 01) and side (zone 02) are editable in the window with the same command; not yet confirmed on the
+  device (owner tests via Apply). Apply writes all changed zones and saves once, only if all matched. Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
