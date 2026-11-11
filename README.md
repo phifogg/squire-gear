@@ -100,7 +100,7 @@ open .build/xcode/Build/Products/Debug/Squire.app
 ```
 
 `swift run squire-probe` prints what IOKit sees and the parsed batteries without starting the
-app. `swift test` runs the core tests.
+app; `swift run squire-probe --settings` prints the mouse settings (read-only). `swift test` runs the core tests.
 
 ### Linux
 

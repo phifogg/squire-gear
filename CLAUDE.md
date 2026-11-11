@@ -35,10 +35,14 @@ linux/             squire_settings.py (GTK 4 + libadwaita settings window, own p
                    build-packages.sh + packaging/nfpm.yaml (ONE config for .deb and .rpm, arch all; /usr/share/
                    squire-gear, /usr/bin/squire + squire-tray wrappers, rule in /usr/lib/udev/rules.d)
 macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project (project.yml)
-  Sources/SquireCore   pure logic: targets/packets, reply parsing, low-battery rules (Swift Testing tests)
-  Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only)
-  Sources/squire-probe CLI diagnostics, --repeat N stress test
-  App/                 SwiftUI MenuBarExtra app (BatteryStore, Views), Assets
+  Sources/SquireCore   pure logic: targets, command allowlist + packets (Commands.swift), reply parsing,
+                       mouse settings parsing (MouseSettings.swift), settings window logic (SettingsEditing.swift),
+                       low-battery rules (Swift Testing tests, read protocol.json)
+  Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, setLED;
+                       DeviceLock = same flock file as squire.device_lock
+  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings (mouse settings, read-only)
+  App/                 SwiftUI MenuBarExtra app (BatteryStore, Views), settings window (SettingsWindow,
+                       SettingsStore, MouseDrawing; same layout as the Linux window), Assets
   scripts/             build-release.sh (universal, ad-hoc signed zip), make-icon.swift
 ```
 
@@ -47,6 +51,10 @@ macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project
 python3 -m unittest -v                         # Python tests, no hardware
 cd macos && swift test                         # Swift core tests (macOS only)
 cd macos && swift run squire-probe             # what IOKit sees + parsed batteries
+cd macos && swift run squire-probe --settings  # mouse DPI / LEDs / sensor / power, read-only
+Squire.app/Contents/MacOS/Squire --demo --settings          # settings window with protocol.json captures, sends nothing
+Squire.app/Contents/MacOS/Squire --demo --screenshot PATH [ZONE] [edit]   # saves a PNG and quits (sidebar stays blank;
+                                               # `screencapture -o -l<window id>` shows it, needs Screen Recording)
 ./install.sh ~/SwiftBar                        # install / update the SwiftBar plugin (macOS)
 APP="$HOME/Library/Application Support/squire-gear"
 "$APP/venv/bin/python" "$APP/squire.py" --list   # sends nothing
@@ -67,6 +75,12 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 - 0.2.x stays read-only. From 0.3 Squire also configures devices (DPI, LEDs, ...) on **Linux and macOS**,
   Linux first (owner's decision 2026-11-10). Helping falchion-light with PRs stays welcome, but Squire has its own
   configuration too; both use the same protocol facts.
+- macOS settings window: same layout and behaviour as the Linux one (SwiftUI in an AppKit-managed NSWindow, so it
+  never opens at launch), opened with "Settings…" in the popover. Same rules: Apply writes each changed zone, reads
+  it back, saves (50 03) once with the last one and only if all matched. protocol.json is bundled for --demo.
+  Reads and LED Apply (all three zones) confirmed on macOS via Omni (owner, 2026-11-11). The colour row is an
+  NSColorWell wrapper (LEDColorWell), not SwiftUI's ColorPicker: that one wrote each edit back as clamped sRGB,
+  so the panel's cursor jumped and parts of the wheel seemed unreachable.
 - Linux settings window: a separate GTK 4 + libadwaita process (`squire-settings`), started from the tray menu.
   squire.device_lock() (flock in XDG_RUNTIME_DIR) keeps tray, window and CLI from interleaving requests.
   The tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process. All three are on Ubuntu 26.04 by default.
@@ -98,8 +112,8 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   Confirmed: an unsaved change (no 50 03) is lost when the mouse is switched off and on; it lives in RAM only.
   Confirmed: with 50 03 the change survives off/on (owner, settings window, logo blue, 2026-11-10).
   No LED speed: byte [11] is stored but ignored by the Keris (breathing 3 pulses/10 s at 05 and 09); not sent.
-  Wheel (zone 01) and side (zone 02) are editable in the window with the same command; not yet confirmed on the
-  device (owner tests via Apply). Apply writes all changed zones and saves once, only if all matched. Any new command, read or write, must be shown to the owner before it is sent,
+  Wheel (zone 01) and side (zone 02) use the same command; confirmed on the device with the macOS window
+  (owner, all three zones, 2026-11-11). Apply writes all changed zones and saves once, only if all matched. Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
@@ -173,6 +187,10 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] Backlog (Swift app): optional icon-only menu bar mode (a single Squire icon instead of one entry
       per device; setting in the popover, maybe tint/badge when a device is low)
 - [ ] Device configuration (0.3), Linux first, then macOS; see Direction. First step: branch `mouse-read`
+  - [x] macOS settings window, same as Linux (branch `macos-settings-window`): reads, LED edit + Apply
+  - [x] macOS reads confirmed on the device via Omni (`squire-probe --settings`, 2026-11-11); `--repeat 30` no crash
+  - [x] macOS LED Apply confirmed on the device, all three zones via Omni (2026-11-11)
+  - [ ] macOS: reads + Apply over the cable
       (read current DPI / LED / sensor settings of the Keris II Origin)
 - [x] Linux top bar app (0.2.1, `linux/`): hidraw backend, AppIndicator tray, udev rule, installer
 - [ ] Settings window polish (collect small UI findings here, work through them before or with the write step):
