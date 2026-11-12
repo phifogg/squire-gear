@@ -34,6 +34,53 @@ public struct Command: Equatable, Hashable, Sendable {
         guard Allowlist.isAllowedWrite(bytes) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
         return Command(bytes, isWrite: true, echoLength: 2)
     }
+
+    // Power and sensor writes. Source, facts only: G-Helper AsusMouse.cs + Models/KerisIIOrigin.cs (GPL-3.0);
+    // angle snapping also libratbag asus_set_angle_snapping(). Approved by the owner and confirmed on the device
+    // 2026-11-12 (protocol.json mouse_writes.settings_writes).
+
+    /// Power-off minutes (nil = never) -> byte, as in the 12 07 reply [5].
+    public static let powerOffCodes: [Int?: UInt8] = [1: 0x00, 2: 0x01, 3: 0x02, 5: 0x03, 10: 0x04, nil: 0xFF]
+    public static let lowWarningLevels = [10, 20, 30, 40, 50]          // % (G-Helper: step 10, max 50)
+    public static let angleTuningDegrees = Array(stride(from: -20, through: 20, by: 5))
+
+    /// 51 37 00 00 <power-off> 00 <warning %>: auto power-off and low-battery warning, always both.
+    public static func setPower(_ power: PowerSetting) throws -> Command {
+        guard let code = powerOffCodes[power.offMinutes] else {
+            throw CommandError.notAllowed("power-off \(power.offMinutes.map(String.init) ?? "never") min")
+        }
+        guard lowWarningLevels.contains(power.lowWarning) else {
+            throw CommandError.notAllowed("low-battery warning \(power.lowWarning) %")
+        }
+        return try checked([0x51, 0x37, 0x00, 0x00, code, 0x00, UInt8(power.lowWarning)])
+    }
+
+    /// 51 31 06 00 <0/1>
+    public static func setAngleSnapping(_ on: Bool) throws -> Command {
+        try checked([0x51, 0x31, 0x06, 0x00, on ? 0x01 : 0x00])
+    }
+
+    /// 51 31 0b 00 <lo> <hi>: degrees, signed LE16, -20...20 in steps of 5.
+    public static func setAngleTuning(_ degrees: Int) throws -> Command {
+        guard angleTuningDegrees.contains(degrees) else { throw CommandError.notAllowed("angle tuning \(degrees)°") }
+        let v = UInt16(bitPattern: Int16(degrees))
+        return try checked([0x51, 0x31, 0x0B, 0x00, UInt8(v & 0xFF), UInt8(v >> 8)])
+    }
+
+    private static func checked(_ bytes: [UInt8]) throws -> Command {
+        guard Allowlist.isAllowedWrite(bytes) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
+        return Command(bytes, isWrite: true, echoLength: 2)
+    }
+}
+
+/// Power settings written together by 51 37.
+public struct PowerSetting: Equatable, Hashable, Sendable {
+    public var offMinutes: Int?     // nil = never
+    public var lowWarning: Int
+    public init(offMinutes: Int?, lowWarning: Int) {
+        self.offMinutes = offMinutes
+        self.lowWarning = lowWarning
+    }
 }
 
 public enum CommandError: Error, Equatable, CustomStringConvertible {
@@ -73,6 +120,18 @@ public enum Allowlist {
 
     public static func isAllowedWrite(_ c: [UInt8]) -> Bool {
         if c == Command.save.bytes { return true }
+        if c.starts(with: [0x51, 0x37]) {
+            return c.count == 7 && c[2] == 0 && c[3] == 0 && Command.powerOffCodes.values.contains(c[4]) && c[5] == 0
+                && Command.lowWarningLevels.contains(Int(c[6]))
+        }
+        if c.starts(with: [0x51, 0x31]) {
+            guard c.count >= 4, c[3] == 0 else { return false }
+            switch c[2] {
+            case 0x06: return c.count == 5 && c[4] <= 1
+            case 0x0B: return c.count == 6 && Command.angleTuningDegrees.contains(Int(Int16(bitPattern: UInt16(c[4]) | UInt16(c[5]) << 8)))
+            default: return false   // DPI, polling, debounce, stage count, ...: not approved
+            }
+        }
         return c.count == 12 && c[0] == 0x51 && c[1] == 0x28 && LEDZone.allCases.contains { $0.index == c[2] }
             && c[3] == 0 && LEDMode.writable.contains { $0.byte == c[4] } && c[5] <= 100
             && c[9] == 0 && c[10] == 0 && c[11] == 0

@@ -137,6 +137,36 @@ class EditTests(unittest.TestCase):
         self.assertTrue(ui.can_link(s, {"logo": {"mode": "static", "brightness": 50, "color": "#ff0000"}}, "logo"))
         self.assertTrue(ui.can_link(self.s, {}, "wheel"))
 
+    def test_power_and_sensor_edits_plan_exact_bytes(self):
+        # demo: off after 3 min, warning 20 %, snapping off, tuning 0°
+        pending = ui.edit_other(self.s, {}, "power", {"power_off_minutes": 10, "low_warning": 30})
+        pending = ui.edit_other(self.s, pending, "angle_snapping", True)
+        pending = ui.edit_other(self.s, pending, "angle_tuning", -5)
+        pending = ui.edit_pending(self.s, pending, "logo", mode="static", brightness=100, color="#3d8bff")
+        self.assertEqual(ui.changes(self.s, pending), ["logo", "power", "angle_snapping", "angle_tuning"])
+        self.assertEqual(ui.planned_packets(self.s, pending),
+                         ["03 51 28 00 00 00 64 3d 8b ff 00 00 00 …", "03 51 37 00 00 04 00 1e …",
+                          "03 51 31 06 00 01 …", "03 51 31 0b 00 fb ff …", "03 50 03 …  (save)"])
+        self.assertIn("Power, Angle snapping, Angle tuning", ui.apply_status(self.s, pending))
+        preview = ui.preview_settings(self.s, pending)
+        self.assertEqual((preview.power_off_minutes, preview.low_warning, preview.angle_snapping, preview.angle_tuning),
+                         (10, 30, True, -5))
+        self.assertEqual(ui.zone_summary(preview, "power"), "off after 10 min · warn at 30 %")   # the chip
+        self.assertEqual(self.s.power_off_minutes, 3)       # original untouched
+
+    def test_other_edit_back_to_the_mouse_value_is_dropped(self):
+        pending = ui.edit_other(self.s, {}, "angle_snapping", True)
+        self.assertEqual(ui.edit_other(self.s, pending, "angle_snapping", False), {})
+        pending = ui.edit_other(self.s, {}, "power", {"power_off_minutes": None, "low_warning": 20})
+        self.assertEqual(ui.planned_packets(self.s, pending)[0], "03 51 37 00 00 ff 00 14 …")   # never
+        self.assertEqual(ui.edit_other(self.s, pending, "power", {"power_off_minutes": 3, "low_warning": 20}), {})
+
+    def test_power_is_shown_only_for_a_warning_squire_cannot_write(self):
+        import dataclasses
+        self.assertTrue(ui.can_edit_power(self.s))
+        self.assertFalse(ui.can_edit_power(dataclasses.replace(self.s, low_warning=15)))
+        self.assertFalse(ui.can_edit_power(dataclasses.replace(self.s, low_warning=None)))
+
     def test_wired_mouse_plans_unnumbered_packets(self):
         import dataclasses
         wired = dataclasses.replace(self.s, connection="wired")

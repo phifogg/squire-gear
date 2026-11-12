@@ -130,9 +130,57 @@ def led_command(zone: str, mode: str, brightness: int, color: str = "#000000") -
     return command
 
 
+# Power and sensor settings. Source, facts only: G-Helper AsusMouse.cs GetUpdateEnergySettingsPacket(),
+# GetUpdateAngleSnappingPacket(), GetUpdateAngleAdjustmentPacket() and Models/KerisIIOrigin.cs (HasAutoPowerOff,
+# HasLowBatteryWarning, HasAngleSnapping, HasAngleTuning, AngleTuningStep 5) (GPL-3.0). Angle snapping also in
+# libratbag asus_set_angle_snapping() (51 31 06 00 0/1). Bytes approved by the owner 2026-11-12.
+POWER_WRITE = bytes([0x51, 0x37])        # 51 37 00 00 <power-off code> 00 <low-battery warning %>
+SENSOR_WRITE = bytes([0x51, 0x31])       # 51 31 <field> 00 <value lo> <value hi>
+ANGLE_SNAPPING_FIELD = 0x06
+ANGLE_TUNING_FIELD = 0x0B
+POWER_OFF_CODES = {1: 0x00, 2: 0x01, 3: 0x02, 5: 0x03, 10: 0x04, None: 0xFF}   # minutes (None = never) -> byte
+LOW_WARNING_LEVELS = (10, 20, 30, 40, 50)                                     # % (G-Helper: step 10, max 50)
+ANGLE_TUNING_DEGREES = tuple(range(-20, 21, 5))                               # G-Helper: -20..20, step 5
+
+
+def power_command(power_off_minutes: Optional[int], low_warning: int) -> bytes:
+    """51 37: auto power-off and low-battery warning, always both. Raises ValueError outside the allowlist."""
+    if power_off_minutes not in POWER_OFF_CODES:
+        raise ValueError(f"power-off {power_off_minutes!r} min is not one of 1, 2, 3, 5, 10 or never")
+    if low_warning not in LOW_WARNING_LEVELS:
+        raise ValueError(f"low-battery warning {low_warning!r} % is not one of {LOW_WARNING_LEVELS}")
+    command = POWER_WRITE + bytes([0x00, 0x00, POWER_OFF_CODES[power_off_minutes], 0x00, low_warning])
+    assert is_allowed_write(command)
+    return command
+
+
+def angle_snapping_command(on: bool) -> bytes:
+    command = SENSOR_WRITE + bytes([ANGLE_SNAPPING_FIELD, 0x00, 0x01 if on else 0x00])
+    assert is_allowed_write(command)
+    return command
+
+
+def angle_tuning_command(degrees: int) -> bytes:
+    if degrees not in ANGLE_TUNING_DEGREES:
+        raise ValueError(f"angle tuning {degrees!r}° is not one of -20..20 in steps of 5")
+    command = SENSOR_WRITE + bytes([ANGLE_TUNING_FIELD, 0x00]) + (degrees & 0xFFFF).to_bytes(2, "little")
+    assert is_allowed_write(command)
+    return command
+
+
 def is_allowed_write(command: bytes) -> bool:
     if command == SAVE_COMMAND:
         return True
+    if command[:2] == POWER_WRITE:
+        return (len(command) == 7 and command[2:4] == b"\0\0" and command[4] in POWER_OFF_CODES.values()
+                and command[5] == 0 and command[6] in LOW_WARNING_LEVELS)
+    if command[:2] == SENSOR_WRITE and len(command) >= 4 and command[3] == 0:
+        if command[2] == ANGLE_SNAPPING_FIELD:
+            return len(command) == 5 and command[4] in (0, 1)
+        if command[2] == ANGLE_TUNING_FIELD and len(command) == 6:
+            value = int.from_bytes(command[4:6], "little", signed=True)
+            return value in ANGLE_TUNING_DEGREES
+        return False   # DPI, polling, debounce, stage count, ...: not approved
     return (len(command) == 12 and command[:2] == LED_WRITE and command[2] in LED_ZONE_INDEX.values()
             and command[3] == 0 and command[4] in LED_WRITE_MODES.values() and command[5] <= 100
             and command[9:] == b"\0\0\0")
@@ -621,14 +669,58 @@ def set_led(zone: str, mode: str, brightness: int, color: str = "#000000", save:
 
     Without save the change lives in the mouse's RAM (lost when it powers off); save=True also sends 50 03."""
     command = led_command(zone, mode, brightness, color)
-    read_back = MOUSE_SETTINGS_QUERIES[f"led_{zone}"]
     wanted = {"mode": mode, "brightness": int(brightness), "color": "#" + command[6:9].hex()}
+    return write_verified(command, f"led_{zone}", lambda s: s.leds.get(zone), lambda after: led_matches(wanted, after),
+                          save, dry_run, debug, hid)
+
+
+def set_power(power_off_minutes: Optional[int], low_warning: int, save: bool = False, dry_run: bool = False,
+              debug: bool = False, hid=None) -> WriteResult:
+    """Auto power-off (1/2/3/5/10 min, None = never) and low-battery warning (%), read back from 12 07."""
+    command = power_command(power_off_minutes, low_warning)
+    wanted = {"power_off_minutes": power_off_minutes, "low_warning": low_warning}
+    return write_verified(command, "battery",
+                          lambda s: {"power_off_minutes": s.power_off_minutes, "low_warning": s.low_warning},
+                          lambda after: after == wanted, save, dry_run, debug, hid)
+
+
+def set_angle_snapping(on: bool, save: bool = False, dry_run: bool = False, debug: bool = False,
+                       hid=None) -> WriteResult:
+    command = angle_snapping_command(on)
+    return write_verified(command, "settings", lambda s: {"angle_snapping": s.angle_snapping},
+                          lambda after: after == {"angle_snapping": bool(on)}, save, dry_run, debug, hid)
+
+
+def set_angle_tuning(degrees: int, save: bool = False, dry_run: bool = False, debug: bool = False,
+                     hid=None) -> WriteResult:
+    command = angle_tuning_command(degrees)
+    return write_verified(command, "settings", lambda s: {"angle_tuning": s.angle_tuning},
+                          lambda after: after == {"angle_tuning": degrees}, save, dry_run, debug, hid)
+
+
+def write_verified(command: bytes, read_name: str, extract, matches, save: bool = False, dry_run: bool = False,
+                   debug: bool = False, hid=None) -> WriteResult:
+    """The one write path: check the mouse is awake, read the setting, write, read it back, and save (50 03)
+    only when asked and only if the read-back matched. `extract` picks the value from parsed settings."""
+    if not is_allowed_write(command):
+        raise ValueError(f"not on the write allowlist: {command.hex(' ')}")
+    shown = len(command) + 1
+    read_command = MOUSE_QUERY if read_name == "battery" else MOUSE_SETTINGS_QUERIES[read_name]
     if dry_run:
-        sent = [packet(0x03, command, 64, write=True)[:13].hex(" ") + " … (Omni, 64 bytes)",
-                packet(None, command, 65, write=True)[:13].hex(" ") + " … (wired, 65 bytes)"]
+        sent = [packet(0x03, command, 64, write=True)[:shown].hex(" ") + " … (Omni, 64 bytes)",
+                packet(None, command, 65, write=True)[:shown].hex(" ") + " … (wired, 65 bytes)"]
         if save:
             sent.append(packet(0x03, SAVE_COMMAND, 64, write=True)[:3].hex(" ") + " … (Omni, 64 bytes)")
         return WriteResult("dry-run", sent, message="nothing sent")
+
+    def read_value(dev, target):
+        ex = exchange(dev, target, read_command, debug, match=3 if read_command[1] == 0x04 else 2)
+        if ex.status != "ok":
+            return None
+        tmp = MouseSettings("", "omni" if target.pid == PID_OMNI else "wired")
+        parse_mouse_settings(tmp, read_name, ex.payload)
+        return extract(tmp)
+
     with device_lock():
         hid = hid or load_backend()
         result = WriteResult("not-found")
@@ -646,23 +738,15 @@ def set_led(zone: str, mode: str, brightness: int, color: str = "#000000", save:
                     if awake.status != "ok":
                         result = WriteResult(awake.status, message="mouse not awake: nothing written")
                         continue
-                    before = exchange(dev, target, read_back, debug)
                     result = WriteResult("error")
-                    if before.status == "ok":
-                        tmp = MouseSettings("", "")
-                        parse_mouse_settings(tmp, f"led_{zone}", before.payload)
-                        result.before = tmp.leds.get(zone)
+                    result.before = read_value(dev, target)
                     ex = exchange(dev, target, command, debug, match=2, write=True)
-                    result.sent.append(packet(target.report_id, command, target.report_lens[0], write=True)[:13].hex(" "))
+                    result.sent.append(packet(target.report_id, command, target.report_lens[0], write=True)[:shown].hex(" "))
                     if ex.status == "error":
                         result.message = ex.raw
                         return result
-                    after = exchange(dev, target, read_back, debug)
-                    if after.status == "ok":
-                        tmp = MouseSettings("", "")
-                        parse_mouse_settings(tmp, f"led_{zone}", after.payload)
-                        result.after = tmp.leds.get(zone)
-                    result.status = "ok" if led_matches(wanted, result.after) else "mismatch"
+                    result.after = read_value(dev, target)
+                    result.status = "ok" if matches(result.after) else "mismatch"
                     if result.status == "ok" and save:
                         saved = exchange(dev, target, SAVE_COMMAND, debug, match=2, write=True)
                         result.sent.append(packet(target.report_id, SAVE_COMMAND, target.report_lens[0], write=True)[:3].hex(" "))
@@ -810,6 +894,12 @@ def main() -> int:
     ap.add_argument("--set-led", metavar="ZONE", choices=list(LED_ZONE_INDEX),
                     help="WRITE: set one LED zone of the mouse (logo, wheel, side); use with --mode, "
                          "--brightness, --color; --dry-run prints the bytes only; --save also stores it")
+    ap.add_argument("--set-power", nargs=2, metavar=("OFF", "WARN"),
+                    help="WRITE: auto power-off (1, 2, 3, 5, 10 min or never) and low-battery warning "
+                         "(10-50 %%), e.g. --set-power 5 20; --dry-run / --save as for --set-led")
+    ap.add_argument("--set-angle-snapping", choices=["on", "off"], help="WRITE: angle snapping on or off")
+    ap.add_argument("--set-angle-tuning", type=int, metavar="DEG",
+                    help="WRITE: angle tuning in degrees, -20..20 in steps of 5")
     ap.add_argument("--mode", choices=list(LED_WRITE_MODES), default="static")
     ap.add_argument("--brightness", type=int, default=100)
     ap.add_argument("--color", default="#ffffff")
@@ -824,10 +914,24 @@ def main() -> int:
         if args.list:
             list_devices()
             return 0
-        if args.set_led:
+        writes = [w for w in (args.set_led, args.set_power, args.set_angle_snapping,
+                              args.set_angle_tuning is not None or None) if w]
+        if len(writes) > 1:
+            print("refused: one write per call", file=sys.stderr)
+            return 2
+        if writes:
+            options = dict(save=args.save, dry_run=args.dry_run, debug=args.debug)
             try:
-                result = set_led(args.set_led, args.mode, args.brightness, args.color, save=args.save,
-                                 dry_run=args.dry_run, debug=args.debug)
+                if args.set_led:
+                    result = set_led(args.set_led, args.mode, args.brightness, args.color, **options)
+                elif args.set_power:
+                    off, warn = args.set_power
+                    minutes = None if off == "never" else int(off) if off.isdigit() else -1
+                    result = set_power(minutes, int(warn) if warn.isdigit() else -1, **options)
+                elif args.set_angle_snapping:
+                    result = set_angle_snapping(args.set_angle_snapping == "on", **options)
+                else:
+                    result = set_angle_tuning(args.set_angle_tuning, **options)
             except ValueError as error:
                 print(f"refused: {error}", file=sys.stderr)
                 return 2

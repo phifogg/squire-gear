@@ -218,6 +218,53 @@ public struct MouseSettings: Equatable, Sendable {
 }
 
 /// Outcome of one LED write (+ optional save), as squire.WriteResult.
+/// One write the settings window can make: the command, where it is read back, and whether the read-back matches.
+public enum SettingChange: Equatable, Hashable, Sendable {
+    case led(LEDZone, LEDState)
+    case power(PowerSetting)
+    case angleSnapping(Bool)
+    case angleTuning(Int)
+
+    public func command() throws -> Command {
+        switch self {
+        case .led(let zone, let led): return try .setLED(zone, led)
+        case .power(let power): return try .setPower(power)
+        case .angleSnapping(let on): return try .setAngleSnapping(on)
+        case .angleTuning(let degrees): return try .setAngleTuning(degrees)
+        }
+    }
+
+    /// The read that shows the value: nil = the battery query 12 07.
+    public var readBack: SettingsQuery? {
+        switch self {
+        case .led(let zone, _): return .led(zone)
+        case .power: return nil
+        case .angleSnapping, .angleTuning: return .settings
+        }
+    }
+
+    /// Does the mouse (as read) already have this value?
+    public func matches(_ s: MouseSettings) -> Bool {
+        switch self {
+        case .led(let zone, let led): return led.matches(s.leds[zone])
+        case .power(let power):
+            return s.lowWarning == power.lowWarning && s.powerOffMinutes == power.offMinutes && s.status == .ok
+        case .angleSnapping(let on): return s.angleSnapping == on
+        case .angleTuning(let degrees): return s.angleTuning == degrees
+        }
+    }
+
+    /// Short name for messages.
+    public var title: String {
+        switch self {
+        case .led(let zone, _): return SettingsZone(rawValue: zone.rawValue)?.title ?? zone.rawValue
+        case .power: return "Power"
+        case .angleSnapping: return "Angle snapping"
+        case .angleTuning: return "Angle tuning"
+        }
+    }
+}
+
 public struct WriteResult: Equatable, Sendable {
     public enum Status: String, Sendable {
         case ok, mismatch, asleep, noResponse = "no-response", noAccess = "no-access", notFound = "not-found"
@@ -227,6 +274,8 @@ public struct WriteResult: Equatable, Sendable {
     public var sent: [String] = []
     public var before: LEDState?
     public var after: LEDState?
+    /// The settings as read back after the write (only the fields of that read are filled).
+    public var readBack: MouseSettings?
     public var saved = false
     public var message = ""
 

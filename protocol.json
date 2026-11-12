@@ -263,6 +263,49 @@
         "03 51 28 00 00 01 64 35 84 e4 00 00 09"
       ],
       "notes": "2026-11-10, not saved: byte [11] (G-Helper animation speed 05 fast / 09 slow) is stored per zone (read back at [12] of 12 03 NN) but has no visible effect on the Keris II Origin: colour cycle looked the same as the other zones, breathing pulsed 3 times in 10 s with 05 and with 09. Squire does not send it; restored to the owner's saved breathing 100 % #3584e4 with [11] = 00."
+    },
+    "settings_writes": {
+      "_comment": "Power and sensor writes confirmed on the ROG Keris II Origin via the ROG Omni receiver (report ID 03), 2026-11-12 on macOS (squire.py CLI, hidapi). Bytes from G-Helper (approved by the owner before the first send). Not saved: each was written, read back, then the original value written back. 'function' + 'args' = the squire.py builder.",
+      "writes": [
+        {
+          "name": "power-off 5 min, warning 30 %",
+          "function": "power_command",
+          "args": [
+            5,
+            30
+          ],
+          "packet": "03 51 37 00 00 03 00 1e",
+          "read_back": {
+            "power_off_minutes": 5,
+            "low_warning": 30
+          },
+          "notes": "[4] power-off code (00..04 = 1/2/3/5/10 min, ff never), [6] low-battery warning %. Read back with 12 07 [5], [6]. Restored with 51 37 00 00 02 00 14 (3 min, 20 %)."
+        },
+        {
+          "name": "angle snapping on",
+          "function": "angle_snapping_command",
+          "args": [
+            true
+          ],
+          "packet": "03 51 31 06 00 01",
+          "read_back": {
+            "angle_snapping": true
+          },
+          "notes": "Field 06, value 0/1. Read back with 12 04 00 [16]. Restored with 51 31 06 00 00."
+        },
+        {
+          "name": "angle tuning -10°",
+          "function": "angle_tuning_command",
+          "args": [
+            -10
+          ],
+          "packet": "03 51 31 0b 00 f6 ff",
+          "read_back": {
+            "angle_tuning": -10
+          },
+          "notes": "Field 0b, signed LE16 degrees (-20..20, step 5 in G-Helper). Read back with 12 04 00 [18..19]. Restored with 51 31 0b 00 00 00."
+        }
+      ]
     }
   }
 }

@@ -20,11 +20,12 @@ Like a squire looking after a knight's blades, it keeps an eye on your Falchion 
   level configured on the device itself, reset after charging
 - Optional launch at login
 - **Mouse settings window** (Keris II Origin, coming in 0.3): shows DPI stages, polling rate,
-  sensor and power settings, and changes the three lights (logo, scroll wheel, side): effect,
-  brightness and colour, optionally the same on all three
+  sensor and power settings, and changes the three lights (logo, scroll wheel, side: effect,
+  brightness and colour, optionally the same on all three), the auto power-off time, the
+  low-battery warning level, angle snapping and angle tuning
 - **Careful with your devices:** the battery display only reads. Squire writes only when you
-  click **Apply** in the settings window, only commands on a fixed allowlist (set one light zone,
-  save), reads every change back and saves it to the mouse only if it matched. It never touches
+  click **Apply** in the settings window, only commands on a fixed allowlist (light zone,
+  power-off and warning, angle snapping and tuning, save), reads every change back and saves it to the mouse only if it matched. It never touches
   firmware or switches profiles.
 - Opens only vendor-defined HID collections, never the regular keyboard or mouse input
 - macOS: no Python, Homebrew or SwiftBar needed. Linux: only packages that Ubuntu ships by default
@@ -44,8 +45,9 @@ reply carries no plausible level, 20 % is used.
 
 The settings window (in development for 0.3, not in a release yet) is tested with the Keris II
 Origin on Linux through the Omni receiver and on macOS through the Omni receiver and the USB
-cable: reading all settings, and changing and saving all three lights. DPI, sensor and power
-settings are shown only so far.
+cable: reading all settings, and changing and saving all three lights. Power-off time, warning
+level, angle snapping and angle tuning are confirmed on the device through the Omni receiver.
+DPI, polling rate and lift-off distance are shown only so far.
 
 Not tested yet:
 
@@ -245,7 +247,8 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 ## Roadmap
 
-- Device configuration on Linux and macOS (0.3): lights first, then DPI, sensor and power;
+- Device configuration on Linux and macOS (0.3): lights, power and angle settings first, then DPI,
+  polling rate and lift-off;
   0.2.x stays read-only
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode

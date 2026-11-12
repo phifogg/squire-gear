@@ -556,6 +556,20 @@ class RealWriteVectorTests(unittest.TestCase):
                 self.assertTrue(rb.led_matches(a, w["read_back"]))
 
 
+class RealSettingsWriteVectorTests(unittest.TestCase):
+    """protocol.json mouse_writes.settings_writes: power and sensor writes confirmed on the device."""
+
+    def test_confirmed_writes(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["settings_writes"]
+        for w in data["writes"]:
+            with self.subTest(name=w["name"]):
+                command = getattr(rb, w["function"])(*w["args"])
+                head = bytes.fromhex(w["packet"])
+                packet = rb.packet(0x03, command, 64, write=True)
+                self.assertEqual(packet[:len(head)], head)
+                self.assertEqual(set(packet[len(head):]), {0})
+
+
 class SetLedTests(unittest.TestCase):
     """set_led against a fake mouse that keeps an LED state and answers like the real one."""
 
@@ -635,6 +649,130 @@ class SetLedTests(unittest.TestCase):
         self.assertEqual(result.status, "mismatch")
         self.assertFalse(result.saved)
         self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])
+
+
+class PowerAndSensorWriteTests(unittest.TestCase):
+    """51 37 (power-off + warning) and 51 31 06 / 0b (angle snapping / tuning): approved 2026-11-12."""
+
+    def test_exact_bytes(self):
+        self.assertEqual(rb.power_command(5, 20).hex(" "), "51 37 00 00 03 00 14")
+        self.assertEqual(rb.power_command(None, 50).hex(" "), "51 37 00 00 ff 00 32")
+        self.assertEqual(rb.power_command(1, 10).hex(" "), "51 37 00 00 00 00 0a")
+        self.assertEqual(rb.angle_snapping_command(True).hex(" "), "51 31 06 00 01")
+        self.assertEqual(rb.angle_snapping_command(False).hex(" "), "51 31 06 00 00")
+        self.assertEqual(rb.angle_tuning_command(-20).hex(" "), "51 31 0b 00 ec ff")
+        self.assertEqual(rb.angle_tuning_command(15).hex(" "), "51 31 0b 00 0f 00")
+        data = rb.packet(None, rb.power_command(3, 20), 65, write=True)
+        self.assertEqual((len(data), data[:8].hex(" ")), (65, "00 51 37 00 00 02 00 14"))
+        self.assertEqual(set(data[8:]), {0})
+
+    def test_invalid_values_are_refused(self):
+        for call in (lambda: rb.power_command(4, 20), lambda: rb.power_command(0, 20),
+                     lambda: rb.power_command(5, 25), lambda: rb.power_command(5, 0), lambda: rb.power_command(5, 60),
+                     lambda: rb.angle_tuning_command(7), lambda: rb.angle_tuning_command(25)):
+            with self.assertRaises(ValueError):
+                call()
+
+    def test_everything_else_stays_refused(self):
+        for hex_ in ("51 31 00 00 07 00",        # DPI stage 1
+                     "51 31 04 00 03",           # polling rate
+                     "51 31 05 00 02",           # debounce
+                     "51 31 09 00 01",           # active DPI stage
+                     "51 31 0a 00 04",           # DPI stage count
+                     "51 35 ff 00 ff 00",        # lift-off (also resets calibration)
+                     "51 31 06 00 02",           # angle snapping: only 0/1
+                     "51 31 0b 00 07 00",        # angle tuning: only steps of 5
+                     "51 37 00 00 05 00 14",     # power-off code 5 does not exist
+                     "51 37 00 01 03 00 14",     # reserved byte set
+                     "50 02 01"):                # profile switch: never
+            with self.subTest(command=hex_):
+                self.assertFalse(rb.is_allowed_write(bytes.fromhex(hex_)))
+                with self.assertRaises(ValueError):
+                    rb.packet(0x03, bytes.fromhex(hex_), 64, write=True)
+
+    def make(self, awake=True):
+        """Fake mouse on the Omni that keeps power-off code, warning, snapping and tuning like the real one."""
+        state = {"off": 0x02, "warn": 20, "snap": 0, "tune": 0}
+        sent = []
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                data = bytes(data)
+                sent.append(data)
+                cmd = data[1:]
+                if not awake:
+                    self.replies = [[0x03, 0xFF, 0xAA] + [0] * 61]
+                elif cmd[:2] == b"\x12\x07":
+                    self.replies = [settings_reply(rb.MOUSE_QUERY, {4: 80, 5: state["off"], 6: state["warn"]})]
+                elif cmd[:3] == b"\x12\x04\x00":
+                    t = state["tune"] & 0xFFFF
+                    self.replies = [settings_reply(cmd[:3], {12: 0x63, 14: 2, 16: state["snap"], 18: t & 0xFF, 19: t >> 8})]
+                elif cmd[:2] == b"\x51\x37":
+                    state["off"], state["warn"] = cmd[4], cmd[6]
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:3] == b"\x51\x31\x06":
+                    state["snap"] = cmd[4]
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:3] == b"\x51\x31\x0b":
+                    state["tune"] = int.from_bytes(cmd[4:6], "little", signed=True)
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:2] == b"\x50\x03":
+                    self.replies = [settings_reply(cmd[:2], {})]
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                return [{"path": b"omni", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}] \
+                    if pid == rb.PID_OMNI else []
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent, state
+
+    def test_power_write_reads_back_and_saves(self):
+        backend, sent, state = self.make()
+        result = rb.set_power(10, 30, save=True, hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.before, {"power_off_minutes": 3, "low_warning": 20})
+        self.assertEqual(result.after, {"power_off_minutes": 10, "low_warning": 30})
+        self.assertTrue(result.saved)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 07", "51 37", "12 07", "50 03"])
+        self.assertEqual(rb.set_power(None, 30, hid=backend).after["power_off_minutes"], None)   # never
+
+    def test_angle_writes_read_back(self):
+        backend, sent, state = self.make()
+        self.assertEqual(rb.set_angle_snapping(True, hid=backend).after, {"angle_snapping": True})
+        result = rb.set_angle_tuning(-15, hid=backend)
+        self.assertEqual((result.status, result.before, result.after),
+                         ("ok", {"angle_tuning": 0}, {"angle_tuning": -15}))
+        self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])     # no save without asking
+
+    def test_mismatch_is_not_saved(self):
+        backend, sent, state = self.make()
+        orig = backend.device
+
+        def stubborn():
+            dev = orig()
+            write = dev.write
+
+            def ignore(data):
+                if bytes(data)[1:3] == b"\x51\x37":
+                    sent.append(bytes(data))
+                    dev.replies = []
+                    return len(data)
+                return write(data)
+            dev.write = ignore
+            return dev
+        backend.device = stubborn
+        result = rb.set_power(5, 20, save=True, hid=backend)
+        self.assertEqual(result.status, "mismatch")
+        self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])
+
+    def test_asleep_mouse_gets_no_write(self):
+        backend, sent, _ = self.make(awake=False)
+        self.assertEqual(rb.set_angle_snapping(True, save=True, hid=backend).status, "asleep")
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07"])
 
 
 class LowBatteryNotificationTests(unittest.TestCase):

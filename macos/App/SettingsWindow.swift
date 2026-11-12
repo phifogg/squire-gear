@@ -91,7 +91,7 @@ struct SettingsView: View {
                 if store.demo { Text("Demo: protocol.json captures, nothing is sent").font(.caption).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            Text("The lights can be changed; DPI, sensor and power are shown only so far. Nothing is sent until you click Apply.")
+            Text("Lights, power and angle settings can be changed; DPI, polling and lift-off are shown only. Nothing is sent until you click Apply.")
                 .font(.callout)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6).padding(.horizontal, 12)
@@ -374,11 +374,28 @@ struct InspectorView: View {
     }
 
     @ViewBuilder private var sensorRows: some View {
+        let preview = store.preview ?? settings
         InfoRow("Polling rate", settings.pollingHz.map { "\($0) Hz" } ?? "–",
                 subtitle: "raw 0x\(ReplyParser.hex([settings.pollingRaw ?? 0])); 8000 Hz mode not confirmed yet")
-        InfoRow("Lift-off distance", settings.liftoff.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "–")
-        InfoRow("Angle snapping", settings.angleSnapping == true ? "On" : "Off")
-        InfoRow("Angle tuning", "\(settings.angleTuning ?? 0)°")
+        InfoRow("Lift-off distance", settings.liftoff.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "–",
+                subtitle: "Shown only: changing it also resets the surface calibration")
+        if let snapping = preview.angleSnapping {
+            Toggle(isOn: Binding(get: { snapping }, set: { on in store.editOther { $0.angleSnapping = on } })) {
+                Text("Angle snapping")
+                Text("Straightens nearly horizontal and vertical movements")
+            }
+        }
+        if let tuning = preview.angleTuning {
+            Picker(selection: Binding(get: { tuning }, set: { degrees in store.editOther { $0.angleTuning = degrees } })) {
+                ForEach(Command.angleTuningDegrees + (Command.angleTuningDegrees.contains(tuning) ? [] : [tuning]),
+                        id: \.self) { degrees in
+                    Text(Command.angleTuningDegrees.contains(degrees) ? "\(degrees)°" : "\(degrees)° (read only)").tag(degrees)
+                }
+            } label: {
+                Text("Angle tuning")
+                Text("Rotates the sensor's axes, in steps of 5°")
+            }
+        }
         InfoRow("Button response", settings.debounceMs.map { "\($0) ms" } ?? "index \(settings.debounceIndex ?? 0)")
     }
 
@@ -386,9 +403,26 @@ struct InspectorView: View {
         if let b = store.batteries[.mouse], let percent = b.percent {
             InfoRow("Battery", "\(percent) %", subtitle: b.charging ? "charging" : "")
         }
-        InfoRow("Turn off after", settings.powerOffMinutes.map { "\($0) min" } ?? "Never")
-        InfoRow("Low-battery warning", settings.lowWarning.map { "\($0) %" } ?? "–",
-                subtitle: "Squire's notification uses this level")
+        if SettingsEditing.canEditPower(settings), let power = store.power {
+            Picker("Turn off after", selection: Binding(get: { power.offMinutes ?? 0 }, set: { minutes in
+                store.editOther { $0.power = PowerSetting(offMinutes: minutes == 0 ? nil : minutes, lowWarning: power.lowWarning) }
+            })) {
+                ForEach([1, 2, 3, 5, 10], id: \.self) { Text("\($0) min").tag($0) }
+                Text("Never").tag(0)
+            }
+            Picker(selection: Binding(get: { power.lowWarning }, set: { warning in
+                store.editOther { $0.power = PowerSetting(offMinutes: power.offMinutes, lowWarning: warning) }
+            })) {
+                ForEach(Command.lowWarningLevels, id: \.self) { Text("\($0) %").tag($0) }
+            } label: {
+                Text("Low-battery warning")
+                Text("Squire's notification uses this level")
+            }
+        } else {
+            InfoRow("Turn off after", settings.powerOffMinutes.map { "\($0) min" } ?? "Never")
+            InfoRow("Low-battery warning", settings.lowWarning.map { "\($0) %" } ?? "–",
+                    subtitle: "Not one Squire can write back (10–50 %), so power is shown only")
+        }
     }
 }
 

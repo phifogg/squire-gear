@@ -114,7 +114,16 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   Confirmed: with 50 03 the change survives off/on (owner, settings window, logo blue, 2026-11-10).
   No LED speed: byte [11] is stored but ignored by the Keris (breathing 3 pulses/10 s at 05 and 09); not sent.
   Wheel (zone 01) and side (zone 02) use the same command; confirmed on the device with the macOS window
-  (owner, all three zones, 2026-11-11). Apply writes all changed zones and saves once, only if all matched. Any new command, read or write, must be shown to the owner before it is sent,
+  (owner, all three zones, 2026-11-11). Apply writes all changed zones and saves once, only if all matched.
+  Approved 2026-11-12 (bytes from G-Helper AsusMouse.cs + Models/KerisIIOrigin.cs; confirmed on the device via
+  Omni with the CLI, unsaved, original values written back; protocol.json `mouse_writes.settings_writes`):
+  `51 37 00 00 <power-off> 00 <warning %>` (power-off 00..04 = 1/2/3/5/10 min, ff never; warning 10..50 step 10;
+  always both, read back with 12 07 [5],[6]), `51 31 06 00 <0/1>` (angle snapping, read back 12 04 00 [16]),
+  `51 31 0b 00 <lo> <hi>` (angle tuning, signed LE16, -20..20 step 5, read back 12 04 00 [18..19]). One generic
+  path: squire.write_verified() / HIDReader.write(SettingChange). Not approved: lift-off `51 35 ff 00 ff <0/1>`
+  (G-Helper: also resets the surface calibration; check in Armoury Crate first), polling `51 31 04`, debounce
+  `51 31 05` (G-Helper offers none for the Keris), DPI `51 31 <stage>` (X/Y unclear), stage count `51 31 0a`,
+  active stage `51 31 09`. Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
@@ -194,6 +203,11 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] macOS reads confirmed on the device via Omni (`squire-probe --settings`, 2026-11-11); `--repeat 30` no crash
   - [x] macOS LED Apply confirmed on the device, all three zones via Omni (2026-11-11)
   - [x] macOS: reads + LED Apply over the cable (pid 1c0c, iface 0; change survives off/on, 2026-11-12)
+  - [x] Power-off + low-battery warning, angle snapping + tuning: CLI (--set-power, --set-angle-snapping,
+        --set-angle-tuning) and both windows (Power / Sensor chips), branch `mouse-settings-writes` (2026-11-12).
+        CLI writes confirmed on the device via Omni; Apply in the macOS window confirmed incl. off/on and an LED
+        change through the new write path (owner, 2026-11-12); Linux window not tried yet
+  - [ ] Lift-off write: only after checking surface calibration in Armoury Crate (see Rules)
   - [x] Firmware from `12 00` fixed (2026-11-12): mouse 01.00.09 (cable [4..6], Omni [14..16]), receiver 07.00.02
         (Omni [4..6]); cable reply in protocol.json `mouse_settings_wired`
 - [x] Linux top bar app (0.2.1, `linux/`): hidraw backend, AppIndicator tray, udev rule, installer

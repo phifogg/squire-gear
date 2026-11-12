@@ -44,6 +44,24 @@ public enum SettingsZone: String, CaseIterable, Sendable, Identifiable {
     public static let chips: [SettingsZone] = [.dpi, .sensor, .power]
 }
 
+/// Pending edits besides the lights: power (51 37) and the sensor's angle settings (51 31 06 / 0b).
+public struct OtherEdits: Equatable, Sendable {
+    public var power: PowerSetting?
+    public var angleSnapping: Bool?
+    public var angleTuning: Int?
+    public init(power: PowerSetting? = nil, angleSnapping: Bool? = nil, angleTuning: Int? = nil) {
+        self.power = power
+        self.angleSnapping = angleSnapping
+        self.angleTuning = angleTuning
+    }
+    public var isEmpty: Bool { power == nil && angleSnapping == nil && angleTuning == nil }
+
+    var changes: [SettingChange] {
+        [power.map { .power($0) }, angleSnapping.map { .angleSnapping($0) }, angleTuning.map { .angleTuning($0) }]
+            .compactMap { $0 }
+    }
+}
+
 public enum SettingsEditing {
     /// Short value under a callout or chip.
     public static func summary(_ s: MouseSettings, _ zone: SettingsZone) -> String {
@@ -66,11 +84,37 @@ public enum SettingsEditing {
         }
     }
 
-    /// The settings as they will be after Apply (for the drawing and the callouts).
-    public static func preview(_ s: MouseSettings, pending: [LEDZone: LEDState]) -> MouseSettings {
+    /// The settings as they will be after Apply (for the drawing, the callouts and the chips).
+    public static func preview(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> MouseSettings {
         var p = s
         p.leds.merge(pending) { _, new in new }
+        if let power = other.power {
+            p.powerOffMinutes = power.offMinutes
+            p.lowWarning = power.lowWarning
+        }
+        if let on = other.angleSnapping { p.angleSnapping = on }
+        if let degrees = other.angleTuning { p.angleTuning = degrees }
         return p
+    }
+
+    /// Everything Apply will write, in a fixed order: changed light zones, then power, angle snapping, angle tuning.
+    public static func changes(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> [SettingChange] {
+        changedZones(s, pending: pending).map { .led($0, pending[$0]!) } + other.changes.filter { !$0.matches(s) }
+    }
+
+    /// An edit to power or the sensor: kept pending, or dropped when it is back to what the mouse has.
+    public static func edit(_ other: OtherEdits, _ s: MouseSettings, change: (inout OtherEdits) -> Void) -> OtherEdits {
+        var o = other
+        change(&o)
+        if let power = o.power, SettingChange.power(power).matches(s) { o.power = nil }
+        if let on = o.angleSnapping, SettingChange.angleSnapping(on).matches(s) { o.angleSnapping = nil }
+        if let degrees = o.angleTuning, SettingChange.angleTuning(degrees).matches(s) { o.angleTuning = nil }
+        return o
+    }
+
+    /// Power can be edited only when the warning level read from the mouse is one Squire can write back.
+    public static func canEditPower(_ s: MouseSettings) -> Bool {
+        s.lowWarning.map { Command.lowWarningLevels.contains($0) } ?? false
     }
 
     /// Zones whose pending value differs from what the mouse has, in a fixed order.
@@ -108,25 +152,25 @@ public enum SettingsEditing {
         (pending[zone] ?? s.leds[zone]).map { LEDMode.writable.contains($0.mode) } ?? false
     }
 
-    public static func applyStatus(_ s: MouseSettings, pending: [LEDZone: LEDState]) -> String {
-        let zones = changedZones(s, pending: pending)
-        guard !zones.isEmpty else {
+    public static func applyStatus(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> String {
+        let all = changes(s, pending: pending, other: other)
+        guard !all.isEmpty else {
             return "Showing the values read from the mouse. Nothing is sent until you click Apply."
         }
-        let names = zones.compactMap { SettingsZone(rawValue: $0.rawValue)?.title }.joined(separator: ", ")
+        let names = all.map(\.title).joined(separator: ", ")
         return "Not sent yet: \(names). Apply writes it to the mouse, reads it back and saves it."
     }
 
     /// Exactly what Apply will send, for "Show bytes".
-    public static func plannedPackets(_ s: MouseSettings, pending: [LEDZone: LEDState]) -> [String] {
+    public static func plannedPackets(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> [String] {
         let omni = s.connection != .wired
         let reportID: UInt8? = omni ? 0x03 : nil
         let length = omni ? 64 : 65
         var lines: [String] = []
-        for zone in changedZones(s, pending: pending) {
-            guard let command = try? Command.setLED(zone, pending[zone]!),
+        for change in changes(s, pending: pending, other: other) {
+            guard let command = try? change.command(),
                   let bytes = try? Packet.build(reportID: reportID, command: command, length: length) else { continue }
-            lines.append(ReplyParser.hex(Array(bytes.prefix(13))) + " …")
+            lines.append(ReplyParser.hex(Array(bytes.prefix(command.bytes.count + 1))) + " …")
         }
         if !lines.isEmpty, let bytes = try? Packet.build(reportID: reportID, command: .save, length: length) {
             lines.append(ReplyParser.hex(Array(bytes.prefix(3))) + " …  (save)")

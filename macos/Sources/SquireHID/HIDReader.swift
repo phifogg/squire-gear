@@ -101,14 +101,18 @@ public final class HIDReader {
 
     // MARK: writes (only on an explicit click in the app)
 
-    /// Sets one LED zone, then reads it back. Checks the mouse is awake first. With `save`, also sends 50 03,
-    /// but only if the read-back matched. Without save the change lives in the mouse's RAM only.
+    /// Sets one LED zone, then reads it back. See `write`.
     public func setLED(_ zone: LEDZone, _ led: LEDState, save: Bool) -> (result: WriteResult, diagnostics: [String]) {
+        write(.led(zone, led), save: save)
+    }
+
+    /// The one write path: checks the mouse is awake, reads the setting, writes, reads it back, and with `save`
+    /// sends 50 03, but only if the read-back matched. Without save the change lives in the mouse's RAM only.
+    public func write(_ change: SettingChange, save: Bool) -> (result: WriteResult, diagnostics: [String]) {
         let command: Command
-        do { command = try Command.setLED(zone, led) } catch {
+        do { command = try change.command() } catch {
             return (WriteResult(status: .error, message: "\(error)"), [])
         }
-        let readBack = SettingsQuery.led(zone)
         return DeviceLock.run {
             var log: [String] = []
             let devices = listDevices(log: &log)
@@ -122,12 +126,15 @@ public final class HIDReader {
                         continue
                     }
                     result = WriteResult(status: .error)
-                    result.before = readLED(device, target: target, query: readBack, zone: zone, log: &log)
+                    let before = readBack(device, target: target, change: change, log: &log)
+                    result.before = Self.led(change, before)
                     let written = exchange(device, target: target, command: command, log: &log)
-                    result.sent.append(Self.describe(target: target, command: command, prefix: 13))
+                    result.sent.append(Self.describe(target: target, command: command, prefix: command.bytes.count + 1))
                     if written.status == .error { result.message = written.raw; return (result, log) }
-                    result.after = readLED(device, target: target, query: readBack, zone: zone, log: &log)
-                    result.status = led.matches(result.after) ? .ok : .mismatch
+                    let after = readBack(device, target: target, change: change, log: &log)
+                    result.after = Self.led(change, after)
+                    result.readBack = after
+                    result.status = after.map { change.matches($0) } == true ? .ok : .mismatch
                     if result.status == .ok && save {
                         let saved = exchange(device, target: target, command: .save, log: &log)
                         result.sent.append(Self.describe(target: target, command: .save, prefix: 3))
@@ -140,13 +147,19 @@ public final class HIDReader {
         }
     }
 
-    private func readLED(_ device: IOHIDDevice, target: Target, query: SettingsQuery, zone: LEDZone,
-                         log: inout [String]) -> LEDState? {
-        let ex = exchange(device, target: target, command: query.command, log: &log)
+    /// Reads the value `change` touches; nil if the read failed.
+    private func readBack(_ device: IOHIDDevice, target: Target, change: SettingChange, log: inout [String]) -> MouseSettings? {
+        let command = change.readBack?.command ?? .mouseBattery
+        let ex = exchange(device, target: target, command: command, log: &log)
         guard ex.status == .ok else { return nil }
-        var tmp = MouseSettings()
-        tmp.apply(query, ex.payload)
-        return tmp.leds[zone]
+        var s = MouseSettings(connection: target.connection)
+        if let query = change.readBack { s.apply(query, ex.payload) } else { s.applyBattery(ex.payload) }
+        return s
+    }
+
+    private static func led(_ change: SettingChange, _ s: MouseSettings?) -> LEDState? {
+        if case .led(let zone, _) = change { return s?.leds[zone] }
+        return nil
     }
 
     // MARK: transport

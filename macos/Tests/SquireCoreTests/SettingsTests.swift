@@ -105,6 +105,63 @@ private func json() throws -> [String: Any] {
         #expect(Array(try Packet.build(reportID: 0x03, command: .save, length: 64).prefix(3)) == bytes(save))
     }
 
+    /// protocol.json mouse_writes.settings_writes: same vectors as the Python tests.
+    @Test func powerAndSensorWritesMatchTheConfirmedPackets() throws {
+        let section = (try json()["mouse_writes"] as! [String: Any])["settings_writes"] as! [String: Any]
+        for write in section["writes"] as! [[String: Any]] {
+            let args = write["args"] as! [Any]
+            let command: Command
+            switch write["function"] as! String {
+            case "power_command":
+                command = try .setPower(PowerSetting(offMinutes: args[0] as? Int, lowWarning: args[1] as! Int))
+            case "angle_snapping_command": command = try .setAngleSnapping(args[0] as! Bool)
+            case "angle_tuning_command": command = try .setAngleTuning(args[0] as! Int)
+            default: Issue.record("unknown function \(write["function"]!)"); continue
+            }
+            let head = bytes(write["packet"] as! String)
+            let packet = try Packet.build(reportID: 0x03, command: command, length: 64)
+            #expect(Array(packet.prefix(head.count)) == head, "\(write["name"]!)")
+            #expect(packet.dropFirst(head.count).allSatisfy { $0 == 0 })
+        }
+    }
+
+    @Test func powerAndSensorExactBytes() throws {
+        #expect(try Command.setPower(PowerSetting(offMinutes: nil, lowWarning: 50)).bytes == [0x51, 0x37, 0, 0, 0xFF, 0, 0x32])
+        #expect(try Command.setPower(PowerSetting(offMinutes: 1, lowWarning: 10)).bytes == [0x51, 0x37, 0, 0, 0x00, 0, 0x0A])
+        #expect(try Command.setAngleSnapping(false).bytes == [0x51, 0x31, 0x06, 0x00, 0x00])
+        #expect(try Command.setAngleTuning(-20).bytes == [0x51, 0x31, 0x0B, 0x00, 0xEC, 0xFF])
+        #expect(try Command.setAngleTuning(15).bytes == [0x51, 0x31, 0x0B, 0x00, 0x0F, 0x00])
+    }
+
+    @Test func invalidPowerAndSensorValuesAreRefused() {
+        #expect(throws: CommandError.self) { try Command.setPower(PowerSetting(offMinutes: 4, lowWarning: 20)) }
+        #expect(throws: CommandError.self) { try Command.setPower(PowerSetting(offMinutes: 5, lowWarning: 25)) }
+        #expect(throws: CommandError.self) { try Command.setPower(PowerSetting(offMinutes: 5, lowWarning: 60)) }
+        #expect(throws: CommandError.self) { try Command.setAngleTuning(7) }
+        #expect(throws: CommandError.self) { try Command.setAngleTuning(25) }
+    }
+
+    @Test(arguments: ["51 31 00 00 07 00", "51 31 04 00 03", "51 31 05 00 02", "51 31 09 00 01", "51 31 0a 00 04",
+                      "51 35 ff 00 ff 00", "51 31 06 00 02", "51 31 0b 00 07 00", "51 37 00 00 05 00 14",
+                      "51 37 00 01 03 00 14", "50 02 01"])
+    func everythingElseStaysRefused(hex: String) {
+        #expect(!Allowlist.isAllowedWrite(bytes(hex)))
+        #expect(throws: CommandError.self) {
+            try Packet.build(reportID: 0x03, command: Command(bytes(hex), isWrite: true), length: 64)
+        }
+    }
+
+    @Test func settingChangeReadBackAndMatch() {
+        var s = MouseSettings()
+        s.powerOffMinutes = nil; s.lowWarning = 20; s.angleSnapping = false; s.angleTuning = -5
+        #expect(SettingChange.power(PowerSetting(offMinutes: nil, lowWarning: 20)).matches(s))
+        #expect(!SettingChange.power(PowerSetting(offMinutes: 3, lowWarning: 20)).matches(s))
+        #expect(SettingChange.angleSnapping(false).matches(s) && !SettingChange.angleSnapping(true).matches(s))
+        #expect(SettingChange.angleTuning(-5).matches(s))
+        #expect(SettingChange.power(PowerSetting(offMinutes: 3, lowWarning: 20)).readBack == nil)   // 12 07
+        #expect(SettingChange.angleTuning(0).readBack == .settings)
+    }
+
     @Test func wiredWriteIsUnnumbered65Bytes() throws {
         let command = try Command.setLED(.wheel, LEDState(mode: .static, brightness: 100, color: RGB(0, 0, 0xFF)))
         let packet = try Packet.build(reportID: nil, command: command, length: 65)
@@ -203,6 +260,34 @@ private func json() throws -> [String: Any] {
         let s = try settings()
         let pending = SettingsEditing.edit([:], zone: .wheel, current: s.leds[.wheel]!) { $0.color = RGB(1, 2, 3) }
         #expect(SettingsEditing.changedZones(s, pending: pending).isEmpty)
+    }
+
+    /// Same plan as test_squire_settings.py test_power_and_sensor_edits_plan_exact_bytes.
+    @Test func powerAndSensorEditsPlanExactBytes() throws {
+        let s = try settings()   // off after 3 min, warning 20 %, snapping off, tuning 0°
+        var other = SettingsEditing.edit(OtherEdits(), s) {
+            $0.power = PowerSetting(offMinutes: 10, lowWarning: 30)
+            $0.angleSnapping = true
+            $0.angleTuning = -5
+        }
+        let blue = LEDState(mode: .static, brightness: 100, color: RGB(0x3D, 0x8B, 0xFF))
+        #expect(SettingsEditing.plannedPackets(s, pending: [.logo: blue], other: other)
+                == ["03 51 28 00 00 00 64 3d 8b ff 00 00 00 …", "03 51 37 00 00 04 00 1e …",
+                    "03 51 31 06 00 01 …", "03 51 31 0b 00 fb ff …", "03 50 03 …  (save)"])
+        #expect(SettingsEditing.applyStatus(s, pending: [:], other: other).contains("Power, Angle snapping, Angle tuning"))
+        let preview = SettingsEditing.preview(s, pending: [:], other: other)
+        #expect(SettingsEditing.summary(preview, .power) == "off after 10 min · warn at 30 %")
+        // back to the mouse's values: dropped
+        other = SettingsEditing.edit(other, s) {
+            $0.power = PowerSetting(offMinutes: 3, lowWarning: 20)
+            $0.angleSnapping = false
+            $0.angleTuning = 0
+        }
+        #expect(other.isEmpty)
+        #expect(SettingsEditing.canEditPower(s))
+        var odd = s
+        odd.lowWarning = 15
+        #expect(!SettingsEditing.canEditPower(odd))
     }
 
     @Test func linkedEditSetsEveryZone() throws {
