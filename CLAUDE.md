@@ -78,7 +78,8 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 - macOS settings window: same layout and behaviour as the Linux one (SwiftUI in an AppKit-managed NSWindow, so it
   never opens at launch), opened with "Settings…" in the popover. Same rules: Apply writes each changed zone, reads
   it back, saves (50 03) once with the last one and only if all matched. protocol.json is bundled for --demo.
-  Reads and LED Apply (all three zones) confirmed on macOS via Omni (owner, 2026-11-11). The colour row is an
+  Reads and LED Apply (all three zones) confirmed on macOS via Omni (owner, 2026-11-11) and over the cable
+  (2026-11-12). The colour row is an
   NSColorWell wrapper (LEDColorWell), not SwiftUI's ColorPicker: that one wrote each edit back as clamped sRGB,
   so the panel's cursor jumped and parts of the wheel seemed unreachable.
 - Linux settings window: a separate GTK 4 + libadwaita process (`squire-settings`), started from the tray menu.
@@ -190,8 +191,10 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] macOS settings window, same as Linux (branch `macos-settings-window`): reads, LED edit + Apply
   - [x] macOS reads confirmed on the device via Omni (`squire-probe --settings`, 2026-11-11); `--repeat 30` no crash
   - [x] macOS LED Apply confirmed on the device, all three zones via Omni (2026-11-11)
-  - [ ] macOS: reads + Apply over the cable
-      (read current DPI / LED / sensor settings of the Keris II Origin)
+  - [x] macOS: reads + LED Apply over the cable (pid 1c0c, iface 0; change survives off/on, 2026-11-12)
+  - [ ] Firmware bytes in `12 00` are mis-parsed ([13..15]): cable has the mouse firmware at [4..6] (09 00 01),
+        Omni has the receiver at [4..6] (02 00 07) and the mouse at [14..16] (09 00 01) -> mouse 01.00.09?
+        Confirm the version elsewhere, then fix Python + Swift and add the cable replies to protocol.json
 - [x] Linux top bar app (0.2.1, `linux/`): hidraw backend, AppIndicator tray, udev rule, installer
 - [ ] Settings window polish (collect small UI findings here, work through them before or with the write step):
   - [x] DPI button is on the underside: no hotspot on the top view, DPI is a chip (2026-11-10)
