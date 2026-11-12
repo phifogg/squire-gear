@@ -67,6 +67,8 @@ struct PopoverView: View {
             if let keyboard = store.keyboard { DeviceRow(battery: keyboard) }
             if let mouse = store.mouse { DeviceRow(battery: mouse) }
             Divider()
+            Button("Settings…") { SettingsWindowController.shared.show() }
+            Divider()
             Toggle("Notify when low", isOn: $notifyWhenLow)
             Toggle("Launch at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { enabled in

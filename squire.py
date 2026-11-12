@@ -22,7 +22,7 @@ import select
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -80,9 +80,77 @@ TARGETS = [
 ]
 
 
+# Read-only commands for the Keris II Origin settings ("get" requests all start with 0x12; writes start with
+# 0x50/0x51 and are not on any list here). Sources, facts only: libratbag src/asus.c + driver-asus.c (MIT,
+# confirmed on this mouse in the owner's libratbag fork) and G-Helper app/Peripherals/Mouse/AsusMouse.cs (GPL-3.0).
+MOUSE_SETTINGS_QUERIES = {
+    "profile": bytes([0x12, 0x00]),             # active profile, active DPI stage, firmware
+    "settings": bytes([0x12, 0x04, 0x00]),      # DPI stages, polling rate, debounce, angle snapping/tuning
+    "dpi_xy": bytes([0x12, 0x04, 0x02]),        # DPI stages with separate X and Y
+    "dpi_colors": bytes([0x12, 0x04, 0x03]),    # colour per DPI stage
+    "led_logo": bytes([0x12, 0x03, 0x00]),      # LED zone 0 = logo
+    "led_wheel": bytes([0x12, 0x03, 0x01]),     # LED zone 1 = scroll wheel
+    "led_side": bytes([0x12, 0x03, 0x02]),      # LED zone 2 = side strip (G-Helper/libratbag: "underglow")
+    "liftoff": bytes([0x12, 0x06]),             # lift-off distance
+}
+# The transport refuses anything not on this list.
+ALLOWED_COMMANDS = frozenset([KEYBOARD_QUERY, MOUSE_QUERY, *MOUSE_SETTINGS_QUERIES.values()])
+
+
+# --- Writes (allowlist) ---
+# Every write is built by a function below and checked again by is_allowed_write() before it is sent.
+# Sources, facts only: libratbag asus_set_led()/asus_save_profile() (MIT, tested on this mouse in the owner's
+# fork) and G-Helper GetUpdateLightingModePacket()/GetSaveProfilePacket() (GPL-3.0).
+LED_WRITE = bytes([0x51, 0x28])          # 51 28 zone 00 mode brightness r g b dir random speed
+SAVE_COMMAND = bytes([0x50, 0x03])       # stores the current settings in the mouse's flash
+LED_ZONE_INDEX = {"logo": 0, "wheel": 1, "side": 2}
+# Effects the Keris II Origin supports (G-Helper KerisIIOrigin); f0 = off. No rainbow/comet: they need
+# direction/speed bytes that Squire does not send.
+LED_WRITE_MODES = {"static": 0x00, "breathing": 0x01, "color-cycle": 0x02, "react": 0x04, "battery": 0x06,
+                   "off": 0xF0}
+# No speed byte: tested 2026-11-10, the Keris II Origin stores [11] = 05/09 but breathing and colour cycle keep
+# the same tempo (3 pulses in 10 s either way). Bytes [9..11] stay 00.
+
+
+def led_command(zone: str, mode: str, brightness: int, color: str = "#000000") -> bytes:
+    """51 28 command for one LED zone. Raises ValueError for anything outside the allowlist."""
+    if zone not in LED_ZONE_INDEX:
+        raise ValueError(f"unknown LED zone {zone!r}")
+    if mode not in LED_WRITE_MODES:
+        raise ValueError(f"LED effect {mode!r} is not supported")
+    if not 0 <= int(brightness) <= 100:
+        raise ValueError("brightness must be 0-100 %")
+    rgb = bytes.fromhex(color.lstrip("#"))
+    if len(rgb) != 3:
+        raise ValueError(f"colour {color!r} is not #rrggbb")
+    command = LED_WRITE + bytes([LED_ZONE_INDEX[zone], 0x00, LED_WRITE_MODES[mode], int(brightness)]) + rgb \
+        + bytes([0x00, 0x00, 0x00])
+    assert is_allowed_write(command)
+    return command
+
+
+def is_allowed_write(command: bytes) -> bool:
+    if command == SAVE_COMMAND:
+        return True
+    return (len(command) == 12 and command[:2] == LED_WRITE and command[2] in LED_ZONE_INDEX.values()
+            and command[3] == 0 and command[4] in LED_WRITE_MODES.values() and command[5] <= 100
+            and command[9:] == b"\0\0\0")
+
+
+def packet(report_id: Optional[int], command: bytes, length: int, write: bool = False) -> bytes:
+    """The only place packets are built. Reads must be on ALLOWED_COMMANDS; writes must pass
+    is_allowed_write() AND be sent with write=True, so a read path can never send a write."""
+    if write:
+        if not is_allowed_write(command):
+            raise ValueError(f"write {command.hex(' ')} is not on the allowlist")
+    elif command not in ALLOWED_COMMANDS:
+        raise ValueError(f"command {command.hex(' ')} is not on the allowlist")
+    rid = 0x00 if report_id is None else report_id
+    return (bytes([rid]) + command).ljust(length, b"\0")
+
+
 def build_packet(target: Target, length: int) -> bytes:
-    rid = 0x00 if target.report_id is None else target.report_id
-    return (bytes([rid]) + target.query).ljust(length, b"\0")
+    return packet(target.report_id, target.query, length)
 
 
 def find_echo(reply: bytes, query: bytes) -> Optional[int]:
@@ -124,27 +192,41 @@ def parse_warning(device: str, reply: bytes, base: int) -> Optional[int]:
     return value if value is not None and 1 <= value <= 100 else None
 
 
-def query(dev, target: Target, debug: bool = False) -> Battery:
-    result = Battery(target.device, target.name, "omni" if target.pid == PID_OMNI else "wired", None)
+@dataclass
+class Exchange:
+    status: str                      # ok | asleep | no-response | error
+    reply: bytes = b""
+    base: int = 0                    # index of the echoed command in reply
+    raw: str = ""
+
+    @property
+    def payload(self) -> bytes:
+        """Reply from the echoed command on (indices as in protocol.json notes, without report ID)."""
+        return self.reply[self.base:]
+
+
+def exchange(dev, target: Target, command: bytes, debug: bool = False, match: Optional[int] = None,
+             write: bool = False) -> Exchange:
+    """Send one allowlisted command and wait for the reply that echoes it (first `match` bytes)."""
+    echo = command[:match or len(command)]
     # drain stale input (bounded, short timeout)
     for _ in range(MAX_READS):
         if not dev.read(65, DRAIN_TIMEOUT_MS):
             break
     written, last_error = -1, "write failed"
     for length in target.report_lens:
+        data = packet(target.report_id, command, length, write=write)
         try:
-            written = dev.write(build_packet(target, length))
+            written = dev.write(data)
         except (OSError, ValueError) as error:
             written, last_error = -1, f"write failed: {error}"
         if debug:
-            print(f"[{target.device}] > {build_packet(target, length)[:4].hex(' ')} … ({length} bytes) -> {written}",
-                  file=sys.stderr)
+            print(f"[{target.device}] > {data[:5].hex(' ')} … ({length} bytes) -> {written}", file=sys.stderr)
         if written is not None and written >= 0:
             break
     if written is None or written < 0:
-        result.status, result.raw = "error", last_error
-        return result
-    saw_error = False
+        return Exchange("error", raw=last_error)
+    saw_error, raw = False, ""
     for _ in range(MAX_READS):
         reply = bytes(dev.read(65, READ_TIMEOUT_MS))
         if not reply:
@@ -155,20 +237,28 @@ def query(dev, target: Target, debug: bool = False) -> Battery:
             print(f"[{target.device}] < {reply.hex(' ')}", file=sys.stderr)
         if is_error(reply, target.report_id):
             # the receiver sometimes sends ff aa right before the real reply: keep reading
-            saw_error, result.raw = True, reply.hex(" ")
+            saw_error, raw = True, reply.hex(" ")
             continue
-        base = find_echo(reply, target.query)
+        base = find_echo(reply, echo)
         if base is None:
             continue  # other traffic (e.g. button/profile events); keep reading
-        result.raw = reply.hex(" ")
-        pct, charging = parse(target.device, reply, base)
-        if pct is None or (pct == 0 and not charging):
-            result.status = "asleep"   # G-Helper treats 0 % + not charging as disconnected
-            return result
-        result.percent, result.charging = pct, charging
-        result.low_warning = parse_warning(target.device, reply, base)
+        return Exchange("ok", reply, base, reply.hex(" "))
+    return Exchange("asleep" if saw_error else "no-response", raw=raw)
+
+
+def query(dev, target: Target, debug: bool = False) -> Battery:
+    result = Battery(target.device, target.name, "omni" if target.pid == PID_OMNI else "wired", None)
+    ex = exchange(dev, target, target.query, debug)
+    result.raw = ex.raw
+    if ex.status != "ok":
+        result.status = ex.status
         return result
-    result.status = "asleep" if saw_error else "no-response"
+    pct, charging = parse(target.device, ex.reply, ex.base)
+    if pct is None or (pct == 0 and not charging):
+        result.status = "asleep"   # G-Helper treats 0 % + not charging as disconnected
+        return result
+    result.percent, result.charging = pct, charging
+    result.low_warning = parse_warning(target.device, ex.reply, ex.base)
     return result
 
 
@@ -284,6 +374,33 @@ class HidrawBackend:
         return HidrawDevice()
 
 
+class device_lock:
+    """Serialises device sessions between Squire processes (tray, settings window, CLI) for this user.
+
+    Each process gets its own copy of every reply, so this is about keeping request/reply pairs together,
+    not about safety. Best effort: if the lock file cannot be created, run without it."""
+
+    def __init__(self, path: Optional[Path] = None):
+        runtime = os.environ.get("XDG_RUNTIME_DIR")
+        self.path = path or (Path(runtime) if runtime else state_dir()) / "squire-gear-device.lock"
+        self.handle = None
+
+    def __enter__(self):
+        try:
+            import fcntl
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.handle = open(self.path, "w")
+            fcntl.flock(self.handle, fcntl.LOCK_EX)   # waits; a session takes about a second at most
+        except (ImportError, OSError):
+            self.handle = None
+        return self
+
+    def __exit__(self, *exc):
+        if self.handle is not None:
+            self.handle.close()   # closing releases the lock
+        return False
+
+
 def load_backend():
     if IS_LINUX:
         return HidrawBackend()
@@ -307,6 +424,11 @@ def enumerate_paths(hid, pid: int) -> list[bytes]:
 
 
 def read_all(debug: bool = False, hid=None) -> list[Battery]:
+    with device_lock():
+        return _read_all(debug, hid)
+
+
+def _read_all(debug: bool = False, hid=None) -> list[Battery]:
     hid = hid or load_backend()
     found: dict[str, Battery] = {}
     for target in TARGETS:
@@ -338,6 +460,231 @@ def read_all(debug: bool = False, hid=None) -> list[Battery]:
                 break
             time.sleep(0.05)
     return [found[k] for k in ("keyboard", "mouse") if k in found]
+
+
+# --- Mouse settings (read-only) ------------------------------------------------------------------------------
+
+LED_MODES = {0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "rainbow", 0x04: "react",
+             0x05: "comet", 0x06: "battery", 0xF0: "off"}
+POLLING_RATES_HZ = (125, 250, 500, 1000, 2000, 4000, 8000, 16000)   # index in the low 3 bits
+POWER_OFF_MINUTES = {0: 1, 1: 2, 2: 3, 3: 5, 4: 10, 0xFF: None}     # None = never
+LED_ZONES = ("logo", "wheel", "side")
+
+
+@dataclass
+class MouseSettings:
+    name: str
+    connection: str
+    status: str = "ok"                          # ok | asleep | no-response | no-access | error | not-found
+    profile: Optional[int] = None               # 1-based, as on the device
+    dpi_stage: Optional[int] = None             # active DPI stage, 1-based
+    dpi_stage_count: Optional[int] = None       # stages the DPI button cycles through
+    dpi: list = field(default_factory=list)     # DPI per stage
+    dpi_xy: list = field(default_factory=list)  # [x, y] per stage
+    dpi_colors: list = field(default_factory=list)
+    polling_hz: Optional[int] = None
+    debounce_index: Optional[int] = None        # raw value
+    debounce_ms: Optional[int] = None           # 1..7 = 8..32 ms (libratbag and G-Helper agree); 0 is unclear
+    polling_raw: Optional[int] = None           # low 3 bits = rate; G-Helper reads the high nibble in "booster" mode
+    angle_snapping: Optional[bool] = None
+    angle_tuning: Optional[int] = None          # degrees
+    liftoff: Optional[str] = None               # low | high
+    leds: dict = field(default_factory=dict)    # zone -> {mode, brightness (0-100 %), color}
+    led_speed_raw: dict = field(default_factory=dict)  # zone -> raw speed byte from the reply (no effect seen)
+    power_off_minutes: Optional[int] = None     # None with status ok = never
+    low_warning: Optional[int] = None
+    firmware: Optional[str] = None
+    raw: dict = field(default_factory=dict)     # command name -> reply hex (for captures)
+
+
+def _u16(p: bytes, i: int) -> int:
+    return p[i] | (p[i + 1] << 8)
+
+
+def _dpi(raw_value: int) -> int:
+    return raw_value * 50 + 50      # devices store (DPI - 50) / 50
+
+
+def parse_mouse_settings(s: MouseSettings, name: str, p: bytes) -> None:
+    """Fill s from one reply payload p (starting at the echoed command)."""
+    if len(p) < 20:
+        return
+    if name == "battery":
+        s.power_off_minutes = POWER_OFF_MINUTES.get(p[5], None)
+        s.low_warning = p[6] if 1 <= p[6] <= 100 else None
+    elif name == "profile":
+        s.profile = p[10] + 1
+        s.dpi_stage = p[11] if p[11] else None
+        s.dpi_stage_count = p[18] if 1 <= p[18] <= 4 else None
+        s.firmware = f"{p[15]:02X}.{p[14]:02X}.{p[13]:02X}"
+    elif name == "settings":
+        # ff ff = not in this reply: mice with separate X/Y DPI (like the Keris) report DPI only in dpi_xy
+        s.dpi = [None if _u16(p, 4 + 2 * i) == 0xFFFF else _dpi(_u16(p, 4 + 2 * i)) for i in range(4)]
+        s.polling_raw = p[12]
+        s.polling_hz = POLLING_RATES_HZ[p[12] & 0x07]
+        s.debounce_index = p[14]
+        s.debounce_ms = 4 + 4 * p[14] if 1 <= p[14] <= 7 else None
+        s.angle_snapping = p[16] == 1
+        angle = _u16(p, 18)
+        s.angle_tuning = angle - 0x10000 if angle & 0x8000 else angle
+    elif name == "dpi_xy":
+        s.dpi_xy = [[_dpi(_u16(p, 4 + 4 * i)), _dpi(_u16(p, 6 + 4 * i))] for i in range(4)]
+        if not s.dpi or None in s.dpi:
+            s.dpi = [x for x, _ in s.dpi_xy]
+    elif name == "dpi_colors":
+        s.dpi_colors = ["#" + p[4 + 3 * i:7 + 3 * i].hex() for i in range(4)]
+    elif name.startswith("led_"):
+        s.leds[name[4:]] = {"mode": LED_MODES.get(p[4], f"0x{p[4]:02x}"), "brightness": p[5],
+                            "color": "#" + p[6:9].hex()}
+        s.led_speed_raw[name[4:]] = p[12]    # [10..12] direction, random, speed (G-Helper); no effect on the Keris
+    elif name == "liftoff":
+        s.liftoff = {0: "low", 1: "high"}.get(p[7], f"0x{p[7]:02x}")
+
+
+def read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
+    """Current settings of the Keris II Origin (active profile only; never switches profiles).
+
+    Sends only the read commands in MOUSE_SETTINGS_QUERIES plus the battery query."""
+    with device_lock():
+        return _read_mouse_settings(debug, hid)
+
+
+def _read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
+    hid = hid or load_backend()
+    result = MouseSettings("ROG Keris II Origin", "", status="not-found")
+    for target in (t for t in TARGETS if t.device == "mouse"):
+        for path in enumerate_paths(hid, target.pid):
+            dev = hid.device()
+            try:
+                dev.open_path(path)
+            except (OSError, IOError) as error:
+                if debug:
+                    print(f"[mouse] open {path!r} failed: {error}", file=sys.stderr)
+                if isinstance(error, PermissionError):
+                    result.status = "no-access"
+                continue
+            try:
+                settings = MouseSettings(target.name, "omni" if target.pid == PID_OMNI else "wired")
+                battery = exchange(dev, target, target.query, debug)
+                if battery.status != "ok":
+                    result = settings
+                    result.status = battery.status
+                    continue   # asleep here; maybe it is on the other connection
+                settings.raw["battery"] = battery.payload.hex(" ")
+                parse_mouse_settings(settings, "battery", battery.payload)
+                for name, command in MOUSE_SETTINGS_QUERIES.items():
+                    ex = exchange(dev, target, command, debug, match=3 if command[1] == 0x04 else 2)
+                    if ex.status != "ok":
+                        settings.raw[name] = ex.status
+                        continue
+                    settings.raw[name] = ex.payload.hex(" ")
+                    parse_mouse_settings(settings, name, ex.payload)
+                return settings
+            finally:
+                dev.close()
+    return result
+
+
+@dataclass
+class WriteResult:
+    status: str                    # ok | mismatch | asleep | no-response | no-access | not-found | error | dry-run
+    sent: list = field(default_factory=list)       # hex of every packet sent (or that would be sent)
+    before: Optional[dict] = None  # LED state read before the write
+    after: Optional[dict] = None   # LED state read back after the write
+    saved: bool = False
+    message: str = ""
+
+
+def led_matches(wanted: dict, actual: Optional[dict]) -> bool:
+    if not actual or actual["mode"] != wanted["mode"]:
+        return False
+    if wanted["mode"] == "off":
+        return True
+    if actual["brightness"] != wanted["brightness"]:
+        return False
+    return wanted["mode"] not in ("static", "breathing", "react") or actual["color"] == wanted["color"]
+
+
+def set_led(zone: str, mode: str, brightness: int, color: str = "#000000", save: bool = False,
+            dry_run: bool = False, debug: bool = False, hid=None) -> WriteResult:
+    """Set one LED zone of the Keris II Origin, then read it back. Only on an explicit request (CLI or a click).
+
+    Without save the change lives in the mouse's RAM (lost when it powers off); save=True also sends 50 03."""
+    command = led_command(zone, mode, brightness, color)
+    read_back = MOUSE_SETTINGS_QUERIES[f"led_{zone}"]
+    wanted = {"mode": mode, "brightness": int(brightness), "color": "#" + command[6:9].hex()}
+    if dry_run:
+        sent = [packet(0x03, command, 64, write=True)[:13].hex(" ") + " … (Omni, 64 bytes)",
+                packet(None, command, 65, write=True)[:13].hex(" ") + " … (wired, 65 bytes)"]
+        if save:
+            sent.append(packet(0x03, SAVE_COMMAND, 64, write=True)[:3].hex(" ") + " … (Omni, 64 bytes)")
+        return WriteResult("dry-run", sent, message="nothing sent")
+    with device_lock():
+        hid = hid or load_backend()
+        result = WriteResult("not-found")
+        for target in (t for t in TARGETS if t.device == "mouse"):
+            for path in enumerate_paths(hid, target.pid):
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                except (OSError, IOError) as error:
+                    if isinstance(error, PermissionError):
+                        result.status = "no-access"
+                    continue
+                try:
+                    awake = exchange(dev, target, target.query, debug)
+                    if awake.status != "ok":
+                        result = WriteResult(awake.status, message="mouse not awake: nothing written")
+                        continue
+                    before = exchange(dev, target, read_back, debug)
+                    result = WriteResult("error")
+                    if before.status == "ok":
+                        tmp = MouseSettings("", "")
+                        parse_mouse_settings(tmp, f"led_{zone}", before.payload)
+                        result.before = tmp.leds.get(zone)
+                    ex = exchange(dev, target, command, debug, match=2, write=True)
+                    result.sent.append(packet(target.report_id, command, target.report_lens[0], write=True)[:13].hex(" "))
+                    if ex.status == "error":
+                        result.message = ex.raw
+                        return result
+                    after = exchange(dev, target, read_back, debug)
+                    if after.status == "ok":
+                        tmp = MouseSettings("", "")
+                        parse_mouse_settings(tmp, f"led_{zone}", after.payload)
+                        result.after = tmp.leds.get(zone)
+                    result.status = "ok" if led_matches(wanted, result.after) else "mismatch"
+                    if result.status == "ok" and save:
+                        saved = exchange(dev, target, SAVE_COMMAND, debug, match=2, write=True)
+                        result.sent.append(packet(target.report_id, SAVE_COMMAND, target.report_lens[0], write=True)[:3].hex(" "))
+                        result.saved = saved.status != "error"
+                    return result
+                finally:
+                    dev.close()
+        return result
+
+
+def print_mouse_settings(s: MouseSettings) -> None:
+    if s.status != "ok":
+        print(f"{s.name}: {s.status}")
+        return
+    stages = ", ".join(f"{'*' if s.dpi_stage == i + 1 else ''}{d}" for i, d in enumerate(s.dpi))
+    print(f"{s.name} ({s.connection}), firmware {s.firmware}, profile {s.profile}")
+    print(f"  DPI stages:   {stages}   (* = active)")
+    if s.dpi_xy:
+        print(f"  DPI X/Y:      {', '.join(f'{x}/{y}' for x, y in s.dpi_xy)}")
+    if s.dpi_colors:
+        print(f"  DPI colors:   {', '.join(s.dpi_colors)}")
+    debounce = f"{s.debounce_ms} ms" if s.debounce_ms else f"index {s.debounce_index}"
+    print(f"  DPI button:   cycles through {s.dpi_stage_count} stages")
+    print(f"  Polling rate: {s.polling_hz} Hz (raw 0x{s.polling_raw or 0:02x})   debounce {debounce}")
+    print(f"  Angle:        snapping {'on' if s.angle_snapping else 'off'}, tuning {s.angle_tuning}°")
+    print(f"  Lift-off:     {s.liftoff}")
+    for zone in LED_ZONES:
+        led = s.leds.get(zone)
+        if led:
+            print(f"  LED {zone:<6}    {led['mode']}, {led['brightness']} %, {led['color']}")
+    power = "never" if s.power_off_minutes is None else f"{s.power_off_minutes} min"
+    print(f"  Power:        off after {power}, low-battery warning {s.low_warning} %")
 
 
 def list_devices(hid=None) -> None:
@@ -449,12 +796,49 @@ def main() -> int:
     mode.add_argument("--list", action="store_true", help="List ASUS HID collections; sends nothing")
     ap.add_argument("--notify", action="store_true",
                     help="Send a desktop notification when a battery reaches the device's low-battery warning level")
+    ap.add_argument("--set-led", metavar="ZONE", choices=list(LED_ZONE_INDEX),
+                    help="WRITE: set one LED zone of the mouse (logo, wheel, side); use with --mode, "
+                         "--brightness, --color; --dry-run prints the bytes only; --save also stores it")
+    ap.add_argument("--mode", choices=list(LED_WRITE_MODES), default="static")
+    ap.add_argument("--brightness", type=int, default=100)
+    ap.add_argument("--color", default="#ffffff")
+    ap.add_argument("--dry-run", action="store_true", help="print the bytes a write would send, send nothing")
+    ap.add_argument("--save", action="store_true", help="after a write, store it in the mouse (50 03)")
+    ap.add_argument("--settings", action="store_true",
+                    help="Read the mouse settings (DPI, LEDs, sensor, power); read-only, add --json for JSON")
     ap.add_argument("--debug", action="store_true", help="Print raw replies to stderr")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = ap.parse_args()
     try:
         if args.list:
             list_devices()
+            return 0
+        if args.set_led:
+            try:
+                result = set_led(args.set_led, args.mode, args.brightness, args.color, save=args.save,
+                                 dry_run=args.dry_run, debug=args.debug)
+            except ValueError as error:
+                print(f"refused: {error}", file=sys.stderr)
+                return 2
+            if args.json:
+                print(json.dumps(asdict(result), indent=2))
+            else:
+                print(f"{result.status}{': ' + result.message if result.message else ''}")
+                for line in result.sent:
+                    print(f"  > {line}")
+                if result.before is not None:
+                    print(f"  before: {result.before}")
+                if result.after is not None:
+                    print(f"  after:  {result.after}")
+                if result.saved:
+                    print("  saved in the mouse (50 03)")
+            return 0 if result.status in ("ok", "dry-run") else 1
+        if args.settings:
+            settings = read_mouse_settings(args.debug)
+            if args.json:
+                print(json.dumps(asdict(settings), indent=2, ensure_ascii=False))
+            else:
+                print_mouse_settings(settings)
             return 0
         results = read_all(args.debug)
     except ImportError:

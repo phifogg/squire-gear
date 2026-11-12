@@ -2,6 +2,8 @@
 # Builds a universal (arm64 + x86_64) Squire.app, ad-hoc signed and NOT notarized, and zips it.
 # Output: macos/dist/Squire-<version>.zip and a .sha256 file.
 # Needs Xcode and XcodeGen (brew install xcodegen). Usage: ./scripts/build-release.sh
+# BUILD_SUFFIX (optional, set by CI for pull requests) only changes the file name:
+#   Squire-0.2.1+pr4.20261112.d293e5d.zip
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,11 +28,12 @@ codesign --verify --deep --strict "$APP"
 
 echo "→ Packaging"
 mkdir -p "$DIST"
-ZIP="$DIST/Squire-$VERSION.zip"
+NAME="Squire-$VERSION${BUILD_SUFFIX:++$BUILD_SUFFIX}.zip"
+ZIP="$DIST/$NAME"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
-( cd "$DIST" && shasum -a 256 "Squire-$VERSION.zip" > "Squire-$VERSION.zip.sha256" )
+( cd "$DIST" && shasum -a 256 "$NAME" > "$NAME.sha256" )
 
 echo "→ Archs: $(lipo -archs "$APP/Contents/MacOS/Squire")"
 echo "→ Done: $ZIP"
-cat "$DIST/Squire-$VERSION.zip.sha256"
+cat "$ZIP.sha256"

@@ -25,6 +25,8 @@ overrides:
       - python3-gi
       - gir1.2-gtk-3.0
       - gir1.2-ayatanaappindicator3-0.1
+      - gir1.2-gtk-4.0
+      - gir1.2-adw-1
       - libnotify-bin
     recommends:
       - gnome-shell-extension-appindicator
@@ -34,6 +36,8 @@ overrides:
       - python3-gobject
       - gtk3
       - libayatana-appindicator-gtk3
+      - gtk4
+      - libadwaita
       - libnotify
 
 contents:
@@ -42,6 +46,9 @@ contents:
     file_info: {mode: 0644}
   - src: linux/squire_tray.py
     dst: /usr/share/squire-gear/squire_tray.py
+    file_info: {mode: 0644}
+  - src: linux/squire_settings.py
+    dst: /usr/share/squire-gear/squire_settings.py
     file_info: {mode: 0644}
   - src: linux/icons/squire-gear-symbolic.svg
     dst: /usr/share/squire-gear/icons/squire-gear-symbolic.svg
@@ -52,6 +59,9 @@ contents:
     file_info: {mode: 0755}
   - src: linux/packaging/squire-tray
     dst: /usr/bin/squire-tray
+    file_info: {mode: 0755}
+  - src: linux/packaging/squire-settings
+    dst: /usr/bin/squire-settings
     file_info: {mode: 0755}
   - src: linux/packaging/squire-gear.desktop
     dst: /usr/share/applications/squire-gear.desktop

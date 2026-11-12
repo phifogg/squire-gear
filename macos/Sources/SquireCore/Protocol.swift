@@ -6,7 +6,8 @@
 //   keyboard  12 01 -> [10] battery % (copy at [5]), [9] low-battery warning %, [8] charging
 //   error reply  ff aa -> device asleep / command not supported
 //
-// Read-only: the only commands Squire ever sends are the 12 01 (keyboard) and 12 07 (mouse) queries.
+// Only commands on the allowlist in Commands.swift are ever sent: the battery queries above, the mouse settings
+// reads, and the two approved writes (51 28 set LED, 50 03 save), the writes only after an explicit Apply.
 
 public enum SquireProtocol {
     public static let vendorID: UInt16 = 0x0B05
@@ -135,10 +136,43 @@ public enum ReplyParser {
         return result
     }
 
+    /// First reply that echoes `echo`, same rules as squire.exchange: `ff aa` is provisional (a valid reply may
+    /// follow); other traffic is skipped; an empty reply is a read timeout.
+    public static func exchange(replies: [[UInt8]], echo: [UInt8], reportID: UInt8?) -> Exchange {
+        var sawError = false, raw = ""
+        for reply in replies {
+            if reply.isEmpty { break }
+            if isError(reply, reportID: reportID) { sawError = true; raw = hex(reply); continue }
+            guard let base = echoIndex(in: reply, query: echo) else { continue }
+            return Exchange(status: .ok, reply: reply, base: base, raw: hex(reply))
+        }
+        return Exchange(status: sawError ? .asleep : .noResponse, raw: raw)
+    }
+
     public static func hex(_ bytes: [UInt8]) -> String {
         bytes.map { byte in
             let digits = String(byte, radix: 16)
             return digits.count == 1 ? "0" + digits : digits
         }.joined(separator: " ")
     }
+}
+
+/// One request/reply pair.
+public struct Exchange: Equatable, Sendable {
+    public enum Status: String, Sendable { case ok, asleep, noResponse = "no-response", error }
+    public var status: Status
+    public var reply: [UInt8] = []
+    /// Index of the echoed command in `reply`.
+    public var base = 0
+    public var raw = ""
+
+    public init(status: Status, reply: [UInt8] = [], base: Int = 0, raw: String = "") {
+        self.status = status
+        self.reply = reply
+        self.base = base
+        self.raw = raw
+    }
+
+    /// Reply from the echoed command on (indices as in protocol.json notes, without report ID).
+    public var payload: [UInt8] { Array(reply.dropFirst(base)) }
 }

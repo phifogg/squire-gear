@@ -100,7 +100,7 @@ open .build/xcode/Build/Products/Debug/Squire.app
 ```
 
 `swift run squire-probe` prints what IOKit sees and the parsed batteries without starting the
-app. `swift test` runs the core tests.
+app; `swift run squire-probe --settings` prints the mouse settings (read-only). `swift test` runs the core tests.
 
 ### Linux
 
@@ -235,7 +235,7 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 ## Roadmap
 
-- Device configuration on macOS (DPI, LEDs), planned for 0.3; 0.2.x stays read-only
+- Device configuration (DPI, LEDs) on Linux and macOS, planned for 0.3; 0.2.x stays read-only
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode
 - Notarized builds, depending on interest

@@ -18,7 +18,10 @@ targets:
   Squire:
     type: application
     platform: macOS
-    sources: [App]
+    sources:
+      - App
+      - path: ../protocol.json       # real captures: the settings window's --demo mode shows them
+        buildPhase: resources
     dependencies:
       - package: SquireKit
         product: SquireCore
