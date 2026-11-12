@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Squire: read-only battery monitor for ASUS ROG Falchion RX Low Profile + Keris II Origin (macOS, Linux).
+"""Squire: battery monitor and mouse settings for ASUS ROG Falchion RX Low Profile + Keris II Origin (macOS, Linux).
 
-Only sends the two documented *query* commands (keyboard 12 01, mouse 12 07).
-It never changes lighting, settings or firmware.
+Battery display and --settings only send *get* requests (keyboard 12 01, mouse 12 07 and the settings reads).
+Writes (one LED zone, save) only on an explicit --set-led (+ --save) or Apply in the settings window, only from
+the allowlist (is_allowed_write), each read back before it is saved. It never touches firmware or switches profiles.
 
 Protocol facts (byte positions relative to the echoed command, i.e. without report ID):
   keyboard  12 01 -> [10] battery %, [5] battery % (copy), [8] charging, [9] low-battery warning %

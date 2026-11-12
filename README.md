@@ -19,8 +19,13 @@ Like a squire looking after a knight's blades, it keeps an eye on your Falchion 
 - **Low-battery notification:** one notification per device when it reaches the warning
   level configured on the device itself, reset after charging
 - Optional launch at login
-- **Read-only:** sends only the two battery query commands. It never changes lighting,
-  settings or firmware.
+- **Mouse settings window** (Keris II Origin, coming in 0.3): shows DPI stages, polling rate,
+  sensor and power settings, and changes the three lights (logo, scroll wheel, side): effect,
+  brightness and colour, optionally the same on all three
+- **Careful with your devices:** the battery display only reads. Squire writes only when you
+  click **Apply** in the settings window, only commands on a fixed allowlist (set one light zone,
+  save), reads every change back and saves it to the mouse only if it matched. It never touches
+  firmware or switches profiles.
 - Opens only vendor-defined HID collections, never the regular keyboard or mouse input
 - macOS: no Python, Homebrew or SwiftBar needed. Linux: only packages that Ubuntu ships by default
 
@@ -36,6 +41,11 @@ cable connection is not tested on Linux yet.
 The warning level for the notification is read from the device's reply (20 % on both test
 devices). It is not yet confirmed that this level follows changes made in Armoury Crate; if a
 reply carries no plausible level, 20 % is used.
+
+The settings window (in development for 0.3, not in a release yet) is tested with the Keris II
+Origin on Linux through the Omni receiver and on macOS through the Omni receiver and the USB
+cable: reading all settings, and changing and saving all three lights. DPI, sensor and power
+settings are shown only so far.
 
 Not tested yet:
 
@@ -100,7 +110,7 @@ open .build/xcode/Build/Products/Debug/Squire.app
 ```
 
 `swift run squire-probe` prints what IOKit sees and the parsed batteries without starting the
-app; `swift run squire-probe --settings` prints the mouse settings (read-only). `swift test` runs the core tests.
+app; `swift run squire-probe --settings` prints the mouse settings (it only reads). `swift test` runs the core tests.
 
 ### Linux
 
@@ -235,7 +245,8 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 ## Roadmap
 
-- Device configuration (DPI, LEDs) on Linux and macOS, planned for 0.3; 0.2.x stays read-only
+- Device configuration on Linux and macOS (0.3): lights first, then DPI, sensor and power;
+  0.2.x stays read-only
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode
 - Notarized builds, depending on interest

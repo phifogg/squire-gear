@@ -2,8 +2,9 @@
 """Squire settings window for Linux (GTK 4 + libadwaita).
 
 Devices on the left; the selected device drawn in the middle with clickable zones and callouts; the values for
-the selected zone on the right. This version only shows the settings it reads from the mouse
-(squire.read_mouse_settings, read-only). Changing them comes in a later step, with an explicit Apply.
+the selected zone on the right. Shows what squire.read_mouse_settings reads; the three lights can be changed,
+and are written only on an explicit Apply (squire.set_led: read back, then one save). DPI, sensor and power are
+shown only so far.
 
 Runs as its own process because the tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process.
 """
