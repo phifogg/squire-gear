@@ -106,6 +106,37 @@ class EditTests(unittest.TestCase):
         self.assertEqual(lines[2], "03 50 03 …  (save)")
         self.assertEqual(len(lines), 3)    # one save for all changed zones
 
+    def test_edit_one_zone_and_back(self):
+        pending = ui.edit_pending(self.s, {}, "logo", mode="static")
+        self.assertEqual(ui.changed_zones(self.s, pending), ["logo"])
+        self.assertEqual(ui.edit_pending(self.s, pending, "logo", mode="color-cycle"), {})
+
+    def test_linked_edit_sets_every_zone_and_saves_once(self):
+        pending = ui.edit_pending(self.s, {}, "logo", linked=True, mode="static", brightness=100, color="#3d8bff")
+        self.assertEqual(sorted(ui.changed_zones(self.s, pending)), ["logo", "side", "wheel"])
+        for zone in ("logo", "wheel", "side"):
+            self.assertEqual(pending[zone], {"mode": "static", "brightness": 100, "color": "#3d8bff"})
+        lines = ui.planned_packets(self.s, pending)
+        self.assertEqual(sorted(line[:11] for line in lines[:3]), ["03 51 28 00", "03 51 28 01", "03 51 28 02"])
+        self.assertEqual(lines[3], "03 50 03 …  (save)")
+        self.assertEqual(len(lines), 4)
+
+    def test_linking_copies_the_zone_and_skips_zones_that_already_match(self):
+        import dataclasses
+        logo = {"mode": "static", "brightness": 80, "color": "#f78013"}
+        s = dataclasses.replace(self.s, leds={**self.s.leds, "logo": logo, "side": dict(logo)})   # wheel: colour cycle
+        pending = ui.edit_pending(s, {}, "logo", linked=True)       # the switch turned on, no other change
+        self.assertEqual(ui.changed_zones(s, pending), ["wheel"])     # side has it already, logo is unchanged
+        self.assertEqual(pending["wheel"], logo)
+
+    def test_effect_squire_cannot_write_is_not_linked(self):
+        import dataclasses
+        s = dataclasses.replace(self.s, leds={**self.s.leds, "logo": {"mode": "rainbow", "brightness": 50,
+                                                                       "color": "#ff0000"}})
+        self.assertFalse(ui.can_link(s, {}, "logo"))
+        self.assertTrue(ui.can_link(s, {"logo": {"mode": "static", "brightness": 50, "color": "#ff0000"}}, "logo"))
+        self.assertTrue(ui.can_link(self.s, {}, "wheel"))
+
     def test_wired_mouse_plans_unnumbered_packets(self):
         import dataclasses
         wired = dataclasses.replace(self.s, connection="wired")

@@ -53,7 +53,7 @@ cd macos && swift test                         # Swift core tests (macOS only)
 cd macos && swift run squire-probe             # what IOKit sees + parsed batteries
 cd macos && swift run squire-probe --settings  # mouse DPI / LEDs / sensor / power, read-only
 Squire.app/Contents/MacOS/Squire --demo --settings          # settings window with protocol.json captures, sends nothing
-Squire.app/Contents/MacOS/Squire --demo --screenshot PATH [ZONE] [edit]   # saves a PNG and quits (sidebar stays blank;
+Squire.app/Contents/MacOS/Squire --demo --screenshot PATH [ZONE] [edit] [linked]   # saves a PNG and quits (sidebar stays blank;
                                                # `screencapture -o -l<window id>` shows it, needs Screen Recording)
 ./install.sh ~/SwiftBar                        # install / update the SwiftBar plugin (macOS)
 APP="$HOME/Library/Application Support/squire-gear"
@@ -202,8 +202,10 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] Logo zone drawn as the Squire shield in the LED colour, with glow; dark imprint when off (2026-11-10)
   - [x] Connection, profile, firmware only in the Device group, not again under the title (2026-11-10)
   - [ ] Design proposal artifact still shows the DPI button on top (the app is the reference now)
-  - [ ] "Same effect on all three zones" switch in the LED editor (was in the design proposal, missing in the
-        window): one edit sets logo, wheel and side; Apply then writes all three and saves once
+  - [x] "Same effect on all zones" switch in the LED editor (Linux + macOS, 2026-11-12): turning it on copies the
+        selected zone to the others, then every edit sets all three; Apply writes only the zones that differ from
+        the mouse and saves once; Revert turns it off; disabled for an effect Squire cannot write.
+        Confirmed on the device with the macOS window (owner, 2026-11-12); Linux window not tried yet
   - [ ] Polling rate: confirm 1000 vs 8000 Hz in Armoury Crate (raw 0x63), then drop the "not confirmed" note
   - [ ] LED speed: Armoury Crate on Windows: is there a speed control for the Keris? If so, capture it (the G-Helper
         speed byte has no effect, tested 2026-11-10)

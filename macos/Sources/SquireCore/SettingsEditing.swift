@@ -88,6 +88,26 @@ public enum SettingsEditing {
         return pending
     }
 
+    /// An edit to one zone, or with `linked` to every light zone ("Same effect on all zones"): the zone's state
+    /// plus the change becomes pending for each target, or is dropped where it is back to what the mouse has.
+    /// A linked edit without a change copies the zone to the others (the switch being turned on).
+    public static func edit(_ s: MouseSettings, _ pending: [LEDZone: LEDState], zone: LEDZone, linked: Bool,
+                            change: (inout LEDState) -> Void = { _ in }) -> [LEDZone: LEDState] {
+        guard var led = pending[zone] ?? s.leds[zone] else { return pending }
+        change(&led)
+        var pending = pending
+        for target in linked ? LEDZone.allCases.filter({ s.leds[$0] != nil }) : [zone] {
+            let current = s.leds[target]!
+            pending[target] = led.matches(current) && led.mode == current.mode ? nil : led
+        }
+        return pending
+    }
+
+    /// Only an effect Squire can write can be copied to the other zones.
+    public static func canLink(_ s: MouseSettings, pending: [LEDZone: LEDState], zone: LEDZone) -> Bool {
+        (pending[zone] ?? s.leds[zone]).map { LEDMode.writable.contains($0.mode) } ?? false
+    }
+
     public static func applyStatus(_ s: MouseSettings, pending: [LEDZone: LEDState]) -> String {
         let zones = changedZones(s, pending: pending)
         guard !zones.isEmpty else {
