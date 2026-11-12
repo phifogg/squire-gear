@@ -1,7 +1,7 @@
 // Keris II Origin settings, read-only parsing. Same layout as squire.py parse_mouse_settings; indices relative to
 // the echoed command (no report ID). Confirmed with the captures in protocol.json `mouse_settings`.
 //
-//   12 00     [10] profile (0-based), [11] active DPI stage (1-based), [18] stage count, [13..15] firmware
+//   12 00     [10] profile (0-based), [11] active DPI stage (1-based), [18] stage count, firmware [4..6] (cable) or [14..16] (Omni; [4..6] = receiver)
 //   12 04 00  [4..11] DPI (ff ff on this separate-X/Y mouse), [12] polling (low 3 bits), [14] debounce,
 //             [16] angle snapping, [18..19] angle tuning (signed LE16)
 //   12 04 02  X/Y per stage from [4] (lo/hi each, DPI = v * 50 + 50)
@@ -144,7 +144,8 @@ public struct MouseSettings: Equatable, Sendable {
     public var leds: [LEDZone: LEDState] = [:]
     public var powerOffMinutes: Int?    // nil with status ok = never
     public var lowWarning: Int?
-    public var firmware: String?
+    public var firmware: String?            // the mouse's own firmware
+    public var receiverFirmware: String?    // the Omni receiver's (Omni only)
     /// query name -> reply hex (or status), for the debug view and new captures
     public var raw: [String: String] = [:]
 
@@ -179,7 +180,19 @@ public struct MouseSettings: Equatable, Sendable {
             profile = Int(p[10]) + 1
             dpiStage = p[11] == 0 ? nil : Int(p[11])
             dpiStageCount = (1...4).contains(p[18]) ? Int(p[18]) : nil
-            firmware = [p[15], p[14], p[13]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
+            // Firmware: 3 bytes, build.minor.major (shown major first, like libratbag). On the Keris II Origin the
+            // mouse's own version is at [4..6] over the cable; via the Omni [4..6] is the receiver and the mouse
+            // moves to [14..16] (same bytes 09 00 01 = 01.00.09 both ways). libratbag's [13..15] is not it here.
+            func version(_ i: Int) -> String? {
+                p[i..<i + 3].allSatisfy { $0 == 0 } ? nil
+                    : [p[i + 2], p[i + 1], p[i]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
+            }
+            if connection == .wired {
+                firmware = version(4)
+            } else {
+                firmware = version(14)
+                receiverFirmware = version(4)
+            }
         case .settings:
             // ff ff = not in this reply: separate-X/Y mice (like the Keris) report DPI only in dpi_xy
             dpi = (0..<4).map { u16(4 + 2 * $0) == 0xFFFF ? nil : dpiValue(u16(4 + 2 * $0)) }

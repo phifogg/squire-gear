@@ -354,6 +354,7 @@ struct InspectorView: View {
                 InfoRow("Connection", settings.connection == .wired ? "Wired" : "Omni receiver")
                 InfoRow("Profile", settings.profile.map(String.init) ?? "–", subtitle: "Squire reads the active profile only")
                 InfoRow("Firmware", settings.firmware ?? "–")
+                if let receiver = settings.receiverFirmware { InfoRow("Receiver firmware", receiver) }
             }
         }
         .formStyle(.grouped)
@@ -402,6 +403,12 @@ struct LEDEditor: View {
     }
 
     var body: some View {
+        let linkable = store.canLink(zone)
+        Toggle(isOn: Binding(get: { store.linkZones && linkable }, set: { store.setLinkZones($0, from: zone) })) {
+            Text("Same effect on all zones")
+            Text(linkable ? "One edit sets logo, scroll wheel and side light" : "Not for an effect Squire cannot write")
+        }
+        .disabled(!linkable)
         Picker("Effect", selection: Binding(get: { state.mode }, set: { mode in store.edit(zone) { $0.mode = mode } })) {
             ForEach(modes, id: \.self) { mode in
                 Text(LEDMode.writable.contains(mode) ? mode.title : "\(mode.title) (read only)").tag(mode)

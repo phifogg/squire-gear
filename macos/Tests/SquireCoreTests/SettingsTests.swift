@@ -30,6 +30,7 @@ private func json() throws -> [String: Any] {
                 case "dpi_stage": #expect(s.dpiStage == value as? Int)
                 case "dpi_stage_count": #expect(s.dpiStageCount == value as? Int)
                 case "firmware": #expect(s.firmware == value as? String)
+                case "receiver_firmware": #expect(s.receiverFirmware == value as? String)
                 case "polling_hz": #expect(s.pollingHz == value as? Int)
                 case "debounce_ms": #expect(s.debounceMs == value as? Int)
                 case "angle_snapping": #expect(s.angleSnapping == value as? Bool)
@@ -46,6 +47,23 @@ private func json() throws -> [String: Any] {
                 default: Issue.record("expect key \(key) not checked")
                 }
             }
+        }
+    }
+
+    /// Over the cable: no report ID, firmware at another place.
+    @Test func wiredCapturesMatchTheirExpectation() throws {
+        let captures = (try json()["mouse_settings_wired"] as! [String: Any])["captures"] as! [[String: Any]]
+        #expect(!captures.isEmpty)
+        for capture in captures {
+            let query = try #require(SettingsQuery(rawValue: capture["command"] as! String))
+            var s = MouseSettings(connection: .wired)
+            s.apply(query, bytes(capture["reply"] as! String))
+            let expect = capture["expect"] as! [String: Any]
+            #expect(s.profile == expect["profile"] as? Int)
+            #expect(s.dpiStage == expect["dpi_stage"] as? Int)
+            #expect(s.dpiStageCount == expect["dpi_stage_count"] as? Int)
+            #expect(s.firmware == expect["firmware"] as? String)
+            #expect(s.receiverFirmware == nil && expect["receiver_firmware"] is NSNull)
         }
     }
 
@@ -185,6 +203,37 @@ private func json() throws -> [String: Any] {
         let s = try settings()
         let pending = SettingsEditing.edit([:], zone: .wheel, current: s.leds[.wheel]!) { $0.color = RGB(1, 2, 3) }
         #expect(SettingsEditing.changedZones(s, pending: pending).isEmpty)
+    }
+
+    @Test func linkedEditSetsEveryZone() throws {
+        let s = try settings()
+        let blue = LEDState(mode: .static, brightness: 100, color: RGB(0x3D, 0x8B, 0xFF))
+        let pending = SettingsEditing.edit(s, [:], zone: .logo, linked: true) { $0 = blue }
+        #expect(SettingsEditing.changedZones(s, pending: pending) == [.logo, .wheel, .side])
+        #expect(LEDZone.allCases.allSatisfy { pending[$0] == blue })
+        let lines = SettingsEditing.plannedPackets(s, pending: pending)
+        #expect(lines.count == 4 && lines.last == "03 50 03 …  (save)")
+        // not linked: only the edited zone
+        #expect(Array(SettingsEditing.edit(s, [:], zone: .side, linked: false) { $0 = blue }.keys) == [.side])
+    }
+
+    @Test func linkingCopiesTheZoneAndSkipsZonesThatAlreadyMatch() throws {
+        var s = try settings()   // all three: colour cycle 50 %
+        let orange = LEDState(mode: .static, brightness: 80, color: RGB(0xF7, 0x80, 0x13))
+        s.leds[.logo] = orange
+        s.leds[.side] = orange
+        let pending = SettingsEditing.edit(s, [:], zone: .logo, linked: true)   // the switch turned on
+        #expect(SettingsEditing.changedZones(s, pending: pending) == [.wheel])
+        #expect(pending[.wheel] == orange)
+    }
+
+    @Test func effectSquireCannotWriteIsNotLinked() throws {
+        var s = try settings()
+        s.leds[.logo] = LEDState(mode: .rainbow, brightness: 50, color: RGB(0xFF, 0, 0))
+        #expect(!SettingsEditing.canLink(s, pending: [:], zone: .logo))
+        #expect(SettingsEditing.canLink(s, pending: [.logo: LEDState(mode: .static, brightness: 50, color: RGB(0xFF, 0, 0))],
+                                        zone: .logo))
+        #expect(SettingsEditing.canLink(s, pending: [:], zone: .wheel))
     }
 
     @Test func plannedPacketsWriteEachZoneAndSaveOnce() throws {

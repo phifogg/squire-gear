@@ -10,8 +10,9 @@ struct SquireApp: App {
         Self.handleLaunchArguments()
     }
 
-    /// Development aids: `--settings` opens the settings window at launch; `--screenshot PATH [ZONE] [edit]` also saves
-    /// it as PNG and quits; `--demo` shows the protocol.json captures and sends nothing.
+    /// Development aids: `--settings` opens the settings window at launch; `--screenshot PATH [ZONE] [edit] [linked]`
+    /// also saves it as PNG and quits (`linked`: the edit with "Same effect on all zones" on); `--demo` shows the
+    /// protocol.json captures and sends nothing.
     private static func handleLaunchArguments() {
         let args = CommandLine.arguments
         guard args.contains("--settings") || args.contains("--screenshot") else { return }
@@ -22,7 +23,9 @@ struct SquireApp: App {
             if args.contains("edit") {   // sample edit, never sent: static blue on the selected light
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     let store = SettingsStore.shared
+                    store.device = .mouse
                     if let zone = store.selected.ledZone {
+                        if args.contains("linked") { store.setLinkZones(true, from: zone) }
                         store.edit(zone) { $0 = LEDState(mode: .static, brightness: 100, color: RGB(0x3D, 0x8B, 0xFF)) }
                     }
                     store.showBytes = true

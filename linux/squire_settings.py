@@ -2,8 +2,9 @@
 """Squire settings window for Linux (GTK 4 + libadwaita).
 
 Devices on the left; the selected device drawn in the middle with clickable zones and callouts; the values for
-the selected zone on the right. This version only shows the settings it reads from the mouse
-(squire.read_mouse_settings, read-only). Changing them comes in a later step, with an explicit Apply.
+the selected zone on the right. Shows what squire.read_mouse_settings reads; the three lights can be changed,
+and are written only on an explicit Apply (squire.set_led: read back, then one save). DPI, sensor and power are
+shown only so far.
 
 Runs as its own process because the tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process.
 """
@@ -158,6 +159,28 @@ def changed_zones(s: squire.MouseSettings, pending: dict) -> list[str]:
     return [zone for zone, led in pending.items() if not squire.led_matches(led, s.leds.get(zone))]
 
 
+def edit_pending(s: squire.MouseSettings, pending: dict, zone: str, linked: bool = False, **changes) -> dict:
+    """An edit to one zone, or with `linked` to every light zone ("Same effect on all zones"): the zone's state
+    plus the changes becomes pending for each target, or is dropped where it is back to what the mouse has.
+    A linked edit without changes copies the zone to the others (the switch being turned on)."""
+    led = dict(pending.get(zone) or s.leds[zone])
+    led.update(changes)
+    pending = dict(pending)
+    for target in ([z for z in EDITABLE_ZONES if s.leds.get(z)] if linked else [zone]):
+        current = s.leds[target]
+        if squire.led_matches(led, current) and led["mode"] == current["mode"]:
+            pending.pop(target, None)       # back to what the mouse has
+        else:
+            pending[target] = dict(led)
+    return pending
+
+
+def can_link(s: squire.MouseSettings, pending: dict, zone: str) -> bool:
+    """Only an effect Squire can write can be copied to the other zones."""
+    led = pending.get(zone) or s.leds.get(zone)
+    return bool(led) and led["mode"] in EDIT_MODES
+
+
 def apply_status(s: squire.MouseSettings, pending: dict) -> str:
     zones = changed_zones(s, pending)
     if not zones:
@@ -233,6 +256,7 @@ def run(argv: list[str]) -> int:
             self.loading = False
             self.applying = False
             self.pending: dict = {}        # zone -> led dict not sent yet
+            self.link_zones = False        # "Same effect on all zones"
             self.value_labels: dict = {}   # zone -> callout/chip value label
 
             split = Adw.NavigationSplitView(min_sidebar_width=240, max_sidebar_width=280)
@@ -498,11 +522,21 @@ def run(argv: list[str]) -> int:
             info.add(row("Connection", "Omni receiver" if s.connection == "omni" else "Wired"))
             info.add(row("Profile", str(s.profile), "Squire reads the active profile only"))
             info.add(row("Firmware", s.firmware or "–"))
+            if s.receiver_firmware:
+                info.add(row("Receiver firmware", s.receiver_firmware))
             page.add(info)
             return page
 
         # editing -------------------------------------------------------------------------------------------
         def build_led_editor(self, group, zone, led):
+            linkable = can_link(self.settings, self.pending, zone)
+            link = Adw.SwitchRow(title="Same effect on all zones",
+                                 subtitle="One edit sets logo, scroll wheel and side light" if linkable
+                                 else "Not for an effect Squire cannot write",
+                                 active=self.link_zones and linkable, sensitive=linkable)
+            link.connect("notify::active", lambda r, _p: self.on_link(zone, r.get_active()))
+            group.add(link)
+
             modes = Gtk.StringList.new([mode_name(m) for m in EDIT_MODES])
             effect = Adw.ComboRow(title="Effect", model=modes)
             effect.set_selected(EDIT_MODES.index(led["mode"]) if led["mode"] in EDIT_MODES
@@ -541,14 +575,13 @@ def run(argv: list[str]) -> int:
             self.editor_zone = zone
 
         def on_edit(self, zone, **changes):
-            current = self.settings.leds[zone]
-            led = dict(self.pending.get(zone) or current)
-            led.update(changes)
-            if squire.led_matches(led, current) and led["mode"] == current["mode"]:
-                self.pending.pop(zone, None)       # back to what the mouse has
-            else:
-                self.pending[zone] = led
+            self.pending = edit_pending(self.settings, self.pending, zone, linked=self.link_zones, **changes)
             self.update_preview()
+
+        def on_link(self, zone, on):
+            self.link_zones = on
+            if on:   # copy this zone to the others; from now on every edit sets all of them
+                self.on_edit(zone)
 
         def build_apply_bar(self):
             bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12,
@@ -597,6 +630,7 @@ def run(argv: list[str]) -> int:
 
         def revert(self):
             self.pending.clear()
+            self.link_zones = False
             self.render()
 
         def apply_changes(self):

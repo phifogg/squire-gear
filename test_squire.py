@@ -342,8 +342,8 @@ class MouseSettingsParseTests(unittest.TestCase):
         return s
 
     def test_profile(self):
-        s = self.parse("profile", {10: 2, 11: 3, 13: 0xFF, 14: 0x09, 15: 0x00})
-        self.assertEqual((s.profile, s.dpi_stage, s.firmware), (3, 3, "00.09.FF"))
+        s = self.parse("profile", {4: 0x02, 6: 0x07, 10: 2, 11: 3, 12: 0xFF, 13: 0xFF, 14: 0x09, 16: 0x01})
+        self.assertEqual((s.profile, s.dpi_stage, s.firmware, s.receiver_firmware), (3, 3, "01.00.09", "07.00.02"))
         self.assertIsNone(self.parse("profile", {11: 0}).dpi_stage)
 
     def test_settings(self):
@@ -389,6 +389,18 @@ class MouseSettingsParseTests(unittest.TestCase):
 
 class RealMouseSettingsCaptureTests(unittest.TestCase):
     """protocol.json mouse_settings: real replies from the Keris II Origin."""
+
+    def test_wired_captures(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_settings_wired"]
+        for capture in data["captures"]:
+            s = rb.MouseSettings("m", "wired")
+            reply = bytes.fromhex(capture["reply"])
+            command = rb.MOUSE_SETTINGS_QUERIES[capture["command"]]
+            self.assertEqual(rb.find_echo(reply, command), 0, capture["command"])   # no report ID over the cable
+            rb.parse_mouse_settings(s, capture["command"], reply)
+            for key, value in capture["expect"].items():
+                with self.subTest(command=capture["command"], key=key):
+                    self.assertEqual(getattr(s, key), value)
 
     def test_captures(self):
         data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_settings"]

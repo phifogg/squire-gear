@@ -61,12 +61,28 @@ final class SettingsStore: ObservableObject {
 
     func led(_ zone: LEDZone) -> LEDState? { pending[zone] ?? settings?.leds[zone] }
 
+    /// "Same effect on all zones": every edit sets logo, scroll wheel and side light.
+    @Published private(set) var linkZones = false
+
     func edit(_ zone: LEDZone, _ change: (inout LEDState) -> Void) {
-        guard let current = settings?.leds[zone] else { return }
-        pending = SettingsEditing.edit(pending, zone: zone, current: current, change: change)
+        guard let settings else { return }
+        pending = SettingsEditing.edit(settings, pending, zone: zone, linked: linkZones, change: change)
     }
 
-    func revert() { pending.removeAll() }
+    func canLink(_ zone: LEDZone) -> Bool {
+        settings.map { SettingsEditing.canLink($0, pending: pending, zone: zone) } ?? false
+    }
+
+    /// Turning it on copies this zone to the others.
+    func setLinkZones(_ on: Bool, from zone: LEDZone) {
+        linkZones = on
+        if on { edit(zone) { _ in } }
+    }
+
+    func revert() {
+        pending.removeAll()
+        linkZones = false
+    }
 
     var applyStatus: String {
         guard let settings else { return "" }
