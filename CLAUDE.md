@@ -228,7 +228,8 @@ git tag -a vX.Y.Z -m "Squire X.Y.Z" && git push origin vX.Y.Z
 ```
 - Release notes template: `.github/release-notes.md` (`{{VERSION}}` is replaced). Re-running the workflow for an
   existing release replaces its files.
-- PRs that touch the build files run the same builds without a release (files under the run's Artifacts).
+- PRs that touch the build files run the same builds without a release (files under the run's Artifacts, kept
+  7 days). Their file names carry `+pr<N>.<YYYYMMDD>.<sha7>` (BUILD_SUFFIX) so they are not mixed up with releases.
 - `.github/workflows/ci.yml`: Python tests (Linux + macOS) and `swift test` on every push and PR.
 - nfpm is pinned in release.yml (version + sha256 of the .deb); update both together.
 - Local builds still work: `macos/scripts/build-release.sh` -> `macos/dist/`, `linux/build-packages.sh` -> `linux/dist/`.

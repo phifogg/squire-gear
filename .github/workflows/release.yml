@@ -2,7 +2,8 @@
 #   Squire-X.Y.Z.zip (macOS, universal, ad hoc signed, not notarized), .deb and .rpm (Linux), each with .sha256.
 # Review the draft on GitHub, fill in "What's new", then publish it.
 #
-# Pull requests that touch the build run the same builds without a release (files under the run's Artifacts).
+# Pull requests that touch the build run the same builds without a release (files under the run's Artifacts,
+# kept 7 days). Their files carry a build suffix so they can be told apart: 0.2.1+pr4.20261112.d293e5d.
 name: Release
 
 on:
@@ -30,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
+      suffix: ${{ steps.check.outputs.suffix }}
     steps:
       - uses: actions/checkout@v7
       - id: check
@@ -43,6 +45,12 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME does not match version $py"; exit 1
           fi
           echo "version=$py" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            echo "suffix=pr$PR.$(date -u +%Y%m%d).${HEAD_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
   linux:
     needs: version
@@ -60,10 +68,13 @@ jobs:
           echo "$NFPM_SHA256  $RUNNER_TEMP/$deb" | sha256sum -c -
           sudo apt-get install -y "$RUNNER_TEMP/$deb"
       - run: linux/build-packages.sh
+        env:
+          BUILD_SUFFIX: ${{ needs.version.outputs.suffix }}
       - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: linux/dist/*
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
           if-no-files-found: error
 
   macos:
@@ -76,10 +87,13 @@ jobs:
       - run: brew install xcodegen
       - run: ./scripts/build-release.sh
         working-directory: macos
+        env:
+          BUILD_SUFFIX: ${{ needs.version.outputs.suffix }}
       - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: macos/dist/*
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 90 }}
           if-no-files-found: error
 
   release:

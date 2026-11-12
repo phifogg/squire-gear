@@ -4,6 +4,8 @@
 #   linux/dist/squire-gear-<version>-1.noarch.rpm (+ .sha256)
 # Needs nfpm: https://nfpm.goreleaser.com/install/
 # Usage: linux/build-packages.sh [deb|rpm ...]
+# BUILD_SUFFIX (optional, set by CI for pull requests) is appended as semver build metadata:
+#   0.2.1+pr4.20261112.d293e5d -> squire-gear_0.2.1+pr4.20261112.d293e5d-1_all.deb
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -13,6 +15,7 @@ if ! command -v nfpm >/dev/null; then
 fi
 
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' squire.py)"
+[ -z "${BUILD_SUFFIX:-}" ] || VERSION="$VERSION+$BUILD_SUFFIX"
 export VERSION
 PACKAGERS=("$@")
 [ ${#PACKAGERS[@]} -gt 0 ] || PACKAGERS=(deb rpm)
