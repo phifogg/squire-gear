@@ -376,7 +376,7 @@ struct InspectorView: View {
     @ViewBuilder private var sensorRows: some View {
         let preview = store.preview ?? settings
         InfoRow("Polling rate", settings.pollingHz.map { "\($0) Hz" } ?? "–",
-                subtitle: "raw 0x\(ReplyParser.hex([settings.pollingRaw ?? 0])); 8000 Hz mode not confirmed yet")
+                subtitle: "raw 0x\(ReplyParser.hex([settings.pollingRaw ?? 0]))")
         InfoRow("Lift-off distance", settings.liftoff.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "–",
                 subtitle: "Shown only: changing it also resets the surface calibration")
         if let snapping = preview.angleSnapping {

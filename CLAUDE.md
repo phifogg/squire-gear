@@ -175,7 +175,7 @@ not fit the Keris).
 debounce (n*4+4 ms), [16] angle snapping, [18..19] angle tuning (signed LE16). `12 04 02` X/Y per stage from [4]
 (lo/hi each, DPI = v*50+50). `12 04 03` RGB per stage from [4]. `12 03 NN` zone NN (0 logo, 1 wheel, 2 side):
 [4] mode (0 static, 1 breathing, 2 cycle, 3 rainbow, 4 react, 5 comet, 6 battery, f0 off), [5] brightness %,
-[6..8] RGB. `12 06` [7] lift-off (0 low, 1 high). `12 07` also: [5] power-off (0..4 = 1/2/3/5/10 min, ff never).
+[6..8] RGB. `12 06` [6] surface id (ff = none selected), [7] lift-off (0 low, 1 high), [8..10] surface parameters. `12 07` also: [5] power-off (0..4 = 1/2/3/5/10 min, ff never).
 Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
 ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).
 Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.cs`,
@@ -183,8 +183,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 
 ## Roadmap
 - [x] English menu text + installer output (0.1.1)
-- [x] Low-battery notification (0.1.2, synced to the device warning level; unconfirmed whether the byte
-      follows changes made in Armoury Crate)
+- [x] Low-battery notification (0.1.2, synced to the device warning level; the mouse byte follows
+      Armoury Crate: 20 -> 30 % read back as 0x1e, owner, Windows, 2026-11-12)
 - [x] Wired mode for keyboard and mouse
 - [x] Native macOS menu bar app (0.2.0): MenuBarExtra, keyboard + mouse, notifications, launch at login,
       hidden debug section (hold Option in the popover)
@@ -208,6 +208,17 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
         CLI writes confirmed on the device via Omni; Apply in the macOS window confirmed incl. off/on and an LED
         change through the new write path (owner, 2026-11-12); Linux window not tried yet
   - [ ] Lift-off write: only after checking surface calibration in Armoury Crate (see Rules)
+  - [x] Armoury Crate capture on Windows (USBPcap, 2026-11-12, protocol.json `mouse_writes.armoury_crate`): one
+        Apply rewrites the whole sensor block from AC's cached state (tuning, snapping, polling 51 31 04 = index,
+        stage count, active stage, 51 31 <stage> 00 <lo> <hi> <r g b> = DPI X=Y + stage colour), then 50 03.
+        It silently reset angle snapping changed by Squire. Firmware now mouse 01.00.10, receiver 07.00.08
+        (updated by the owner in AC); reads parse the same on Windows/hidapi, recheck on macOS and Linux
+  - [x] Lift-off + surface captured (2026-11-12): `51 35 00 00 <surface id> <lift-off> 00 <3 surface params>`;
+        12 06 reads [6] surface id (ff = none), [7] lift-off, [8..10] params. All 21 AC presets captured (ids 00,01,07,08,0a..19 +
+        ff "Default (No calibration)"; table in protocol.json): 01 ROG Sheath, 0b Balteus Qi, most share params
+        1c 34 16. G-Helper's `51 35 ff 00 ff <0/1>` drops the surface. A Squire
+        lift-off write would read 12 06 and keep surface + params (not approved yet). AC resets lift-off to low
+        on a surface change. Armoury Crate has no debounce setting for the Keris.
   - [x] Firmware from `12 00` fixed (2026-11-12): mouse 01.00.09 (cable [4..6], Omni [14..16]), receiver 07.00.02
         (Omni [4..6]); cable reply in protocol.json `mouse_settings_wired`
 - [x] Linux top bar app (0.2.1, `linux/`): hidraw backend, AppIndicator tray, udev rule, installer
@@ -221,9 +232,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
         selected zone to the others, then every edit sets all three; Apply writes only the zones that differ from
         the mouse and saves once; Revert turns it off; disabled for an effect Squire cannot write.
         Confirmed on the device with the macOS window (owner, 2026-11-12); Linux window not tried yet
-  - [ ] Polling rate: confirm 1000 vs 8000 Hz in Armoury Crate (raw 0x63), then drop the "not confirmed" note
-  - [ ] LED speed: Armoury Crate on Windows: is there a speed control for the Keris? If so, capture it (the G-Helper
-        speed byte has no effect, tested 2026-11-10)
+  - [x] Polling rate: Armoury Crate shows 1000 Hz for raw 0x63 (low 3 bits), so the high nibble is not a rate;
+        "not confirmed" note dropped (owner, 2026-11-12)
+  - [x] LED speed: Armoury Crate has no speed control for the Keris (owner, 2026-11-12); none in Squire either
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

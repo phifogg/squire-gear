@@ -569,7 +569,7 @@ def run(argv: list[str]) -> int:
             elif zone == "sensor":
                 p = preview_settings(s, self.pending)
                 group.add(row("Polling rate", f"{s.polling_hz} Hz",
-                              f"raw 0x{s.polling_raw or 0:02x}; 8000 Hz mode not confirmed yet"))
+                              f"raw 0x{s.polling_raw or 0:02x}"))
                 group.add(row("Lift-off distance", (s.liftoff or "").capitalize(),
                               "Shown only: changing it also resets the surface calibration"))
                 if p.angle_snapping is not None:
