@@ -30,6 +30,7 @@ private func json() throws -> [String: Any] {
                 case "dpi_stage": #expect(s.dpiStage == value as? Int)
                 case "dpi_stage_count": #expect(s.dpiStageCount == value as? Int)
                 case "firmware": #expect(s.firmware == value as? String)
+                case "receiver_firmware": #expect(s.receiverFirmware == value as? String)
                 case "polling_hz": #expect(s.pollingHz == value as? Int)
                 case "debounce_ms": #expect(s.debounceMs == value as? Int)
                 case "angle_snapping": #expect(s.angleSnapping == value as? Bool)
@@ -46,6 +47,23 @@ private func json() throws -> [String: Any] {
                 default: Issue.record("expect key \(key) not checked")
                 }
             }
+        }
+    }
+
+    /// Over the cable: no report ID, firmware at another place.
+    @Test func wiredCapturesMatchTheirExpectation() throws {
+        let captures = (try json()["mouse_settings_wired"] as! [String: Any])["captures"] as! [[String: Any]]
+        #expect(!captures.isEmpty)
+        for capture in captures {
+            let query = try #require(SettingsQuery(rawValue: capture["command"] as! String))
+            var s = MouseSettings(connection: .wired)
+            s.apply(query, bytes(capture["reply"] as! String))
+            let expect = capture["expect"] as! [String: Any]
+            #expect(s.profile == expect["profile"] as? Int)
+            #expect(s.dpiStage == expect["dpi_stage"] as? Int)
+            #expect(s.dpiStageCount == expect["dpi_stage_count"] as? Int)
+            #expect(s.firmware == expect["firmware"] as? String)
+            #expect(s.receiverFirmware == nil && expect["receiver_firmware"] is NSNull)
         }
     }
 

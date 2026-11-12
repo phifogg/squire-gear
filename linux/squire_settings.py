@@ -521,6 +521,8 @@ def run(argv: list[str]) -> int:
             info.add(row("Connection", "Omni receiver" if s.connection == "omni" else "Wired"))
             info.add(row("Profile", str(s.profile), "Squire reads the active profile only"))
             info.add(row("Firmware", s.firmware or "–"))
+            if s.receiver_firmware:
+                info.add(row("Receiver firmware", s.receiver_firmware))
             page.add(info)
             return page
 

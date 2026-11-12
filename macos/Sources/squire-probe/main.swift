@@ -26,7 +26,7 @@ if CommandLine.arguments.contains("--settings") {
     if CommandLine.arguments.contains("--debug") { r.diagnostics.forEach { print($0) }; print("---") }
     let s = r.settings
     guard s.status == .ok else { print("\(s.name): \(s.status.rawValue)"); exit(0) }
-    print("\(s.name) (\(s.connection?.rawValue ?? "?")), firmware \(s.firmware ?? "?"), profile \(s.profile.map(String.init) ?? "?")")
+    print("\(s.name) (\(s.connection?.rawValue ?? "?")), firmware \(s.firmware ?? "?")\(s.receiverFirmware.map { ", receiver \($0)" } ?? ""), profile \(s.profile.map(String.init) ?? "?")")
     print("  DPI stages:   " + s.dpi.enumerated().map { (s.dpiStage == $0.offset + 1 ? "*" : "") + ($0.element.map(String.init) ?? "?") }
         .joined(separator: ", ") + "   (* = active)")
     print("  DPI colors:   " + s.dpiColors.map(\.hex).joined(separator: ", "))

@@ -159,7 +159,9 @@ the vendor collection is interface 0, usage page ff01. Reply has no report ID, s
 IOKit: unnumbered report = report ID 0 with the leading 00 dropped (64-byte payload).
 Mouse settings reads (Keris II Origin, report ID 03 on the Omni; layout from libratbag SETTINGS_V2/LED_V2 and
 G-Helper, confirmed with captures in protocol.json `mouse_settings`; indices relative to the echo):
-`12 00` [10] profile (0-based), [11] active DPI stage (1-based), [18] stage count, [13..15] firmware.
+`12 00` [10] profile (0-based), [11] active DPI stage (1-based), [18] stage count; firmware 3 bytes build/minor/major:
+mouse at [4..6] over the cable, via the Omni [4..6] = receiver and the mouse at [14..16] (libratbag's [13..15] does
+not fit the Keris).
 `12 04 00` [4..11] DPI (ff ff on this separate-X/Y mouse), [12] polling (low 3 bits: 125/250/500/1000), [14]
 debounce (n*4+4 ms), [16] angle snapping, [18..19] angle tuning (signed LE16). `12 04 02` X/Y per stage from [4]
 (lo/hi each, DPI = v*50+50). `12 04 03` RGB per stage from [4]. `12 03 NN` zone NN (0 logo, 1 wheel, 2 side):
@@ -192,9 +194,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] macOS reads confirmed on the device via Omni (`squire-probe --settings`, 2026-11-11); `--repeat 30` no crash
   - [x] macOS LED Apply confirmed on the device, all three zones via Omni (2026-11-11)
   - [x] macOS: reads + LED Apply over the cable (pid 1c0c, iface 0; change survives off/on, 2026-11-12)
-  - [ ] Firmware bytes in `12 00` are mis-parsed ([13..15]): cable has the mouse firmware at [4..6] (09 00 01),
-        Omni has the receiver at [4..6] (02 00 07) and the mouse at [14..16] (09 00 01) -> mouse 01.00.09?
-        Confirm the version elsewhere, then fix Python + Swift and add the cable replies to protocol.json
+  - [x] Firmware from `12 00` fixed (2026-11-12): mouse 01.00.09 (cable [4..6], Omni [14..16]), receiver 07.00.02
+        (Omni [4..6]); cable reply in protocol.json `mouse_settings_wired`
 - [x] Linux top bar app (0.2.1, `linux/`): hidraw backend, AppIndicator tray, udev rule, installer
 - [ ] Settings window polish (collect small UI findings here, work through them before or with the write step):
   - [x] DPI button is on the underside: no hotspot on the top view, DPI is a chip (2026-11-10)

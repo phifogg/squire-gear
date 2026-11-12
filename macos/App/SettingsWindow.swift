@@ -354,6 +354,7 @@ struct InspectorView: View {
                 InfoRow("Connection", settings.connection == .wired ? "Wired" : "Omni receiver")
                 InfoRow("Profile", settings.profile.map(String.init) ?? "–", subtitle: "Squire reads the active profile only")
                 InfoRow("Firmware", settings.firmware ?? "–")
+                if let receiver = settings.receiverFirmware { InfoRow("Receiver firmware", receiver) }
             }
         }
         .formStyle(.grouped)

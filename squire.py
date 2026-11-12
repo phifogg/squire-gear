@@ -493,7 +493,8 @@ class MouseSettings:
     led_speed_raw: dict = field(default_factory=dict)  # zone -> raw speed byte from the reply (no effect seen)
     power_off_minutes: Optional[int] = None     # None with status ok = never
     low_warning: Optional[int] = None
-    firmware: Optional[str] = None
+    firmware: Optional[str] = None              # the mouse's own firmware
+    receiver_firmware: Optional[str] = None     # the Omni receiver's (Omni only)
     raw: dict = field(default_factory=dict)     # command name -> reply hex (for captures)
 
 
@@ -516,7 +517,15 @@ def parse_mouse_settings(s: MouseSettings, name: str, p: bytes) -> None:
         s.profile = p[10] + 1
         s.dpi_stage = p[11] if p[11] else None
         s.dpi_stage_count = p[18] if 1 <= p[18] <= 4 else None
-        s.firmware = f"{p[15]:02X}.{p[14]:02X}.{p[13]:02X}"
+        # Firmware: 3 bytes, build.minor.major (shown major first, like libratbag). On the Keris II Origin the
+        # mouse's own version is at [4..6] over the cable; via the Omni [4..6] is the receiver and the mouse moves
+        # to [14..16] (same bytes 09 00 01 = 01.00.09 both ways, 2026-11-12). libratbag's [13..15] is not it here.
+        def version(i: int) -> Optional[str]:
+            return f"{p[i + 2]:02X}.{p[i + 1]:02X}.{p[i]:02X}" if any(p[i:i + 3]) else None
+        if s.connection == "wired":
+            s.firmware = version(4)
+        else:
+            s.firmware, s.receiver_firmware = version(14), version(4)
     elif name == "settings":
         # ff ff = not in this reply: mice with separate X/Y DPI (like the Keris) report DPI only in dpi_xy
         s.dpi = [None if _u16(p, 4 + 2 * i) == 0xFFFF else _dpi(_u16(p, 4 + 2 * i)) for i in range(4)]
@@ -668,7 +677,8 @@ def print_mouse_settings(s: MouseSettings) -> None:
         print(f"{s.name}: {s.status}")
         return
     stages = ", ".join(f"{'*' if s.dpi_stage == i + 1 else ''}{d}" for i, d in enumerate(s.dpi))
-    print(f"{s.name} ({s.connection}), firmware {s.firmware}, profile {s.profile}")
+    receiver = f", receiver {s.receiver_firmware}" if s.receiver_firmware else ""
+    print(f"{s.name} ({s.connection}), firmware {s.firmware}{receiver}, profile {s.profile}")
     print(f"  DPI stages:   {stages}   (* = active)")
     if s.dpi_xy:
         print(f"  DPI X/Y:      {', '.join(f'{x}/{y}' for x, y in s.dpi_xy)}")
