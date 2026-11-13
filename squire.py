@@ -14,7 +14,7 @@ Source: G-Helper (GPL-3.0) app/Peripherals/{Keyboard,Mouse}; facts only, no code
 Backends: hidapi on macOS; on Linux /dev/hidraw* directly (standard library only), because Ubuntu's hidapi
 package uses libusb, which reports no usage pages and would have to detach kernel drivers.
 """
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 import argparse
 import json

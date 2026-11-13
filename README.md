@@ -19,36 +19,33 @@ Like a squire looking after a knight's blades, it keeps an eye on your Falchion 
 - **Low-battery notification:** one notification per device when it reaches the warning
   level configured on the device itself, reset after charging
 - Optional launch at login
-- **Mouse settings window** (Keris II Origin, coming in 0.3): shows DPI stages, polling rate,
-  sensor and power settings, and changes the three lights (logo, scroll wheel, side: effect,
-  brightness and colour, optionally the same on all three), the auto power-off time, the
-  low-battery warning level, angle snapping and angle tuning
+- **Mouse settings window** (Keris II Origin, new in 0.3): changes the three lights (logo,
+  scroll wheel, side: effect, brightness and colour, optionally the same on all three), the DPI
+  stages (value, colour, active stage, number of stages), polling rate, surface (mouse pad
+  preset), lift-off distance, angle snapping and tuning, the auto power-off time and the
+  low-battery warning level
 - **Careful with your devices:** the battery display only reads. Squire writes only when you
-  click **Apply** in the settings window, only commands on a fixed allowlist (light zone,
-  power-off and warning, angle snapping and tuning, save), reads every change back and saves it to the mouse only if it matched. It never touches
+  click **Apply** in the settings window, only commands on a fixed allowlist (lights, DPI, sensor, power, save), reads every change back and saves it to the mouse only if it matched. It never touches
   firmware or switches profiles.
 - Opens only vendor-defined HID collections, never the regular keyboard or mouse input
 - macOS: no Python, Homebrew or SwiftBar needed. Linux: only packages that Ubuntu ships by default
 
 ## Status
 
-Version 0.2.1. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
+Version 0.3.0. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
 Battery percentage and charging state are confirmed for both devices, connected through the
 Omni receiver and over a USB cable.
 
-Linux (new in 0.2.1) is tested on Ubuntu 26.04 with GNOME, through the Omni receiver. The USB
+Linux (since 0.2.1) is tested on Ubuntu 26.04 with GNOME, through the Omni receiver. The USB
 cable connection is not tested on Linux yet.
 
 The warning level for the notification is read from the device's reply (20 % on both test
 devices). It is not yet confirmed that this level follows changes made in Armoury Crate; if a
 reply carries no plausible level, 20 % is used.
 
-The settings window (in development for 0.3, not in a release yet) is tested with the Keris II
-Origin on Linux through the Omni receiver and on macOS through the Omni receiver and the USB
-cable: reading all settings, and changing and saving all three lights. Power-off time, warning
-level, angle snapping and angle tuning are confirmed on the device through the Omni receiver.
-Polling rate, surface (mouse pad preset), lift-off distance and the DPI stages (value, colour,
-active stage, number of stages) can be changed too.
+The settings window (new in 0.3) is tested with the Keris II Origin on Linux through the Omni
+receiver and on macOS through the Omni receiver and the USB cable. Every setting it offers is
+confirmed on the device: written, read back and saved.
 
 Not tested yet:
 
@@ -248,9 +245,7 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 ## Roadmap
 
-- Device configuration on Linux and macOS (0.3): lights, DPI, sensor and power settings of the mouse;
-  the keyboard later;
-  0.2.x stays read-only
+- Keyboard configuration (Falchion RX Low Profile)
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode
 - Notarized builds, depending on interest

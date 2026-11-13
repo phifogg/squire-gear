@@ -269,7 +269,7 @@
     ],
     "save": {
       "packet": "03 50 03",
-      "notes": "Save to flash. Confirmed 2026-11-10 by the owner in the settings window: logo set to static blue, Apply (write, read back, 50 03), mouse switched off and on: the logo stayed blue. Restored to colour cycle 50 % the same way."
+      "notes": "Save to flash. Confirmed 2026-11-10 by the owner in the settings window: logo set to static blue, Apply (write, read back, 50 03), mouse switched off and on: the logo stayed blue. Restored to colour cycle 50 % the same way. 2026-11-13 on Linux (Omni): the mouse answers 50 03 with an echo (03 50 03 …), which Squire now requires before it reports a change as saved."
     },
     "speed_test": {
       "packets": [

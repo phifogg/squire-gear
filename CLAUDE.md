@@ -232,24 +232,24 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] Power-off + low-battery warning, angle snapping + tuning: CLI (--set-power, --set-angle-snapping,
         --set-angle-tuning) and both windows (Power / Sensor chips), branch `mouse-settings-writes` (2026-11-12).
         CLI writes confirmed on the device via Omni; Apply in the macOS window confirmed incl. off/on and an LED
-        change through the new write path (owner, 2026-11-12); Linux window not tried yet
+        change through the new write path (owner, 2026-11-12); Linux window confirmed 2026-11-13
   - [x] Lift-off write, keeping the surface (2026-11-13): CLI `--set-liftoff low|high` (--dry-run reads 12 06 and
         prints the exact bytes), both windows (Sensor chip: Low/High picker + Surface row; shown only for an unknown
         surface). CLI write confirmed on the device via Omni (high, unsaved, surface ROG Sheath kept, then back to
         low; same bytes as AC; protocol.json settings_writes). Apply in the macOS window confirmed (owner,
-        2026-11-13); Linux window not tried yet.
+        2026-11-13); Linux window confirmed 2026-11-13.
         Reads with firmware 01.00.10 / 07.00.08 parse fine on macOS (2026-11-13)
   - [x] Polling rate + surface preset writes (2026-11-13): CLI `--set-polling HZ`, `--set-surface ID|none`,
         `--list-surfaces`; both windows (Sensor chip pickers; surface written before lift-off when both change).
         CLI writes confirmed on the device via Omni (500 Hz and back, Balteus Qi and back to ROG Sheath with lift-off
         kept; unsaved; protocol.json settings_writes). Apply in the macOS window confirmed (owner, 2026-11-13);
-        Linux window not tried yet
+        Linux window confirmed 2026-11-13
   - [x] DPI per stage (value + colour), active stage, stage count (2026-11-13): CLI `--set-dpi STAGE DPI [--color]`,
         `--set-dpi-stage N`, `--set-dpi-count N`; both windows (DPI chip: value + colour per stage, active stage and
         count pickers that keep each other consistent; planned bytes simulate the sequence). Dry runs on macOS via
         Omni match AC's format. CLI writes confirmed on the device via Omni (1650 DPI, colour #ffaa00, stage 2,
         count 3, each unsaved and restored; protocol.json settings_writes). Apply in the macOS window
-        confirmed (owner, 2026-11-13); Linux window not tried yet
+        confirmed (owner, 2026-11-13); Linux window confirmed 2026-11-13
   - [x] Armoury Crate capture on Windows (USBPcap, 2026-11-12, protocol.json `mouse_writes.armoury_crate`): one
         Apply rewrites the whole sensor block from AC's cached state (tuning, snapping, polling 51 31 04 = index,
         stage count, active stage, 51 31 <stage> 00 <lo> <hi> <r g b> = DPI X=Y + stage colour), then 50 03.
@@ -273,10 +273,15 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] "Same effect on all zones" switch in the LED editor (Linux + macOS, 2026-11-12): turning it on copies the
         selected zone to the others, then every edit sets all three; Apply writes only the zones that differ from
         the mouse and saves once; Revert turns it off; disabled for an effect Squire cannot write.
-        Confirmed on the device with the macOS window (owner, 2026-11-12); Linux window not tried yet
+        Confirmed on the device with the macOS window (owner, 2026-11-12); Linux window confirmed 2026-11-13
   - [x] Polling rate: Armoury Crate shows 1000 Hz for raw 0x63 (low 3 bits), so the high nibble is not a rate;
         "not confirmed" note dropped (owner, 2026-11-12)
   - [x] LED speed: Armoury Crate has no speed control for the Keris (owner, 2026-11-12); none in Squire either
+- [x] Linux full test for 0.3 (2026-11-13, Omni, firmware 01.00.10 / 07.00.08): reads, every --dry-run, and a
+      no-change CLI round trip of every write (LED, power, angle snapping + tuning, DPI value/colour, stage, count,
+      polling, surface, lift-off): written, read back, matched, settings unchanged. 50 03 is echoed (LED, --save).
+      A save now counts only when echoed. Linux window Apply confirmed by the owner, no errors: DPI value/colour,
+      stage/count, polling + surface + lift-off in one Apply, power-off, "same effect on all zones" (2026-11-13).
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
