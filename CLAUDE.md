@@ -235,7 +235,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
         `--set-dpi-stage N`, `--set-dpi-count N`; both windows (DPI chip: value + colour per stage, active stage and
         count pickers that keep each other consistent; planned bytes simulate the sequence). Dry runs on macOS via
         Omni match AC's format. CLI writes confirmed on the device via Omni (1650 DPI, colour #ffaa00, stage 2,
-        count 3, each unsaved and restored; protocol.json settings_writes). Not yet: window Apply, Linux window
+        count 3, each unsaved and restored; protocol.json settings_writes). Apply in the macOS window
+        confirmed (owner, 2026-11-13); Linux window not tried yet
   - [x] Armoury Crate capture on Windows (USBPcap, 2026-11-12, protocol.json `mouse_writes.armoury_crate`): one
         Apply rewrites the whole sensor block from AC's cached state (tuning, snapping, polling 51 31 04 = index,
         stage count, active stage, 51 31 <stage> 00 <lo> <hi> <r g b> = DPI X=Y + stage colour), then 50 03.
