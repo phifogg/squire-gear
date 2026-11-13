@@ -498,6 +498,13 @@
         },
         "notes": "[5] factory layout id (G-Helper: 3 DE, 4 UK, 5 FR, 17 US); 0x19 = 25 = CH-DE, confirmed by the owner (2026-11-13), on G-Helper's ISO list. [4]=02 unknown."
       }
+    ],
+    "probes": [
+      {
+        "command": "12 03 00",
+        "reply": "02 12 03 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "One-off probe with the mouse's LED read, sent once with the owner's explicit go (2026-11-13), not on the allowlist. The keyboard echoes it but the reply holds no colour: it was lit reactive red (ff 00 00), the reply is only [4]=01. So 12 03 is not the keyboard's LED read; find it with an Armoury Crate capture on Windows."
+      }
     ]
   }
 }

@@ -258,3 +258,69 @@ class TrayLinkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeyboardPageTests(unittest.TestCase):
+    """The read-only keyboard page (no GTK needed)."""
+
+    def values(self, k):
+        return {name: value for _, rows in ui.keyboard_groups(k) for name, value, _ in rows}
+
+    def test_demo_shows_the_captured_profile_1(self):
+        v = self.values(ui.demo_keyboard())
+        self.assertEqual(v["Active profile"], "1 of 5")
+        self.assertEqual(v["Effect"], "Reactive")
+        self.assertEqual(v["Layout"], "CH-DE · ISO")
+        self.assertEqual(v["Low-battery warning"], "20 %")
+        self.assertEqual(v["Receiver firmware"], "07.00.08")
+
+    def test_effect_names(self):
+        self.assertEqual(ui.keyboard_effect_name("starry-night"), "Starry night")
+        self.assertEqual(ui.keyboard_effect_name("host-driven"), "Controlled by an app")
+        self.assertEqual(ui.keyboard_effect_name("current"), "Current")
+        self.assertEqual(ui.keyboard_effect_name(None), "–")
+
+    def test_unknown_layout_and_missing_values(self):
+        k = squire.KeyboardSettings("k", "wired", layout_id=0x63, iso=False)
+        v = self.values(k)
+        self.assertEqual(v["Layout"], "Unknown (id 99) · ANSI")
+        self.assertEqual(v["Active profile"], "–")
+        self.assertEqual(v["Connection"], "USB cable")
+        self.assertNotIn("Receiver firmware", v)
+
+    def test_every_zone_has_a_group_and_a_summary(self):
+        k = ui.demo_keyboard()
+        groups = dict(ui.keyboard_groups(k))
+        for zone, title in ui.KB_ZONE_TITLES.items():
+            self.assertIn(title, groups)
+            self.assertTrue(ui.keyboard_zone_summary(k, zone))
+        self.assertEqual(ui.keyboard_zone_summary(k, "kb_layout"), "CH-DE · ISO")
+
+
+class KeyboardDrawingTests(unittest.TestCase):
+    def keys(self, svg):
+        root = ET.fromstring(svg)     # also checks that it is valid XML
+        ns = "{http://www.w3.org/2000/svg}"
+        return [t.text for t in root.iter(ns + "text")], root
+
+    def test_iso_rows_are_16_units_with_the_extra_key(self):
+        for name, rows in ui.KEYBOARD_ROWS.items():
+            for i, row in enumerate(rows):
+                with self.subTest(layout=name, row=i):
+                    self.assertAlmostEqual(sum(w for _, w in row), 16)
+        legends, _ = self.keys(ui.keyboard_svg(ui.demo_keyboard()))
+        self.assertIn("<", legends)          # the ISO key next to left shift
+        self.assertIn("Z", legends)          # CH-DE: Z where US has Y
+        self.assertIn("↵", legends)          # the tall ISO Enter
+
+    def test_ansi_shape_for_an_ansi_layout(self):
+        k = squire.KeyboardSettings("k", "omni", layout_id=17, layout="US", iso=False, light_mode="static")
+        legends, _ = self.keys(ui.keyboard_svg(k))
+        self.assertNotIn("<", legends)
+        self.assertIn("Enter", legends)
+
+    def test_glow_only_when_lit(self):
+        lit = ui.keyboard_svg(squire.KeyboardSettings("k", "omni", light_mode="reactive"))
+        dark = ui.keyboard_svg(squire.KeyboardSettings("k", "omni"))
+        self.assertIn("kb-glow)", lit)
+        self.assertNotIn("kb-glow)", dark)

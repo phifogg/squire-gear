@@ -210,7 +210,8 @@ Keyboard settings reads (Falchion RX LP, report ID 02 on the Omni; G-Helper Asus
 reactive, starry night and current confirmed; AC names to check), [10] active profile 1-based (profiles 1, 2
 and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply), [11..13] maybe keyboard firmware (unconfirmed).
 `12 12` [5] factory layout id (25 = CH-DE confirmed, ISO). `12 01` [6] sleep timeout (mouse coding assumed, unconfirmed).
-No source reads the keyboard's LED colour/brightness; G-Helper keeps them in its own config. Keyboard writes (not
+No source reads the keyboard's LED colour/brightness; G-Helper keeps them in its own config. `12 03 00` (the mouse's LED read)
+was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (not
 approved, not sent): lighting `51 2c`, save `50 55`, `51 37` warning, `51 38` sleep.
 Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
 ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).
@@ -295,7 +296,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
 - [ ] Keyboard (Falchion RX LP), branch `keyboard-read`: `--keyboard-settings` reads profile, layout, lighting effect,
-      sleep, warning (2026-11-13). Next: show it in the settings windows (read-only). Windows TODO with Armoury Crate:
+      sleep, warning (2026-11-13). Linux window: read-only keyboard page with a drawing (own
+      65 % artwork, ISO/ANSI from 12 12, CH-DE legends; keys = lighting zone, chips profile/layout/power; neutral glow
+      until the colour can be read) (2026-11-13). Next: find how to read the LED colour; macOS window. Windows TODO with Armoury Crate:
       effect names (G-Helper's "current" = a random key, then the 3 keys to its right), sleep timeout values for
       12 01 [6], keyboard firmware ([11..13] of 12 00 = 05.00.13?), and a capture of how AC reads the LED colour.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

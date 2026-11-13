@@ -6,6 +6,8 @@ the selected zone on the right. Shows what squire.read_mouse_settings reads; the
 low-battery warning, angle snapping and tuning, polling rate, surface, lift-off distance and the DPI stages (value,
 colour, active stage, stage count) can be changed, and are written only on an explicit Apply (read back, then one
 save).
+The keyboard page shows what squire.read_keyboard_settings reads (profile, lighting effect, layout, power); it
+changes nothing yet.
 
 Runs as its own process because the tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process.
 """
@@ -135,6 +137,150 @@ def demo_data() -> tuple[dict, "squire.MouseSettings"]:
     batteries = {"mouse": squire.Battery("mouse", s.name, "omni", 80, low_warning=20),
                  "keyboard": squire.Battery("keyboard", "ROG Falchion RX LP", "omni", 78, low_warning=20)}
     return batteries, s
+
+
+def demo_keyboard() -> "squire.KeyboardSettings":
+    """Keyboard settings from the real captures in protocol.json (profile 1, CH-DE; sends nothing)."""
+    import json
+    root = HERE.parent if (HERE.parent / "protocol.json").exists() else HERE
+    data = json.loads((root / "protocol.json").read_text())
+    k = squire.KeyboardSettings("ROG Falchion RX LP", "omni")
+    battery = next(v for v in data["vectors"] if v["device"] == "keyboard" and v["connection"] == "omni")
+    squire.parse_keyboard_settings(k, "battery", bytes.fromhex(battery["reply"])[1:])
+    seen = set()
+    for capture in data["keyboard_settings"]["captures"]:
+        if capture["command"] not in seen:        # the first capture of each command: profile 1
+            seen.add(capture["command"])
+            squire.parse_keyboard_settings(k, capture["command"], bytes.fromhex(capture["reply"])[1:])
+    return k
+
+
+KEYBOARD_EFFECT_NAMES = {"host-driven": "Controlled by an app", "starry-night": "Starry night",
+                         "color-cycle": "Color cycle"}
+
+
+def keyboard_effect_name(mode: Optional[str]) -> str:
+    if not mode:
+        return "–"
+    return KEYBOARD_EFFECT_NAMES.get(mode, mode.replace("-", " ").capitalize())
+
+
+def keyboard_groups(k: "squire.KeyboardSettings") -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """The keyboard page as (group title, [(row title, value, subtitle)]): read-only for now."""
+    layout = k.layout or (f"Unknown (id {k.layout_id})" if k.layout_id is not None else "–")
+    if k.iso is not None and k.layout_id is not None:
+        layout += " · ISO" if k.iso else " · ANSI"
+    sleep = "Never" if k.sleep_minutes is None else f"After {k.sleep_minutes} min"
+    device = [("Connection", {"omni": "Omni receiver", "wired": "USB cable"}.get(k.connection, k.connection), "")]
+    if k.receiver_firmware:
+        device.append(("Receiver firmware", k.receiver_firmware, ""))
+    return [
+        ("Lighting", [
+            ("Effect", keyboard_effect_name(k.light_mode), "Its color cannot be read yet"),
+        ]),
+        ("Profile", [
+            ("Active profile", f"{k.profile} of 5" if k.profile else "–", "Switch profiles on the keyboard"),
+        ]),
+        ("Layout", [
+            ("Layout", layout, "Set at the factory"),
+        ]),
+        ("Power", [
+            ("Sleep", sleep, "Not confirmed yet"),
+            ("Low-battery warning", f"{k.low_warning} %" if k.low_warning else "–", ""),
+        ]),
+        ("Device", device),
+    ]
+
+
+# --- keyboard drawing (own neutral artwork, no ASUS marks): a 65 % low-profile board, 16 units wide ---
+# Rows as (legend, width in units); "" = a key without a legend. ISO rows follow the CH-DE layout the owner's
+# keyboard reports (12 12 id 25); ANSI rows are the US shape. The ISO Enter spans rows 2 and 3.
+_KB_ROW0 = [("§", 1), ("1", 1), ("2", 1), ("3", 1), ("4", 1), ("5", 1), ("6", 1), ("7", 1), ("8", 1), ("9", 1),
+            ("0", 1), ("'", 1), ("^", 1), ("⌫", 2), ("Del", 1)]
+_KB_ROW4 = [("Ctrl", 1.25), ("❖", 1.25), ("Alt", 1.25), ("", 6.25), ("Alt", 1), ("Fn", 1), ("Ctrl", 1),
+            ("←", 1), ("↓", 1), ("→", 1)]
+KEYBOARD_ROWS = {
+    "iso": [
+        _KB_ROW0,
+        [("Tab", 1.5)] + [(c, 1) for c in "QWERTZUIOPü¨"] + [("ISO-ENTER", 1.5), ("PgUp", 1)],
+        [("Caps", 1.75)] + [(c, 1) for c in "ASDFGHJKLöä$"] + [("ISO-ENTER-LOW", 1.25), ("PgDn", 1)],
+        [("⇧", 1.25), ("<", 1)] + [(c, 1) for c in "YXCVBNM,.-"] + [("⇧", 1.75), ("↑", 1), ("End", 1)],
+        _KB_ROW4,
+    ],
+    "ansi": [
+        [("`", 1)] + _KB_ROW0[1:11] + [("-", 1), ("=", 1), ("⌫", 2), ("Del", 1)],
+        [("Tab", 1.5)] + [(c, 1) for c in "QWERTYUIOP[]"] + [("\\", 1.5), ("PgUp", 1)],
+        [("Caps", 1.75)] + [(c, 1) for c in "ASDFGHJKL;'"] + [("Enter", 2.25), ("PgDn", 1)],
+        [("⇧", 2.25)] + [(c, 1) for c in "ZXCVBNM,./"] + [("⇧", 1.75), ("↑", 1), ("End", 1)],
+        _KB_ROW4,
+    ],
+}
+KB_UNIT, KB_GAP, KB_PAD = 36, 4, 18          # px per unit, gap between keys, frame around the keys
+KB_W = round(16 * KB_UNIT + 2 * KB_PAD)      # 612
+KB_H = round(5 * KB_UNIT + 2 * KB_PAD)       # 216
+
+
+def keyboard_svg(k: "squire.KeyboardSettings") -> str:
+    """Top view of the keyboard. The colour cannot be read yet: a lit effect shows as a neutral glow."""
+    from xml.sax.saxutils import escape
+    rows = KEYBOARD_ROWS["ansi" if k.iso is False else "iso"]
+    lit = k.light_mode not in (None, "off")
+    u, g, pad = KB_UNIT, KB_GAP, KB_PAD
+    keys = []
+    for r, row in enumerate(rows):
+        x = pad
+        for legend, width in row:
+            y, w, h = pad + r * u, width * u - g, u - g
+            if legend == "ISO-ENTER":
+                # one key over two rows: 1.5 units on top, 1.25 below (right-aligned)
+                x2 = x + 0.25 * u
+                d = (f"M{x + 3} {y} H{x + w - 3} Q{x + w} {y} {x + w} {y + 3} V{y + 2 * u - g - 3} "
+                     f"Q{x + w} {y + 2 * u - g} {x + w - 3} {y + 2 * u - g} H{x2 + 3} Q{x2} {y + 2 * u - g} {x2} "
+                     f"{y + 2 * u - g - 3} V{y + h} H{x + 3} Q{x} {y + h} {x} {y + h - 3} V{y + 3} Q{x} {y} {x + 3} {y} Z")
+                keys.append(f'<path d="{d}" class="key"/>')
+                keys.append(f'<text x="{x + w / 2 + 4}" y="{y + u - 2}" class="legend">↵</text>')
+            elif legend != "ISO-ENTER-LOW":
+                keys.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" class="key"/>')
+                if legend:
+                    size = "small" if len(legend) > 2 else ""
+                    keys.append(f'<text x="{x + w / 2}" y="{y + h / 2 + 4}" class="legend {size}">'
+                                f'{escape(legend)}</text>')
+            x += width * u
+    glow = (f'<rect x="{pad - 4}" y="{pad - 4}" width="{16 * u - g + 8}" height="{5 * u - g + 8}" rx="8" '
+            f'fill="#cfd6e0" opacity="0.22" filter="url(#kb-glow)"/>') if lit else ""
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{KB_W}" height="{KB_H}" viewBox="0 0 {KB_W} {KB_H}">
+<defs>
+<filter id="kb-glow" x="-10%" y="-20%" width="120%" height="140%"><feGaussianBlur stdDeviation="7"/></filter>
+<linearGradient id="kb-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2f37"/><stop offset="1" stop-color="#1c2026"/></linearGradient>
+<style>
+.key {{ fill: #14171b; stroke: #3a404a; stroke-width: 1; }}
+.legend {{ fill: #9aa3ae; font: 11px sans-serif; text-anchor: middle; }}
+.legend.small {{ font-size: 8px; }}
+</style>
+</defs>
+<rect x="1" y="1" width="{KB_W - 2}" height="{KB_H - 2}" rx="12" fill="url(#kb-body)" stroke="#3a404a" stroke-width="1.5"/>
+<rect x="5" y="{pad + u}" width="4" height="{3 * u}" rx="2" fill="#3a404a"/>
+{glow}
+{chr(10).join(keys)}
+</svg>"""
+
+
+KB_ZONE_TITLES = {"kb_light": "Lighting", "kb_profile": "Profile", "kb_layout": "Layout", "kb_power": "Power"}
+
+
+def keyboard_zone_summary(k: "squire.KeyboardSettings", zone: str) -> str:
+    if zone == "kb_light":
+        return keyboard_effect_name(k.light_mode)
+    if zone == "kb_profile":
+        return f"{k.profile} of 5" if k.profile else "not read"
+    if zone == "kb_layout":
+        if k.layout_id is None:
+            return "not read"
+        return (k.layout or f"id {k.layout_id}") + (" · ISO" if k.iso else " · ANSI")
+    if zone == "kb_power":
+        sleep = "never sleeps" if k.sleep_minutes is None else f"sleep {k.sleep_minutes} min"
+        return f"{sleep} · warn at {k.low_warning} %"
+    return ""
 
 
 def swatch_svg(color: str) -> str:
@@ -399,6 +545,10 @@ CSS = """
 .squire-callout.selected { outline: 2px solid @accent_bg_color; outline-offset: -2px; }
 .squire-line { min-height: 0; border-top: 1px dashed alpha(@view_fg_color, 0.45); }
 .squire-line.selected { border-top: 1px solid @accent_bg_color; }
+/* the keyboard: a large hotspot over all keys gets only an outline, no tint (a tint would look like an LED colour) */
+.squire-hotspot.outline-only.selected, .squire-hotspot.outline-only:hover { background: transparent; }
+.squire-vline { min-width: 0; border-left: 1px dashed alpha(@view_fg_color, 0.45); }
+.squire-vline.selected { border-left: 1px solid @accent_bg_color; }
 .squire-bytes { font-family: monospace; font-size: 0.9em; }
 """
 
@@ -436,6 +586,8 @@ def run(argv: list[str]) -> int:
         def __init__(self, app):
             super().__init__(application=app, title="Squire", default_width=1320, default_height=800)
             self.settings: Optional[squire.MouseSettings] = None
+            self.keyboard: Optional[squire.KeyboardSettings] = None
+            self.kb_selected = "kb_light"
             self.batteries: dict = {}
             self.selected = "logo"
             self.device = "mouse"
@@ -497,8 +649,6 @@ def run(argv: list[str]) -> int:
                 else:
                     text = f"{'Wired' if b.connection == 'wired' else 'Omni receiver'} · {b.percent} %" + \
                            (" · charging" if b.charging else "")
-                if device == "keyboard":
-                    text += " · settings later"
                 r.set_subtitle(text)
 
         # reading -------------------------------------------------------------------------------------------
@@ -518,14 +668,19 @@ def run(argv: list[str]) -> int:
                 except Exception as error:  # keep the window alive whatever the device does
                     print(f"squire-settings: read failed: {error}", file=sys.stderr)
                     batteries, settings = {}, squire.MouseSettings("ROG Keris II Origin", "", status="error")
-                GLib.idle_add(self.apply, batteries, settings)
+                try:
+                    keyboard = demo_keyboard() if DEMO else squire.read_keyboard_settings()
+                except Exception as error:
+                    print(f"squire-settings: keyboard read failed: {error}", file=sys.stderr)
+                    keyboard = squire.KeyboardSettings("ROG Falchion RX LP", "", status="error")
+                GLib.idle_add(self.apply, batteries, settings, keyboard)
 
             threading.Thread(target=worker, name="squire-read", daemon=True).start()
 
-        def apply(self, batteries, settings):
+        def apply(self, batteries, settings, keyboard=None):
             self.loading = False
             self.refresh_button.set_sensitive(True)
-            self.batteries, self.settings = batteries, settings
+            self.batteries, self.settings, self.keyboard = batteries, settings, keyboard
             self.update_sidebar()
             self.render()
             if SCREENSHOT:
@@ -535,7 +690,11 @@ def run(argv: list[str]) -> int:
         def capture(self):
             """--screenshot PATH [ZONE]: save the window as PNG and quit (development aid)."""
             path, zone = SCREENSHOT[0], (SCREENSHOT[1:] or [None])[0]
-            if zone and zone != self.selected:
+            if zone == "keyboard" and self.device != "keyboard":
+                self.device_list.select_row(self.device_rows["keyboard"])
+                GLib.timeout_add(400, self.capture)
+                return False
+            if zone and zone != "keyboard" and zone != self.selected:
                 self.select(zone)
                 GLib.timeout_add(400, self.capture)
                 return False
@@ -564,15 +723,13 @@ def run(argv: list[str]) -> int:
 
         def render(self):
             if self.device == "keyboard":
-                b = self.batteries.get("keyboard")
-                battery = f"Battery {b.percent} %." if b and b.percent is not None else ""
-                self.show_status("Keyboard settings come later",
-                                 f"{battery} Squire starts with the mouse; the keyboard follows.",
-                                 icon="input-keyboard-symbolic")
+                self.render_keyboard()
                 return
             s = self.settings
             if s is None:
                 return
+            self.banner.set_title("Lights, DPI, sensor and power settings can be changed. "
+                                  "Nothing is sent until you click Apply.")
             if s.status != "ok":
                 texts = {
                     "asleep": ("The mouse is asleep", "Move the mouse, then read again."),
@@ -603,6 +760,108 @@ def run(argv: list[str]) -> int:
             body.append(column)
             self.content_view.set_content(body)
             self.update_preview()
+
+        def render_keyboard(self):
+            k = self.keyboard
+            self.banner.set_title("Keyboard settings are shown only so far; changing them comes next.")
+            if k is None:
+                return
+            if k.status != "ok":
+                texts = {
+                    "asleep": ("The keyboard is asleep", "Press a key, then read again."),
+                    "no-response": ("No answer from the keyboard", "Press a key, then read again."),
+                    "no-access": ("No access to the receiver", "Install the udev rule (see the README), then "
+                                                              "re-plug the receiver."),
+                    "not-found": ("Keyboard not found", "Plug in the Omni receiver or the USB cable."),
+                }
+                title, text = texts.get(k.status, ("Could not read the keyboard", k.status))
+                self.show_status(title, text, icon="input-keyboard-symbolic")
+                return
+            body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            stage_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                              vscrollbar_policy=Gtk.PolicyType.AUTOMATIC, hexpand=True)
+            stage = self.build_keyboard_stage(k)
+            stage.set_halign(Gtk.Align.CENTER)
+            stage_scroll.set_child(stage)
+            stage_scroll.add_css_class("squire-stage")
+            body.append(stage_scroll)
+            body.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+            inspector = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+            inspector.set_size_request(360, -1)
+            inspector.set_child(self.build_keyboard_inspector(k))
+            body.append(inspector)
+            self.content_view.set_content(body)
+
+        def select_keyboard(self, zone):
+            self.kb_selected = zone
+            self.render()
+
+        def kb_card(self, k, zone, width):
+            button = Gtk.Button(css_classes=["card", "squire-callout"] + (["selected"] if zone == self.kb_selected else []))
+            button.set_size_request(width, -1)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            box.append(Gtk.Label(label=KB_ZONE_TITLES[zone], xalign=0, css_classes=["heading"]))
+            box.append(Gtk.Label(label=keyboard_zone_summary(k, zone), xalign=0, css_classes=["dim-label", "caption"],
+                                 wrap=True))
+            button.set_child(box)
+            button.connect("clicked", lambda _b: self.select_keyboard(zone))
+            return button
+
+        def build_keyboard_stage(self, k):
+            fixed = Gtk.Fixed()
+            fixed.set_size_request(STAGE_W, STAGE_H)
+            title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            title.append(Gtk.Label(label=k.name, xalign=0, css_classes=["title-2"]))
+            b = self.batteries.get("keyboard")
+            if b and b.percent is not None:
+                title.append(Gtk.Label(label=f"Battery {b.percent} %" + (" · charging" if b.charging else ""),
+                                       xalign=0, css_classes=["dim-label"]))
+            fixed.put(title, 32, 24)
+
+            x, y = (STAGE_W - KB_W) // 2, 230
+            drawing = Gtk.Picture.new_for_paintable(texture(keyboard_svg(k)))
+            drawing.set_size_request(KB_W, KB_H)
+            drawing.set_can_shrink(True)
+            drawing.set_alternative_text("Top view of the keyboard")
+            fixed.put(drawing, x, y)
+            # the keys are the lighting zone: one hotspot over all of them, with a callout above
+            spot = Gtk.Button(css_classes=["squire-hotspot", "outline-only"]
+                              + (["selected"] if self.kb_selected == "kb_light" else []),
+                              tooltip_text="Lighting")
+            spot.update_property([Gtk.AccessibleProperty.LABEL], ["Lighting"])
+            spot.set_size_request(KB_W - 2 * KB_PAD + 8, KB_H - 2 * KB_PAD + 8)
+            spot.connect("clicked", lambda _b: self.select_keyboard("kb_light"))
+            fixed.put(spot, x + KB_PAD - 4, y + KB_PAD - 4)
+            line = Gtk.Box(css_classes=["squire-vline"] + (["selected"] if self.kb_selected == "kb_light" else []))
+            line.set_size_request(1, 34)
+            fixed.put(line, STAGE_W // 2, y - 20)
+            card = self.kb_card(k, "kb_light", 170)
+            fixed.put(card, STAGE_W // 2 - 85, y - 76)
+
+            hint = Gtk.Label(label="Click the keys, or one of these:", css_classes=["dim-label"])
+            chips = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER)
+            for zone in ("kb_profile", "kb_layout", "kb_power"):
+                chips.append(self.kb_card(k, zone, 190))
+            column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            column.set_size_request(STAGE_W - 64, -1)
+            column.append(hint)
+            column.append(chips)
+            fixed.put(column, 32, 520)
+            return fixed
+
+        def build_keyboard_inspector(self, k):
+            page = Adw.PreferencesPage(hexpand=False)
+            groups = dict(keyboard_groups(k))
+            title = KB_ZONE_TITLES[self.kb_selected]
+            group = Adw.PreferencesGroup(title=title, description="Shown only")
+            for name, value, subtitle in groups[title]:
+                group.add(row(name, value, subtitle))
+            page.add(group)
+            device = Adw.PreferencesGroup(title="Device")
+            for name, value, subtitle in groups["Device"]:
+                device.add(row(name, value, subtitle))
+            page.add(device)
+            return page
 
         def select(self, zone):
             self.selected = zone
