@@ -20,7 +20,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.setContentSize(NSSize(width: 1320, height: 800))
             window.contentMinSize = NSSize(width: 1000, height: 640)
+            // Kept after closing on purpose: a window rebuilt on every open drew the switch and slider knobs
+            // only after a focus change (owner, 2026-11-13). The few MB are not worth it.
             window.isReleasedWhenClosed = false
+            // The window is kept after closing; without this it reopens on the Space it was first shown on,
+            // not on the desktop where "Settings…" was clicked.
+            window.collectionBehavior.insert(.moveToActiveSpace)
             window.delegate = self
             window.center()
             window.setFrameAutosaveName("SquireSettings")
