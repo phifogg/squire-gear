@@ -47,8 +47,8 @@ The settings window (in development for 0.3, not in a release yet) is tested wit
 Origin on Linux through the Omni receiver and on macOS through the Omni receiver and the USB
 cable: reading all settings, and changing and saving all three lights. Power-off time, warning
 level, angle snapping and angle tuning are confirmed on the device through the Omni receiver.
-Polling rate, surface (mouse pad preset) and lift-off distance can be changed too; DPI is shown
-only so far.
+Polling rate, surface (mouse pad preset), lift-off distance and the DPI stages (value, colour,
+active stage, number of stages) can be changed too.
 
 Not tested yet:
 
@@ -248,7 +248,8 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 ## Roadmap
 
-- Device configuration on Linux and macOS (0.3): lights, power, sensor settings first, then DPI;
+- Device configuration on Linux and macOS (0.3): lights, DPI, sensor and power settings of the mouse;
+  the keyboard later;
   0.2.x stays read-only
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode

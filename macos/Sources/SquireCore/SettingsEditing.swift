@@ -52,6 +52,9 @@ public struct OtherEdits: Equatable, Sendable {
     public var liftoff: String?
     public var surface: UInt8?
     public var polling: Int?
+    public var dpi: [Int: DPIStage] = [:]   // 1-based stage
+    public var activeStage: Int?
+    public var stageCount: Int?
     public init(power: PowerSetting? = nil, angleSnapping: Bool? = nil, angleTuning: Int? = nil, liftoff: String? = nil,
                 surface: UInt8? = nil, polling: Int? = nil) {
         self.power = power
@@ -63,13 +66,18 @@ public struct OtherEdits: Equatable, Sendable {
     }
     public var isEmpty: Bool {
         power == nil && angleSnapping == nil && angleTuning == nil && liftoff == nil && surface == nil && polling == nil
+            && dpi.isEmpty && activeStage == nil && stageCount == nil
     }
 
-    /// Fixed order, as in the Linux window. Surface before lift-off: the surface write keeps the lift-off the mouse
-    /// has, then lift-off keeps the new surface.
-    var changes: [SettingChange] {
-        [power.map { .power($0) }, angleSnapping.map { .angleSnapping($0) }, angleTuning.map { .angleTuning($0) },
-         polling.map { .polling($0) }, surface.map { .surface($0) }, liftoff.map { .liftoff($0) }].compactMap { $0 }
+    /// Fixed order, as in the Linux window: DPI stages, active stage and count, then the rest. The active stage goes
+    /// after the count only when it is beyond the count the mouse has, so it stays on the button at every step.
+    /// Surface before lift-off: the surface write keeps the lift-off the mouse has, then lift-off keeps the new one.
+    func changes(_ s: MouseSettings) -> [SettingChange] {
+        var stages: [SettingChange?] = [activeStage.map { .activeStage($0) }, stageCount.map { .stageCount($0) }]
+        if let active = activeStage, active > (s.dpiStageCount ?? 0) { stages.reverse() }
+        return (dpi.keys.sorted().map { SettingChange.dpi(stage: $0, dpi[$0]!) } + stages.compactMap { $0 }
+                + [power.map { .power($0) }, angleSnapping.map { .angleSnapping($0) }, angleTuning.map { .angleTuning($0) },
+                   polling.map { .polling($0) }, surface.map { .surface($0) }, liftoff.map { .liftoff($0) }].compactMap { $0 })
     }
 }
 
@@ -107,6 +115,13 @@ public enum SettingsEditing {
         if let degrees = other.angleTuning { p.angleTuning = degrees }
         if let value = other.liftoff { p.liftoff = value }
         if let hz = other.polling { p.pollingHz = hz }
+        for (stage, value) in other.dpi where stage - 1 < p.dpiXY.count && stage - 1 < p.dpiColors.count {
+            p.dpiXY[stage - 1] = [value.dpi, value.dpi]
+            p.dpiColors[stage - 1] = value.color
+            if stage - 1 < p.dpi.count { p.dpi[stage - 1] = value.dpi }
+        }
+        if let stage = other.activeStage { p.dpiStage = stage }
+        if let count = other.stageCount { p.dpiStageCount = count }
         if let id = other.surface {
             p.surfaceID = id
             p.surfaceParams = Command.surfaceParams[id] ?? nil
@@ -116,7 +131,7 @@ public enum SettingsEditing {
 
     /// Everything Apply will write, in a fixed order: changed light zones, then power, angle snapping, angle tuning.
     public static func changes(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> [SettingChange] {
-        changedZones(s, pending: pending).map { .led($0, pending[$0]!) } + other.changes.filter { !$0.matches(s) }
+        changedZones(s, pending: pending).map { .led($0, pending[$0]!) } + other.changes(s).filter { !$0.matches(s) }
     }
 
     /// An edit to power or the sensor: kept pending, or dropped when it is back to what the mouse has.
@@ -129,7 +144,27 @@ public enum SettingsEditing {
         if let value = o.liftoff, SettingChange.liftoff(value).matches(s) { o.liftoff = nil }
         if let id = o.surface, SettingChange.surface(id).matches(s) { o.surface = nil }
         if let hz = o.polling, SettingChange.polling(hz).matches(s) { o.polling = nil }
+        for (stage, value) in o.dpi where SettingChange.dpi(stage: stage, value).matches(s) { o.dpi[stage] = nil }
+        if let stage = o.activeStage, stage == s.dpiStage { o.activeStage = nil }
+        if let count = o.stageCount, count == s.dpiStageCount { o.stageCount = nil }
         return o
+    }
+
+    /// A stage with separate X/Y values is shown only: the write sets both alike.
+    public static func canEditDPI(_ s: MouseSettings, stage: Int) -> Bool {
+        let i = stage - 1
+        return i < s.dpiXY.count && i < s.dpiColors.count && s.dpiXY[i][0] == s.dpiXY[i][1]
+    }
+
+    /// Active stage or stage count; they stay consistent (a stage beyond the count raises the count, a count below
+    /// the active stage lowers the active stage). Same as editDPIStages in the Linux window.
+    public static func editDPIStages(_ other: OtherEdits, _ s: MouseSettings, active: Int? = nil, count: Int? = nil) -> OtherEdits {
+        let p = preview(s, pending: [:], other: other)
+        var newActive = active ?? p.dpiStage ?? 1
+        var newCount = count ?? p.dpiStageCount ?? Command.dpiStages
+        if active != nil, newActive > newCount { newCount = newActive }
+        if count != nil, newActive > newCount { newActive = newCount }
+        return edit(other, s) { $0.activeStage = newActive; $0.stageCount = newCount }
     }
 
     /// Surface can be changed only from one Squire knows (or none): an unknown one may be a calibration.
@@ -203,12 +238,11 @@ public enum SettingsEditing {
         let reportID: UInt8? = omni ? 0x03 : nil
         let length = omni ? 64 : 65
         var lines: [String] = []
-        let after = preview(s, pending: pending, other: other)
+        // each write sees the mouse as the earlier ones left it (HIDReader reads it again right before each write):
+        // lift-off keeps a new surface, an active stage may need the new count first
+        var current = s
         for change in changes(s, pending: pending, other: other) {
-            // surface keeps the lift-off as read; lift-off keeps the surface of the preview (a new one is written
-            // first). HIDReader reads 12 06 again right before each of them.
-            let current: MouseSettings
-            if case .liftoff = change { current = after } else { current = s }
+            defer { current = change.applied(to: current) }
             guard let command = try? change.command(current: current),
                   let bytes = try? Packet.build(reportID: reportID, command: command, length: length) else { continue }
             lines.append(ReplyParser.hex(Array(bytes.prefix(command.bytes.count + 1))) + " …")

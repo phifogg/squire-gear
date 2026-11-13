@@ -344,6 +344,38 @@
           "packet": "03 51 35 00 00 0b 00 00 1a 32 20",
           "read_back": {"liftoff": "low", "surface_id": 11, "surface_params": "1a 32 20"},
           "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-surface 0b, unsaved) from ROG Sheath; lift-off low read from 12 06 right before and kept. Same bytes as Armoury Crate. Restored with 51 35 00 00 01 00 00 1c 34 16 (ROG Sheath, read back unchanged lift-off)."
+        },
+        {
+          "name": "DPI stage 3 1650, colour kept",
+          "function": "dpi_command",
+          "args": [3, 1650, "#003dff"],
+          "packet": "03 51 31 02 00 20 00 00 3d ff",
+          "read_back": {"dpi_xy": [1650, 1650], "color": "#003dff"},
+          "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-dpi 3 1650, unsaved); colour from the 12 04 03 read right before. 12 04 02 read back X and Y 1650, 12 04 03 the same colour. Restored with 51 31 02 00 1f 00 00 3d ff (1600)."
+        },
+        {
+          "name": "DPI stage 3 colour #ffaa00",
+          "function": "dpi_command",
+          "args": [3, 1600, "#ffaa00"],
+          "packet": "03 51 31 02 00 1f 00 ff aa 00",
+          "read_back": {"dpi_xy": [1600, 1600], "color": "#ffaa00"},
+          "notes": "Sent by Squire 2026-11-13 (--set-dpi 3 1600 --color #ffaa00, unsaved). Restored with #003dff."
+        },
+        {
+          "name": "active DPI stage 2",
+          "function": "active_stage_command",
+          "args": [2],
+          "packet": "03 51 31 09 00 02",
+          "read_back": {"dpi_stage": 2, "dpi_stage_count": 4},
+          "notes": "Sent by Squire 2026-11-13 (--set-dpi-stage 2, unsaved); 12 00 [11] read back 2, count unchanged. Restored with 51 31 09 00 03."
+        },
+        {
+          "name": "DPI stage count 3",
+          "function": "stage_count_command",
+          "args": [3],
+          "packet": "03 51 31 0a 00 03",
+          "read_back": {"dpi_stage": 3, "dpi_stage_count": 3},
+          "notes": "Sent by Squire 2026-11-13 (--set-dpi-count 3, unsaved, stage 3 active); 12 00 [18] read back 3. Restored with 51 31 0a 00 04."
         }
       ]
     },

@@ -119,6 +119,10 @@ private func json() throws -> [String: Any] {
             case "angle_snapping_command": command = try .setAngleSnapping(args[0] as! Bool)
             case "angle_tuning_command": command = try .setAngleTuning(args[0] as! Int)
             case "polling_command": command = try .setPolling(args[0] as! Int)
+            case "dpi_command":
+                command = try .setDPI(stage: args[0] as! Int, DPIStage(dpi: args[1] as! Int, color: RGB(hex: args[2] as! String)!))
+            case "active_stage_command": command = try .setActiveStage(args[0] as! Int)
+            case "stage_count_command": command = try .setStageCount(args[0] as! Int)
             case "surface_command": command = try .setSurface(UInt8(args[0] as! Int), liftoff: args[1] as! String)
             case "liftoff_command":
                 command = try .setLiftoff(args[0] as! String, surfaceID: UInt8(args[1] as! Int),
@@ -148,7 +152,8 @@ private func json() throws -> [String: Any] {
         #expect(throws: CommandError.self) { try Command.setAngleTuning(25) }
     }
 
-    @Test(arguments: ["51 31 00 00 07 00", "51 31 04 00 04", "51 31 04 00 63", "51 31 05 00 02", "51 31 09 00 01", "51 31 0a 00 04",
+    @Test(arguments: ["51 31 00 00 07 00", "51 31 04 00 04", "51 31 04 00 63", "51 31 05 00 02", "51 31 09 00 05", "51 31 0a 00 00",
+                      "51 31 00 00 48 03 ff 00 00", "51 31 00 00 00 00 ff 00 00", "51 31 04 00 07 00 ff 00 00",
                       "51 35 ff 00 ff 02", "51 35 00 00 02 00 00 1c 34 16", "51 35 00 00 01 00 00 1c 34",
                       "51 35 00 00 01 00 01 1c 34 16", "51 31 06 00 02", "51 31 0b 00 07 00", "51 37 00 00 05 00 14",
                       "51 37 00 01 03 00 14", "50 02 01"])
@@ -220,6 +225,54 @@ private func json() throws -> [String: Any] {
             let id = UInt8(preset["id"] as! String, radix: 16)!
             #expect(Command.surfaceParams[id] == .some((preset["params"] as? String).map(bytes)), "\(preset["name"]!)")
         }
+    }
+
+    /// Same as test_squire.py DpiWriteTests.
+    @Test func dpiExactBytes() throws {
+        #expect(try Command.setDPI(stage: 3, DPIStage(dpi: 700, color: RGB(0x00, 0x3D, 0xFF))).bytes
+                == bytes("51 31 02 00 0d 00 00 3d ff"))
+        #expect(try Command.setDPI(stage: 1, DPIStage(dpi: 42000, color: RGB(0xFF, 0, 0))).bytes
+                == bytes("51 31 00 00 47 03 ff 00 00"))
+        #expect(try Command.setDPI(stage: 1, DPIStage(dpi: 100, color: RGB(0xFF, 0, 0))).bytes
+                == bytes("51 31 00 00 01 00 ff 00 00"))
+        #expect(try Command.setActiveStage(3).bytes == bytes("51 31 09 00 03"))
+        #expect(try Command.setStageCount(4).bytes == bytes("51 31 0a 00 04"))
+        for (stage, dpi) in [(0, 800), (5, 800), (1, 825), (1, 50), (1, 42050)] {
+            #expect(throws: CommandError.self) { try Command.setDPI(stage: stage, DPIStage(dpi: dpi, color: RGB(0, 0, 0))) }
+        }
+        #expect(throws: CommandError.self) { try Command.setActiveStage(5) }
+        #expect(throws: CommandError.self) { try Command.setStageCount(0) }
+    }
+
+    @Test func dpiMatchesTheArmouryCrateCapture() throws {
+        let section = (try json()["mouse_writes"] as! [String: Any])["armoury_crate"] as! [String: Any]
+        let capture = (section["captures"] as! [[String: Any]]).first { ($0["name"] as! String).hasPrefix("DPI stage 3") }!
+        let after = capture["after"] as! [String: Any]
+        let dpi = after["dpi"] as! [Int], colors = after["dpi_colors"] as! [String]
+        var commands = try (0..<4).map { try Command.setDPI(stage: $0 + 1, DPIStage(dpi: dpi[$0], color: RGB(hex: colors[$0])!)) }
+        commands += [try Command.setStageCount(4), try Command.setActiveStage(after["dpi_stage"] as! Int)]
+        let packets = Set(capture["packets"] as! [String])
+        for c in commands {
+            let head = Array(try Packet.build(reportID: 0x03, command: c, length: 64).prefix(c.bytes.count + 1))
+            #expect(packets.contains(ReplyParser.hex(head)), "\(ReplyParser.hex(head))")
+        }
+    }
+
+    @Test func dpiChecksAgainstTheMouseAsRead() throws {
+        var s = MouseSettings()
+        s.dpiXY = [[400, 400], [800, 1200], [650, 650], [3200, 3200]]
+        s.dpiColors = Array(repeating: RGB(0, 0, 0), count: 4)
+        s.dpiStage = 2; s.dpiStageCount = 3
+        let blue = DPIStage(dpi: 900, color: RGB(0, 0, 0xFF))
+        #expect(throws: CommandError.self) { try SettingChange.dpi(stage: 2, blue).command(current: s) }   // X != Y
+        #expect(try SettingChange.dpi(stage: 3, blue).command(current: s).bytes == bytes("51 31 02 00 11 00 00 00 ff"))
+        #expect(throws: CommandError.self) { try SettingChange.activeStage(4).command(current: s) }   // beyond the count
+        #expect(throws: CommandError.self) { try SettingChange.stageCount(1).command(current: s) }    // below the active
+        #expect(try SettingChange.stageCount(2).command(current: s).bytes == bytes("51 31 0a 00 02"))
+        #expect(SettingChange.dpi(stage: 1, blue).reads == [.dpiXY, .dpiColors])
+        var after = s
+        after.dpiXY[2] = [900, 900]; after.dpiColors[2] = RGB(0, 0, 0xFF)
+        #expect(SettingChange.dpi(stage: 3, blue).matches(after) && !SettingChange.dpi(stage: 3, blue).matches(s))
     }
 
     @Test func liftoffReadBackMustKeepTheSurface() {
@@ -400,6 +453,36 @@ private func json() throws -> [String: Any] {
         #expect(SettingsEditing.edit(OtherEdits(), s) { $0.surface = 0x01 }.isEmpty)
         #expect(SettingsEditing.canEditSurface(s) && SettingsEditing.canEditPolling(s))
         #expect(SettingsEditing.plannedPackets(s, pending: [:], other: OtherEdits(surface: 0xFF)).first == "03 51 35 ff 00 ff 00 …")
+    }
+
+    /// Same plan as test_squire_settings.py test_dpi_edits_plan_exact_bytes.
+    @Test func dpiEditsPlanExactBytes() throws {
+        let s = try settings()   // 400 / 800 / 650 / 3200, #ff0000 #c100ff #000000 #31ff00, stage 4 of 4
+        var other = SettingsEditing.edit(OtherEdits(), s) {
+            $0.dpi[3] = DPIStage(dpi: 700, color: RGB(0, 0, 0))
+            $0.dpi[1] = DPIStage(dpi: 400, color: RGB(0x3D, 0x8B, 0xFF))   // colour only
+        }
+        other = SettingsEditing.editDPIStages(other, s, active: 3)
+        #expect(SettingsEditing.plannedPackets(s, pending: [:], other: other)
+                == ["03 51 31 00 00 07 00 3d 8b ff …", "03 51 31 02 00 0d 00 00 00 00 …",
+                    "03 51 31 09 00 03 …", "03 50 03 …  (save)"])
+        let preview = SettingsEditing.preview(s, pending: [:], other: other)
+        #expect(SettingsEditing.summary(preview, .dpi) == "400 / 800 / 700 / 3200 DPI")
+        #expect(SettingsEditing.edit(OtherEdits(), s) { $0.dpi[2] = DPIStage(dpi: 800, color: RGB(0xC1, 0x00, 0xFF)) }.isEmpty)
+    }
+
+    @Test func activeStageAndCountStayConsistent() throws {
+        let s = try settings()
+        let fewer = SettingsEditing.editDPIStages(OtherEdits(), s, count: 2)
+        #expect(fewer.activeStage == 2 && fewer.stageCount == 2)
+        #expect(Array(SettingsEditing.plannedPackets(s, pending: [:], other: fewer).prefix(2))
+                == ["03 51 31 09 00 02 …", "03 51 31 0a 00 02 …"])
+        var two = s
+        two.dpiStage = 2; two.dpiStageCount = 2
+        let more = SettingsEditing.editDPIStages(OtherEdits(), two, active: 4)
+        #expect(Array(SettingsEditing.plannedPackets(two, pending: [:], other: more).prefix(2))
+                == ["03 51 31 0a 00 04 …", "03 51 31 09 00 04 …"])
+        #expect(SettingsEditing.editDPIStages(more, two, active: 2, count: 2).isEmpty)
     }
 
     @Test func linkedEditSetsEveryZone() throws {

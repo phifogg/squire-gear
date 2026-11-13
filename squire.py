@@ -229,6 +229,46 @@ def surface_command(surface_id: int, liftoff: str) -> bytes:
     return liftoff_command(liftoff, surface_id, SURFACE_PARAMS[surface_id])
 
 
+# DPI. Source: Armoury Crate captures (USBPcap 2026-11-12, mouse_writes.armoury_crate) and G-Helper AsusMouse.cs
+# GetUpdateDPIPacket / GetChangeDPIProfilePacket2 / GetSetDPIProfileCountPacket + Models/KerisIIOrigin.cs (MaxDPI
+# 42000, 4 stages, CanChangeDPICount, DPI colours) (GPL-3.0, facts only). Approved by the owner 2026-11-13.
+# 51 31 <stage 0-based> 00 <lo> <hi> <r g b>: DPI (X and Y alike) + the stage colour, value = (DPI - 50) / 50.
+ACTIVE_STAGE_FIELD = 0x09     # 51 31 09 00 <stage, 1-based>
+STAGE_COUNT_FIELD = 0x0A      # 51 31 0a 00 <1..4>
+DPI_STAGES = 4
+DPI_MIN, DPI_MAX, DPI_STEP = 100, 42000, 50
+
+
+def dpi_command(stage: int, dpi: int, color: str) -> bytes:
+    """One DPI stage (1-based): DPI for X and Y alike, plus the stage colour (#rrggbb)."""
+    if not 1 <= stage <= DPI_STAGES:
+        raise ValueError(f"DPI stage {stage!r} is not 1-{DPI_STAGES}")
+    if not (DPI_MIN <= dpi <= DPI_MAX and dpi % DPI_STEP == 0):
+        raise ValueError(f"{dpi!r} DPI is not {DPI_MIN}-{DPI_MAX} in steps of {DPI_STEP}")
+    rgb = bytes.fromhex(color.lstrip("#"))
+    if len(rgb) != 3:
+        raise ValueError(f"colour {color!r} is not #rrggbb")
+    command = SENSOR_WRITE + bytes([stage - 1, 0x00]) + ((dpi - 50) // 50).to_bytes(2, "little") + rgb
+    assert is_allowed_write(command)
+    return command
+
+
+def active_stage_command(stage: int) -> bytes:
+    if not 1 <= stage <= DPI_STAGES:
+        raise ValueError(f"DPI stage {stage!r} is not 1-{DPI_STAGES}")
+    command = SENSOR_WRITE + bytes([ACTIVE_STAGE_FIELD, 0x00, stage])
+    assert is_allowed_write(command)
+    return command
+
+
+def stage_count_command(count: int) -> bytes:
+    if not 1 <= count <= DPI_STAGES:
+        raise ValueError(f"DPI stage count {count!r} is not 1-{DPI_STAGES}")
+    command = SENSOR_WRITE + bytes([STAGE_COUNT_FIELD, 0x00, count])
+    assert is_allowed_write(command)
+    return command
+
+
 def polling_command(hz: int) -> bytes:
     if hz not in POLLING_WRITE_HZ:
         raise ValueError(f"polling rate {hz!r} Hz is not one of {sorted(POLLING_WRITE_HZ)}")
@@ -253,10 +293,15 @@ def is_allowed_write(command: bytes) -> bool:
             return len(command) == 5 and command[4] in (0, 1)
         if command[2] == POLLING_FIELD:
             return len(command) == 5 and command[4] in POLLING_WRITE_HZ.values()
+        if command[2] in (ACTIVE_STAGE_FIELD, STAGE_COUNT_FIELD):
+            return len(command) == 5 and 1 <= command[4] <= DPI_STAGES
+        if command[2] < DPI_STAGES:
+            dpi = int.from_bytes(command[4:6], "little") * 50 + 50
+            return len(command) == 9 and DPI_MIN <= dpi <= DPI_MAX and dpi % DPI_STEP == 0
         if command[2] == ANGLE_TUNING_FIELD and len(command) == 6:
             value = int.from_bytes(command[4:6], "little", signed=True)
             return value in ANGLE_TUNING_DEGREES
-        return False   # DPI, debounce, stage count, active stage: not approved
+        return False   # debounce and anything else: not approved
     return (len(command) == 12 and command[:2] == LED_WRITE and command[2] in LED_ZONE_INDEX.values()
             and command[3] == 0 and command[4] in LED_WRITE_MODES.values() and command[5] <= 100
             and command[9:] == b"\0\0\0")
@@ -819,7 +864,58 @@ def set_polling(hz: int, save: bool = False, dry_run: bool = False, debug: bool 
                           lambda after, _: after == {"polling_hz": hz}, save, dry_run, debug, hid)
 
 
-def write_verified(command, read_name: str, extract, matches, save: bool = False, dry_run: bool = False,
+def set_dpi(stage: int, dpi: int, color: Optional[str] = None, save: bool = False, dry_run: bool = False,
+            debug: bool = False, hid=None) -> WriteResult:
+    """One DPI stage (1-based), X and Y alike. The stage colour travels in the same command: without `color` the
+    one read from 12 04 03 just before is written back. Refused for a stage with separate X/Y values."""
+    dpi_command(stage, dpi, color or "#000000")       # validate before anything is sent
+    color = "#" + bytes.fromhex(color.lstrip("#")).hex() if color else None
+    def extract(s):
+        i = stage - 1
+        return {"dpi_xy": s.dpi_xy[i] if i < len(s.dpi_xy) else None,
+                "color": s.dpi_colors[i] if i < len(s.dpi_colors) else None}
+    def build(before):
+        if not before["dpi_xy"] or not before["color"]:
+            raise ValueError("DPI stage not read: nothing written")
+        if before["dpi_xy"][0] != before["dpi_xy"][1]:
+            raise ValueError(f"stage {stage} has X {before['dpi_xy'][0]} / Y {before['dpi_xy'][1]}: Squire would set "
+                             "both alike, so it is not written")
+        return dpi_command(stage, dpi, color or before["color"])
+    def matches(after, before):
+        return bool(after and before) and after == {"dpi_xy": [dpi, dpi], "color": (color or before["color"]).lower()}
+    return write_verified(build, ("dpi_xy", "dpi_colors"), extract, matches, save, dry_run, debug, hid)
+
+
+def set_active_stage(stage: int, save: bool = False, dry_run: bool = False, debug: bool = False,
+                     hid=None) -> WriteResult:
+    """The DPI stage in use (1-based), read back from 12 00 [11]. Only a stage the DPI button cycles through."""
+    active_stage_command(stage)
+    def build(before):
+        if before["dpi_stage_count"] is None or stage > before["dpi_stage_count"]:
+            raise ValueError(f"stage {stage} is not one of the {before['dpi_stage_count']} on the DPI button")
+        return active_stage_command(stage)
+    return write_verified(build, "profile",
+                          lambda s: {"dpi_stage": s.dpi_stage, "dpi_stage_count": s.dpi_stage_count},
+                          lambda after, before: bool(after and before) and after == {**before, "dpi_stage": stage},
+                          save, dry_run, debug, hid)
+
+
+def set_stage_count(count: int, save: bool = False, dry_run: bool = False, debug: bool = False,
+                    hid=None) -> WriteResult:
+    """How many stages the DPI button cycles through, read back from 12 00 [18]. Never fewer than the active stage
+    (what the mouse would do then is unknown)."""
+    stage_count_command(count)
+    def build(before):
+        if before["dpi_stage"] is None or count < before["dpi_stage"]:
+            raise ValueError(f"stage {before['dpi_stage']} is active: choose it or a lower one first")
+        return stage_count_command(count)
+    return write_verified(build, "profile",
+                          lambda s: {"dpi_stage": s.dpi_stage, "dpi_stage_count": s.dpi_stage_count},
+                          lambda after, before: bool(after and before) and after == {**before, "dpi_stage_count": count},
+                          save, dry_run, debug, hid)
+
+
+def write_verified(command, read_name, extract, matches, save: bool = False, dry_run: bool = False,
                    debug: bool = False, hid=None) -> WriteResult:
     """The one write path: check the mouse is awake, read the setting, write, read it back, and save (50 03)
     only when asked and only if the read-back matched. `extract` picks the value from parsed settings;
@@ -828,7 +924,7 @@ def write_verified(command, read_name: str, extract, matches, save: bool = False
     build = command if callable(command) else None
     if build is None and not is_allowed_write(command):
         raise ValueError(f"not on the write allowlist: {command.hex(' ')}")
-    read_command = MOUSE_QUERY if read_name == "battery" else MOUSE_SETTINGS_QUERIES[read_name]
+    read_names = (read_name,) if isinstance(read_name, str) else tuple(read_name)   # DPI: X/Y and colours
     if dry_run and build is None:
         shown = len(command) + 1
         sent = [packet(0x03, command, 64, write=True)[:shown].hex(" ") + " … (Omni, 64 bytes)",
@@ -838,11 +934,13 @@ def write_verified(command, read_name: str, extract, matches, save: bool = False
         return WriteResult("dry-run", sent, message="nothing sent")
 
     def read_value(dev, target):
-        ex = exchange(dev, target, read_command, debug, match=3 if read_command[1] == 0x04 else 2)
-        if ex.status != "ok":
-            return None
         tmp = MouseSettings("", "omni" if target.pid == PID_OMNI else "wired")
-        parse_mouse_settings(tmp, read_name, ex.payload)
+        for name in read_names:
+            read_command = MOUSE_QUERY if name == "battery" else MOUSE_SETTINGS_QUERIES[name]
+            ex = exchange(dev, target, read_command, debug, match=3 if read_command[1] == 0x04 else 2)
+            if ex.status != "ok":
+                return None
+            parse_mouse_settings(tmp, name, ex.payload)
         return extract(tmp)
 
     with device_lock():
@@ -1040,6 +1138,11 @@ def main() -> int:
     ap.add_argument("--set-angle-snapping", choices=["on", "off"], help="WRITE: angle snapping on or off")
     ap.add_argument("--set-angle-tuning", type=int, metavar="DEG",
                     help="WRITE: angle tuning in degrees, -20..20 in steps of 5")
+    ap.add_argument("--set-dpi", nargs=2, type=int, metavar=("STAGE", "DPI"),
+                    help="WRITE: DPI of one stage (1-4), X and Y alike, 100-42000 in steps of 50; --color also "
+                         "sets the stage colour")
+    ap.add_argument("--set-dpi-stage", type=int, metavar="N", help="WRITE: the active DPI stage (1-4)")
+    ap.add_argument("--set-dpi-count", type=int, metavar="N", help="WRITE: stages on the DPI button (1-4)")
     ap.add_argument("--set-polling", type=int, choices=sorted(POLLING_WRITE_HZ), metavar="HZ",
                     help="WRITE: polling rate, 125, 250, 500 or 1000 Hz")
     ap.add_argument("--set-surface", metavar="ID",
@@ -1050,7 +1153,7 @@ def main() -> int:
                          "and prints the bytes")
     ap.add_argument("--mode", choices=list(LED_WRITE_MODES), default="static")
     ap.add_argument("--brightness", type=int, default=100)
-    ap.add_argument("--color", default="#ffffff")
+    ap.add_argument("--color", help="#rrggbb: LED colour (default #ffffff), or the DPI stage colour (default: keep)")
     ap.add_argument("--dry-run", action="store_true", help="print the bytes a write would send, send nothing")
     ap.add_argument("--save", action="store_true", help="after a write, store it in the mouse (50 03)")
     ap.add_argument("--settings", action="store_true",
@@ -1068,7 +1171,7 @@ def main() -> int:
             return 0
         writes = [w for w in (args.set_led, args.set_power, args.set_angle_snapping,
                               args.set_angle_tuning is not None or None, args.set_liftoff, args.set_polling,
-                              args.set_surface) if w]
+                              args.set_surface, args.set_dpi, args.set_dpi_stage, args.set_dpi_count) if w]
         if len(writes) > 1:
             print("refused: one write per call", file=sys.stderr)
             return 2
@@ -1076,7 +1179,7 @@ def main() -> int:
             options = dict(save=args.save, dry_run=args.dry_run, debug=args.debug)
             try:
                 if args.set_led:
-                    result = set_led(args.set_led, args.mode, args.brightness, args.color, **options)
+                    result = set_led(args.set_led, args.mode, args.brightness, args.color or "#ffffff", **options)
                 elif args.set_power:
                     off, warn = args.set_power
                     minutes = None if off == "never" else int(off) if off.isdigit() else -1
@@ -1085,6 +1188,12 @@ def main() -> int:
                     result = set_angle_snapping(args.set_angle_snapping == "on", **options)
                 elif args.set_liftoff:
                     result = set_liftoff(args.set_liftoff, **options)
+                elif args.set_dpi:
+                    result = set_dpi(*args.set_dpi, color=args.color, **options)
+                elif args.set_dpi_stage:
+                    result = set_active_stage(args.set_dpi_stage, **options)
+                elif args.set_dpi_count:
+                    result = set_stage_count(args.set_dpi_count, **options)
                 elif args.set_polling:
                     result = set_polling(args.set_polling, **options)
                 elif args.set_surface:

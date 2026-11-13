@@ -208,6 +208,39 @@ class EditTests(unittest.TestCase):
         self.assertTrue(ui.can_edit_surface(self.s))
         self.assertFalse(ui.can_edit_surface(dataclasses.replace(self.s, surface_id=0x02)))
 
+    def test_dpi_edits_plan_exact_bytes(self):
+        # demo: 400 / 800 / 650 / 3200, colours #ff0000 #c100ff #000000 #31ff00, active stage 4 of 4
+        pending = ui.edit_other(self.s, {}, "dpi_3", {"dpi": 700, "color": "#000000"})
+        pending = ui.edit_other(self.s, pending, "dpi_1", {"dpi": 400, "color": "#3d8bff"})    # colour only
+        pending = ui.edit_dpi_stages(self.s, pending, active=3)
+        self.assertEqual(ui.changes(self.s, pending), ["dpi_1", "dpi_3", "dpi_stage"])
+        self.assertEqual(ui.planned_packets(self.s, pending),
+                         ["03 51 31 00 00 07 00 3d 8b ff …", "03 51 31 02 00 0d 00 00 00 00 …",
+                          "03 51 31 09 00 03 …", "03 50 03 …  (save)"])
+        preview = ui.preview_settings(self.s, pending)
+        self.assertEqual((preview.dpi, preview.dpi_stage, preview.dpi_colors[0]), ([400, 800, 700, 3200], 3, "#3d8bff"))
+        self.assertEqual(ui.zone_summary(preview, "dpi"), "400 / 800 / 700 / 3200 DPI")
+        self.assertEqual(self.s.dpi[2], 650)                                    # original untouched
+        self.assertEqual(ui.edit_other(self.s, {}, "dpi_2", {"dpi": 800, "color": "#c100ff"}), {})
+
+    def test_active_stage_and_count_stay_consistent(self):
+        # fewer stages than the active one: the active stage follows, and is written first
+        pending = ui.edit_dpi_stages(self.s, {}, count=2)
+        self.assertEqual((pending["dpi_stage"], pending["dpi_stage_count"]), (2, 2))
+        self.assertEqual(ui.planned_packets(self.s, pending)[:2], ["03 51 31 09 00 02 …", "03 51 31 0a 00 02 …"])
+        # from 2 stages, choosing stage 4 raises the count, which is written first
+        import dataclasses
+        two = dataclasses.replace(self.s, dpi_stage=2, dpi_stage_count=2)
+        pending = ui.edit_dpi_stages(two, {}, active=4)
+        self.assertEqual(ui.planned_packets(two, pending)[:2], ["03 51 31 0a 00 04 …", "03 51 31 09 00 04 …"])
+        self.assertEqual(ui.edit_dpi_stages(two, pending, active=2, count=2), {})
+
+    def test_stage_with_separate_x_y_is_shown_only(self):
+        import dataclasses
+        self.assertTrue(all(ui.can_edit_dpi(self.s, n) for n in range(1, 5)))
+        odd = dataclasses.replace(self.s, dpi_xy=[[400, 400], [800, 1200], [650, 650], [3200, 3200]])
+        self.assertFalse(ui.can_edit_dpi(odd, 2))
+
     def test_wired_mouse_plans_unnumbered_packets(self):
         import dataclasses
         wired = dataclasses.replace(self.s, connection="wired")

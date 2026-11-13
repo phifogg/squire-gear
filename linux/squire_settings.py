@@ -3,8 +3,9 @@
 
 Devices on the left; the selected device drawn in the middle with clickable zones and callouts; the values for
 the selected zone on the right. Shows what squire.read_mouse_settings reads; the three lights, power-off and
-low-battery warning, angle snapping and tuning, polling rate, surface and lift-off distance can be changed, and are
-written only on an explicit Apply (read back, then one save). DPI is shown only.
+low-battery warning, angle snapping and tuning, polling rate, surface, lift-off distance and the DPI stages (value,
+colour, active stage, stage count) can be changed, and are written only on an explicit Apply (read back, then one
+save).
 
 Runs as its own process because the tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process.
 """
@@ -153,16 +154,47 @@ EDIT_MODES = list(squire.LED_WRITE_MODES)      # static, breathing, color-cycle,
 # bool / degrees / "low" or "high"). Power and angle bytes approved and confirmed on the device 2026-11-12
 # (protocol.json settings_writes); polling, surface and lift-off approved 2026-11-13 (armoury_crate captures).
 # Surface comes before lift-off: the surface write keeps the lift-off the mouse has, then lift-off keeps the new surface.
-OTHER_KEYS = ("power", "angle_snapping", "angle_tuning", "polling_hz", "surface_id", "liftoff")
+# DPI (approved 2026-11-13): "dpi_1".."dpi_4" = {"dpi", "color"} per stage, "dpi_stage" (active), "dpi_stage_count".
+DPI_KEYS = tuple(f"dpi_{i}" for i in range(1, squire.DPI_STAGES + 1))
+OTHER_KEYS = DPI_KEYS + ("dpi_stage", "dpi_stage_count", "power", "angle_snapping", "angle_tuning", "polling_hz",
+                         "surface_id", "liftoff")
 OTHER_TITLES = {"power": "Power", "angle_snapping": "Angle snapping", "angle_tuning": "Angle tuning",
-                "polling_hz": "Polling rate", "surface_id": "Surface", "liftoff": "Lift-off distance"}
+                "polling_hz": "Polling rate", "surface_id": "Surface", "liftoff": "Lift-off distance",
+                "dpi_stage": "Active DPI stage", "dpi_stage_count": "DPI stages",
+                **{key: f"DPI stage {key[4:]}" for key in DPI_KEYS}}
 POWER_OFF_CHOICES = [1, 2, 3, 5, 10, None]      # minutes, None = never
 
 
 def current_other(s: squire.MouseSettings, key: str):
     if key == "power":
         return {"power_off_minutes": s.power_off_minutes, "low_warning": s.low_warning}
+    if key in DPI_KEYS:
+        i = int(key[4:]) - 1
+        if i >= len(s.dpi_xy) or i >= len(s.dpi_colors):
+            return None
+        return {"dpi": s.dpi_xy[i][0], "color": s.dpi_colors[i]}
     return getattr(s, key)
+
+
+def can_edit_dpi(s: squire.MouseSettings, stage: int) -> bool:
+    """A stage with separate X/Y values is shown only: the write sets both alike."""
+    i = stage - 1
+    return i < len(s.dpi_xy) and i < len(s.dpi_colors) and s.dpi_xy[i][0] == s.dpi_xy[i][1]
+
+
+def edit_dpi_stages(s: squire.MouseSettings, pending: dict, active: Optional[int] = None,
+                    count: Optional[int] = None) -> dict:
+    """Active stage or stage count. They stay consistent: a stage beyond the count raises the count, a count below
+    the active stage lowers the active stage."""
+    p = preview_settings(s, pending)
+    new_active = active if active is not None else p.dpi_stage
+    new_count = count if count is not None else p.dpi_stage_count
+    if active is not None and new_active > new_count:
+        new_count = new_active
+    if count is not None and new_active > new_count:
+        new_active = new_count
+    pending = edit_other(s, pending, "dpi_stage", new_active)
+    return edit_other(s, pending, "dpi_stage_count", new_count)
 
 
 def preview_settings(s: squire.MouseSettings, pending: dict) -> squire.MouseSettings:
@@ -170,9 +202,16 @@ def preview_settings(s: squire.MouseSettings, pending: dict) -> squire.MouseSett
     import dataclasses
     leds = {k: v for k, v in pending.items() if k in squire.LED_ZONES}
     other = dict(pending.get("power", {}))
-    for key in ("angle_snapping", "angle_tuning", "liftoff", "polling_hz", "surface_id"):
+    for key in ("angle_snapping", "angle_tuning", "liftoff", "polling_hz", "surface_id", "dpi_stage", "dpi_stage_count"):
         if key in pending:
             other[key] = pending[key]
+    if any(key in pending for key in DPI_KEYS):
+        dpi, xy, colors = list(s.dpi), [list(v) for v in s.dpi_xy], list(s.dpi_colors)
+        for key in DPI_KEYS:
+            if key in pending:
+                i = int(key[4:]) - 1
+                dpi[i], xy[i], colors[i] = pending[key]["dpi"], [pending[key]["dpi"]] * 2, pending[key]["color"]
+        other.update(dpi=dpi, dpi_xy=xy, dpi_colors=colors)
     if "surface_id" in pending:
         other["surface_params"] = squire.SURFACE_PARAMS.get(pending["surface_id"])
     return dataclasses.replace(s, leds={**s.leds, **leds}, **other)
@@ -184,8 +223,14 @@ def changed_zones(s: squire.MouseSettings, pending: dict) -> list[str]:
 
 
 def changes(s: squire.MouseSettings, pending: dict) -> list[str]:
-    """Everything Apply will write, in a fixed order: changed light zones, then power, angle snapping, tuning."""
-    return changed_zones(s, pending) + [k for k in OTHER_KEYS if k in pending and pending[k] != current_other(s, k)]
+    """Everything Apply will write, in a fixed order: changed light zones, then OTHER_KEYS. The active stage goes
+    after the stage count only when it is beyond the count the mouse has (the mouse refuses neither, but Squire keeps
+    the active stage on the button at every step)."""
+    keys = list(OTHER_KEYS)
+    if pending.get("dpi_stage", 0) > (s.dpi_stage_count or 0):
+        keys.remove("dpi_stage")
+        keys.insert(keys.index("dpi_stage_count") + 1, "dpi_stage")
+    return changed_zones(s, pending) + [k for k in keys if k in pending and pending[k] != current_other(s, k)]
 
 
 def change_title(key: str) -> str:
@@ -209,6 +254,12 @@ def change_command(s: squire.MouseSettings, key: str, value, after: Optional[squ
         return squire.surface_command(value, s.liftoff)
     if key == "polling_hz":
         return squire.polling_command(value)
+    if key in DPI_KEYS:
+        return squire.dpi_command(int(key[4:]), value["dpi"], value["color"])
+    if key == "dpi_stage":
+        return squire.active_stage_command(value)
+    if key == "dpi_stage_count":
+        return squire.stage_count_command(value)
     return squire.angle_tuning_command(value)
 
 
@@ -225,6 +276,12 @@ def write_change(key: str, value, save: bool) -> "squire.WriteResult":
         return squire.set_surface(value, save=save)
     if key == "polling_hz":
         return squire.set_polling(value, save=save)
+    if key in DPI_KEYS:
+        return squire.set_dpi(int(key[4:]), value["dpi"], color=value["color"], save=save)
+    if key == "dpi_stage":
+        return squire.set_active_stage(value, save=save)
+    if key == "dpi_stage_count":
+        return squire.set_stage_count(value, save=save)
     return squire.set_angle_tuning(value, save=save)
 
 
@@ -369,7 +426,7 @@ def run(argv: list[str]) -> int:
             self.refresh_button.connect("clicked", lambda _: self.refresh())
             header.pack_start(self.refresh_button)
             self.content_view.add_top_bar(header)
-            self.banner = Adw.Banner(title="Everything but DPI can be changed; DPI is shown only. "
+            self.banner = Adw.Banner(title="Lights, DPI, sensor and power settings can be changed. "
                                            "Nothing is sent until you click Apply.", revealed=True)
             self.content_view.add_top_bar(self.banner)
             split.set_content(Adw.NavigationPage(title="Settings", child=self.content_view))
@@ -597,15 +654,7 @@ def run(argv: list[str]) -> int:
                 else:
                     group.add(row("Not read", ""))
             elif zone == "dpi":
-                count = s.dpi_stage_count or len(s.dpi)
-                for i, dpi in enumerate(s.dpi[:count]):
-                    xy = s.dpi_xy[i] if i < len(s.dpi_xy) else None
-                    sub = "active" if s.dpi_stage == i + 1 else ""
-                    if xy and xy[0] != xy[1]:
-                        sub = (sub + " · " if sub else "") + f"X {xy[0]} / Y {xy[1]}"
-                    color = s.dpi_colors[i] if i < len(s.dpi_colors) else "none"
-                    group.add(row(f"Stage {i + 1}", f"{dpi} DPI", sub, suffix=swatch(color)))
-                group.add(row("Stages on the DPI button", str(count)))
+                self.build_dpi_editor(group, s)
             elif zone == "sensor":
                 p = preview_settings(s, self.pending)
                 if s.polling_hz in squire.POLLING_WRITE_HZ:
@@ -731,6 +780,60 @@ def run(argv: list[str]) -> int:
             group.add(self.color_row)
             self.editor_zone = zone
 
+        def build_dpi_editor(self, group, s):
+            p = preview_settings(s, self.pending)
+            count = p.dpi_stage_count or len(p.dpi)
+            stages = list(range(1, squire.DPI_STAGES + 1))
+            self.dpi_rows = {}
+            for stage in stages:
+                i = stage - 1
+                if i >= len(p.dpi):
+                    break
+                sub = "active" if p.dpi_stage == stage else "" if stage <= count else "not on the DPI button"
+                if not can_edit_dpi(s, stage):
+                    xy = s.dpi_xy[i] if i < len(s.dpi_xy) else None
+                    if xy:
+                        sub = (sub + " · " if sub else "") + f"X {xy[0]} / Y {xy[1]}, shown only"
+                    color = s.dpi_colors[i] if i < len(s.dpi_colors) else "none"
+                    group.add(row(f"Stage {stage}", f"{p.dpi[i]} DPI", sub, suffix=swatch(color)))
+                    continue
+                spin = Adw.SpinRow(title=f"Stage {stage}", subtitle=sub, digits=0, snap_to_ticks=True,
+                                   adjustment=Gtk.Adjustment(value=p.dpi[i], lower=squire.DPI_MIN,
+                                                             upper=squire.DPI_MAX, step_increment=squire.DPI_STEP,
+                                                             page_increment=squire.DPI_STEP * 10))
+                button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER,
+                                               tooltip_text="Stage colour")
+                rgba = Gdk.RGBA()
+                rgba.parse(p.dpi_colors[i])
+                button.set_rgba(rgba)
+
+                def on_dpi(_w, _p, stage=stage, spin=spin, button=button):
+                    c = button.get_rgba()
+                    value = int(round(spin.get_value() / squire.DPI_STEP)) * squire.DPI_STEP
+                    color = "#%02x%02x%02x" % (round(c.red * 255), round(c.green * 255), round(c.blue * 255))
+                    self.on_other(f"dpi_{stage}", {"dpi": value, "color": color})
+                spin.connect("notify::value", on_dpi)
+                button.connect("notify::rgba", on_dpi)
+                spin.add_suffix(button)
+                group.add(spin)
+            active = Adw.ComboRow(title="Active stage", subtitle="The stage in use now",
+                                  model=Gtk.StringList.new([f"Stage {n}" for n in stages]))
+            active.set_selected((p.dpi_stage or 1) - 1)
+            active.connect("notify::selected", lambda r, _p: self.on_dpi_stages(active=r.get_selected() + 1))
+            group.add(active)
+            number = Adw.ComboRow(title="Stages on the DPI button", subtitle="The button cycles through these",
+                                  model=Gtk.StringList.new([str(n) for n in stages]))
+            number.set_selected(count - 1)
+            number.connect("notify::selected", lambda r, _p: self.on_dpi_stages(count=r.get_selected() + 1))
+            group.add(number)
+
+        def on_dpi_stages(self, active=None, count=None):
+            before = preview_settings(self.settings, self.pending)
+            if (active or before.dpi_stage) == before.dpi_stage and (count or before.dpi_stage_count) == before.dpi_stage_count:
+                return      # the combo was set by render(), not by the user
+            self.pending = edit_dpi_stages(self.settings, self.pending, active=active, count=count)
+            self.render()   # the other combo and the stage notes may follow
+
         def on_edit(self, zone, **changes):
             self.pending = edit_pending(self.settings, self.pending, zone, linked=self.link_zones, **changes)
             self.update_preview()
@@ -841,6 +944,10 @@ def run(argv: list[str]) -> int:
                     elif key == "power":
                         self.settings.power_off_minutes = value["power_off_minutes"]
                         self.settings.low_warning = value["low_warning"]
+                    elif key in DPI_KEYS:
+                        i = int(key[4:]) - 1
+                        self.settings.dpi[i], self.settings.dpi_xy[i] = value["dpi"], [value["dpi"]] * 2
+                        self.settings.dpi_colors[i] = value["color"]
                     else:
                         setattr(self.settings, key, value)
                     if key == "surface_id":

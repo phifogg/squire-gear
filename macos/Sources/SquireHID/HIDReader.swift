@@ -165,11 +165,12 @@ public final class HIDReader {
 
     /// Reads the value `change` touches; nil if the read failed.
     private func readBack(_ device: IOHIDDevice, target: Target, change: SettingChange, log: inout [String]) -> MouseSettings? {
-        let command = change.readBack?.command ?? .mouseBattery
-        let ex = exchange(device, target: target, command: command, log: &log)
-        guard ex.status == .ok else { return nil }
         var s = MouseSettings(connection: target.connection)
-        if let query = change.readBack { s.apply(query, ex.payload) } else { s.applyBattery(ex.payload) }
+        for query in change.reads {
+            let ex = exchange(device, target: target, command: query?.command ?? .mouseBattery, log: &log)
+            guard ex.status == .ok else { return nil }
+            if let query { s.apply(query, ex.payload) } else { s.applyBattery(ex.payload) }
+        }
         return s
     }
 

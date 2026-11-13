@@ -110,6 +110,33 @@ public struct Command: Equatable, Hashable, Sendable {
         return try checked([0x51, 0x31, 0x04, 0x00, index])
     }
 
+    // DPI. Source: Armoury Crate captures (mouse_writes.armoury_crate) and G-Helper AsusMouse.cs + KerisIIOrigin.cs
+    // (MaxDPI 42000, 4 stages, stage count changeable, DPI colours; GPL-3.0, facts only). Approved 2026-11-13.
+    public static let dpiStages = 4
+    public static let dpiRange = 100...42_000
+    public static let dpiStep = 50
+
+    /// 51 31 <stage 0-based> 00 <lo> <hi> <r g b>: one stage (1-based), X and Y alike, plus its colour.
+    public static func setDPI(stage: Int, _ value: DPIStage) throws -> Command {
+        guard (1...dpiStages).contains(stage) else { throw CommandError.notAllowed("DPI stage \(stage)") }
+        guard dpiRange.contains(value.dpi), value.dpi % dpiStep == 0 else { throw CommandError.notAllowed("\(value.dpi) DPI") }
+        let v = UInt16((value.dpi - 50) / 50)
+        return try checked([0x51, 0x31, UInt8(stage - 1), 0x00, UInt8(v & 0xFF), UInt8(v >> 8),
+                            value.color.r, value.color.g, value.color.b])
+    }
+
+    /// 51 31 09 00 <stage>: the DPI stage in use (1-based).
+    public static func setActiveStage(_ stage: Int) throws -> Command {
+        guard (1...dpiStages).contains(stage) else { throw CommandError.notAllowed("DPI stage \(stage)") }
+        return try checked([0x51, 0x31, 0x09, 0x00, UInt8(stage)])
+    }
+
+    /// 51 31 0a 00 <count>: stages on the DPI button.
+    public static func setStageCount(_ count: Int) throws -> Command {
+        guard (1...dpiStages).contains(count) else { throw CommandError.notAllowed("DPI stage count \(count)") }
+        return try checked([0x51, 0x31, 0x0A, 0x00, UInt8(count)])
+    }
+
     public static func surfaceName(_ id: UInt8?) -> String? {
         guard let id else { return nil }
         if id == noSurface { return "None (no calibration)" }
@@ -130,6 +157,16 @@ public struct Command: Equatable, Hashable, Sendable {
     private static func checked(_ bytes: [UInt8]) throws -> Command {
         guard Allowlist.isAllowedWrite(bytes) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
         return Command(bytes, isWrite: true, echoLength: 2)
+    }
+}
+
+/// One DPI stage as 51 31 <stage> writes it: the value for X and Y, and the stage colour.
+public struct DPIStage: Equatable, Hashable, Sendable {
+    public var dpi: Int
+    public var color: RGB
+    public init(dpi: Int, color: RGB) {
+        self.dpi = dpi
+        self.color = color
     }
 }
 
@@ -194,8 +231,12 @@ public enum Allowlist {
             switch c[2] {
             case 0x06: return c.count == 5 && c[4] <= 1
             case 0x04: return c.count == 5 && Command.pollingWriteHz.values.contains(c[4])
+            case 0x09, 0x0A: return c.count == 5 && (1...Command.dpiStages).contains(Int(c[4]))
+            case 0x00..<UInt8(Command.dpiStages):
+                let dpi = (Int(c.count > 5 ? c[4] : 0) | Int(c.count > 5 ? c[5] : 0) << 8) * 50 + 50
+                return c.count == 9 && Command.dpiRange.contains(dpi) && dpi % Command.dpiStep == 0
             case 0x0B: return c.count == 6 && Command.angleTuningDegrees.contains(Int(Int16(bitPattern: UInt16(c[4]) | UInt16(c[5]) << 8)))
-            default: return false   // DPI, debounce, stage count, active stage: not approved
+            default: return false   // debounce and anything else: not approved
             }
         }
         return c.count == 12 && c[0] == 0x51 && c[1] == 0x28 && LEDZone.allCases.contains { $0.index == c[2] }

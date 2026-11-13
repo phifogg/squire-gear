@@ -91,7 +91,7 @@ struct SettingsView: View {
                 if store.demo { Text("Demo: protocol.json captures, nothing is sent").font(.caption).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            Text("Everything but DPI can be changed; DPI is shown only. Nothing is sent until you click Apply.")
+            Text("Lights, DPI, sensor and power settings can be changed. Nothing is sent until you click Apply.")
                 .font(.callout)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6).padding(.horizontal, 12)
@@ -361,16 +361,58 @@ struct InspectorView: View {
     }
 
     @ViewBuilder private var dpiRows: some View {
-        let count = settings.dpiStageCount ?? settings.dpi.count
-        ForEach(0..<min(count, settings.dpi.count), id: \.self) { i in
-            let xy = i < settings.dpiXY.count ? settings.dpiXY[i] : nil
-            let subtitle = [settings.dpiStage == i + 1 ? "active" : nil,
-                            xy.flatMap { $0[0] != $0[1] ? "X \($0[0]) / Y \($0[1])" : nil }]
-                .compactMap { $0 }.joined(separator: " · ")
-            InfoRow("Stage \(i + 1)", settings.dpi[i].map { "\($0) DPI" } ?? "–", subtitle: subtitle,
-                    swatch: i < settings.dpiColors.count ? settings.dpiColors[i] : nil)
+        let preview = store.preview ?? settings
+        let count = preview.dpiStageCount ?? preview.dpi.count
+        ForEach(0..<min(Command.dpiStages, preview.dpi.count), id: \.self) { i in
+            let stage = i + 1
+            let note = preview.dpiStage == stage ? "active" : stage > count ? "not on the DPI button" : ""
+            if SettingsEditing.canEditDPI(settings, stage: stage), i < preview.dpiXY.count, i < preview.dpiColors.count {
+                let value = DPIStage(dpi: preview.dpiXY[i][0], color: preview.dpiColors[i])
+                let set = { (v: DPIStage) in store.editOther { $0.dpi[stage] = v } }
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        TextField("DPI", value: Binding(get: { value.dpi }, set: { set(DPIStage(dpi: Self.snapDPI($0), color: value.color)) }),
+                                  format: .number.grouping(.never))
+                            .labelsHidden()
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 70)
+                        Stepper("DPI", value: Binding(get: { value.dpi }, set: { set(DPIStage(dpi: Self.snapDPI($0), color: value.color)) }),
+                                in: Command.dpiRange, step: Command.dpiStep)
+                            .labelsHidden()
+                        LEDColorWell(color: value.color) { rgb in set(DPIStage(dpi: value.dpi, color: rgb)) }
+                            .frame(width: 44, height: 24)
+                            .help("Stage colour")
+                    }
+                } label: {
+                    Text("Stage \(stage)")
+                    if !note.isEmpty { Text(note) }
+                }
+            } else {
+                let xy = i < settings.dpiXY.count ? settings.dpiXY[i] : nil
+                let subtitle = [note.isEmpty ? nil : note, xy.map { "X \($0[0]) / Y \($0[1]), shown only" }]
+                    .compactMap { $0 }.joined(separator: " · ")
+                InfoRow("Stage \(stage)", settings.dpi[i].map { "\($0) DPI" } ?? "–", subtitle: subtitle,
+                        swatch: i < settings.dpiColors.count ? settings.dpiColors[i] : nil)
+            }
         }
-        InfoRow("Stages on the DPI button", "\(count)")
+        Picker(selection: Binding(get: { preview.dpiStage ?? 1 }, set: { store.editDPIStages(active: $0) })) {
+            ForEach(1...Command.dpiStages, id: \.self) { Text("Stage \($0)").tag($0) }
+        } label: {
+            Text("Active stage")
+            Text("The stage in use now")
+        }
+        Picker(selection: Binding(get: { count }, set: { store.editDPIStages(count: $0) })) {
+            ForEach(1...Command.dpiStages, id: \.self) { Text("\($0)").tag($0) }
+        } label: {
+            Text("Stages on the DPI button")
+            Text("The button cycles through these")
+        }
+    }
+
+    /// Nearest allowed value: 100...42000 in steps of 50.
+    static func snapDPI(_ value: Int) -> Int {
+        min(max(Int((Double(value) / Double(Command.dpiStep)).rounded()) * Command.dpiStep, Command.dpiRange.lowerBound),
+            Command.dpiRange.upperBound)
     }
 
     @ViewBuilder private var sensorRows: some View {

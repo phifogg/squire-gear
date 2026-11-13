@@ -89,6 +89,12 @@ final class SettingsStore: ObservableObject {
         other = SettingsEditing.edit(other, settings, change: change)
     }
 
+    /// Active stage or stage count (they stay consistent).
+    func editDPIStages(active: Int? = nil, count: Int? = nil) {
+        guard let settings else { return }
+        other = SettingsEditing.editDPIStages(other, settings, active: active, count: count)
+    }
+
     /// Power as it will be after Apply (pending edit, else what the mouse has).
     var power: PowerSetting? {
         if let power = other.power { return power }
@@ -137,17 +143,8 @@ final class SettingsStore: ObservableObject {
 
     private nonisolated static func demoResult(_ change: SettingChange) -> WriteResult {
         var r = WriteResult(status: .ok, saved: true, message: "demo")
-        var s = MouseSettings()
-        switch change {
-        case .led(_, let led): r.after = led
-        case .power(let p): s.powerOffMinutes = p.offMinutes; s.lowWarning = p.lowWarning
-        case .angleSnapping(let on): s.angleSnapping = on
-        case .angleTuning(let degrees): s.angleTuning = degrees
-        case .liftoff(let value): s.liftoff = value
-        case .surface(let id): s.surfaceID = id; s.surfaceParams = Command.surfaceParams[id] ?? nil
-        case .polling(let hz): s.pollingHz = hz
-        }
-        r.readBack = s
+        if case .led(_, let led) = change { r.after = led }
+        r.readBack = change.applied(to: MouseSettings())
         return r
     }
 
@@ -156,35 +153,27 @@ final class SettingsStore: ObservableObject {
         var failed: [(SettingChange, WriteResult)] = []
         for (change, result) in results {
             guard result.status == .ok, result.saved else { failed.append((change, result)); continue }
+            settings = settings.map { change.applied(to: $0) }
             switch change {
             case .led(let zone, let led):
                 settings?.leds[zone] = result.after ?? led
                 pending[zone] = nil
-            case .power(let power):
-                settings?.powerOffMinutes = power.offMinutes
-                settings?.lowWarning = power.lowWarning
-                other.power = nil
-            case .angleSnapping(let on):
-                settings?.angleSnapping = on
-                other.angleSnapping = nil
-            case .angleTuning(let degrees):
-                settings?.angleTuning = degrees
-                other.angleTuning = nil
-            case .liftoff(let value):
-                settings?.liftoff = value
+            case .power: other.power = nil
+            case .angleSnapping: other.angleSnapping = nil
+            case .angleTuning: other.angleTuning = nil
+            case .liftoff:
                 if let back = result.readBack, back.surfaceID != nil {   // the surface as read back with it
                     settings?.surfaceID = back.surfaceID
                     settings?.surfaceParams = back.surfaceParams
                 }
                 other.liftoff = nil
-            case .surface(let id):
-                settings?.surfaceID = id
-                settings?.surfaceParams = Command.surfaceParams[id] ?? nil
-                other.surface = nil
+            case .surface: other.surface = nil
             case .polling(let hz):
-                settings?.pollingHz = hz
                 if let raw = settings?.pollingRaw, let index = Command.pollingWriteHz[hz] { settings?.pollingRaw = raw & 0xF8 | index }
                 other.polling = nil
+            case .dpi(let stage, _): other.dpi[stage] = nil
+            case .activeStage: other.activeStage = nil
+            case .stageCount: other.stageCount = nil
             }
         }
         if failed.isEmpty {

@@ -232,6 +232,9 @@ public enum SettingChange: Equatable, Hashable, Sendable {
     case liftoff(String)        // low | high; keeps the surface
     case surface(UInt8)         // preset id or Command.noSurface; keeps the lift-off
     case polling(Int)           // Hz
+    case dpi(stage: Int, DPIStage)  // 1-based stage; X and Y alike
+    case activeStage(Int)       // 1-based
+    case stageCount(Int)
 
     /// The bytes. Lift-off needs the surface from `current` (the 12 06 read right before the write).
     public func command(current: MouseSettings? = nil) throws -> Command {
@@ -249,12 +252,53 @@ public enum SettingChange: Equatable, Hashable, Sendable {
             }
             return try .setSurface(id, liftoff: liftoff)
         case .polling(let hz): return try .setPolling(hz)
+        case .dpi(let stage, let value):
+            if let current {   // a stage with separate X/Y is never flattened
+                let i = stage - 1
+                guard i < current.dpiXY.count else { throw CommandError.notAllowed("DPI stage \(stage) not read") }
+                guard current.dpiXY[i][0] == current.dpiXY[i][1] else {
+                    throw CommandError.notAllowed("stage \(stage) has X \(current.dpiXY[i][0]) / Y \(current.dpiXY[i][1])")
+                }
+            }
+            return try .setDPI(stage: stage, value)
+        case .activeStage(let stage):
+            guard let count = current?.dpiStageCount, stage <= count else {
+                throw CommandError.notAllowed("stage \(stage) is not on the DPI button")
+            }
+            return try .setActiveStage(stage)
+        case .stageCount(let count):
+            guard let active = current?.dpiStage, count >= active else {
+                throw CommandError.notAllowed("\(count) stages: the active stage is beyond them")
+            }
+            return try .setStageCount(count)
         }
+    }
+
+    /// The settings as they are once this change is written (for planning a sequence of writes).
+    public func applied(to s: MouseSettings) -> MouseSettings {
+        var p = s
+        switch self {
+        case .led(let zone, let led): p.leds[zone] = led
+        case .power(let power): p.powerOffMinutes = power.offMinutes; p.lowWarning = power.lowWarning
+        case .angleSnapping(let on): p.angleSnapping = on
+        case .angleTuning(let degrees): p.angleTuning = degrees
+        case .liftoff(let value): p.liftoff = value
+        case .surface(let id): p.surfaceID = id; p.surfaceParams = Command.surfaceParams[id] ?? nil
+        case .polling(let hz): p.pollingHz = hz
+        case .dpi(let stage, let value):
+            let i = stage - 1
+            if i < p.dpiXY.count { p.dpiXY[i] = [value.dpi, value.dpi] }
+            if i < p.dpiColors.count { p.dpiColors[i] = value.color }
+            if i < p.dpi.count { p.dpi[i] = value.dpi }
+        case .activeStage(let stage): p.dpiStage = stage
+        case .stageCount(let count): p.dpiStageCount = count
+        }
+        return p
     }
 
     /// Built from the value read just before the write (not from the window's older read).
     public var needsCurrent: Bool {
-        switch self { case .liftoff, .surface: return true; default: return false }
+        switch self { case .liftoff, .surface, .dpi, .activeStage, .stageCount: return true; default: return false }
     }
 
     /// The read that shows the value: nil = the battery query 12 07.
@@ -265,7 +309,15 @@ public enum SettingChange: Equatable, Hashable, Sendable {
         case .angleSnapping, .angleTuning: return .settings
         case .liftoff, .surface: return .liftoff
         case .polling: return .settings
+        case .dpi: return .dpiXY
+        case .activeStage, .stageCount: return .profile
         }
+    }
+
+    /// Every read that shows the value (nil = 12 07). DPI needs X/Y and the stage colours.
+    public var reads: [SettingsQuery?] {
+        if case .dpi = self { return [.dpiXY, .dpiColors] }
+        return [readBack]
     }
 
     /// Does the mouse (as read) already have this value? With `before`, lift-off also needs the surface unchanged.
@@ -283,6 +335,14 @@ public enum SettingChange: Equatable, Hashable, Sendable {
             return s.surfaceID == id && s.surfaceParams == Command.surfaceParams[id] ?? nil
                 && (before.map { $0.liftoff == s.liftoff } ?? true)
         case .polling(let hz): return s.pollingHz == hz
+        case .dpi(let stage, let value):
+            let i = stage - 1
+            return i < s.dpiXY.count && i < s.dpiColors.count && s.dpiXY[i] == [value.dpi, value.dpi]
+                && s.dpiColors[i] == value.color
+        case .activeStage(let stage):
+            return s.dpiStage == stage && (before.map { $0.dpiStageCount == s.dpiStageCount } ?? true)
+        case .stageCount(let count):
+            return s.dpiStageCount == count && (before.map { $0.dpiStage == s.dpiStage } ?? true)
         }
     }
 
@@ -296,6 +356,9 @@ public enum SettingChange: Equatable, Hashable, Sendable {
         case .liftoff: return "Lift-off distance"
         case .surface: return "Surface"
         case .polling: return "Polling rate"
+        case .dpi(let stage, _): return "DPI stage \(stage)"
+        case .activeStage: return "Active DPI stage"
+        case .stageCount: return "DPI stages"
         }
     }
 }

@@ -129,7 +129,12 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   Also approved 2026-11-13: surface preset `51 35 00 00 <id> <lift-off as read> 00 <AC params for id>` (or the ff
   form for none; params from squire.SURFACE_PARAMS; refused while the mouse has an unknown surface; read-back must
   show the new surface and the unchanged lift-off) and polling `51 31 04 00 <0..3>` (125/250/500/1000 Hz, index only,
-  read back 12 04 00 [12] low 3 bits). Not approved: debounce
+  read back 12 04 00 [12] low 3 bits). Also approved 2026-11-13 (AC capture + G-Helper KerisIIOrigin: 100..42000
+  step 50, 4 stages): DPI `51 31 <stage 0-based> 00 <lo> <hi> <r g b>` (value (DPI-50)/50, X and Y alike + the
+  stage colour; colour kept from a 12 04 03 read unless the owner picks one; refused for a stage with X != Y; read
+  back 12 04 02 + 12 04 03), active stage `51 31 09 00 <1..count>` and stage count `51 31 0a 00 <1..4>` (read back
+  12 00 [11] / [18]; never an active stage beyond the count, never a count below the active stage). Squire writes
+  only the changed field, never the whole block like Armoury Crate. Not approved: debounce
   `51 31 05` (G-Helper offers none for the Keris), DPI `51 31 <stage>` (X/Y unclear), stage count `51 31 0a`,
   active stage `51 31 09`. Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
@@ -226,6 +231,11 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
         CLI writes confirmed on the device via Omni (500 Hz and back, Balteus Qi and back to ROG Sheath with lift-off
         kept; unsaved; protocol.json settings_writes). Apply in the macOS window confirmed (owner, 2026-11-13);
         Linux window not tried yet
+  - [x] DPI per stage (value + colour), active stage, stage count (2026-11-13): CLI `--set-dpi STAGE DPI [--color]`,
+        `--set-dpi-stage N`, `--set-dpi-count N`; both windows (DPI chip: value + colour per stage, active stage and
+        count pickers that keep each other consistent; planned bytes simulate the sequence). Dry runs on macOS via
+        Omni match AC's format. CLI writes confirmed on the device via Omni (1650 DPI, colour #ffaa00, stage 2,
+        count 3, each unsaved and restored; protocol.json settings_writes). Not yet: window Apply, Linux window
   - [x] Armoury Crate capture on Windows (USBPcap, 2026-11-12, protocol.json `mouse_writes.armoury_crate`): one
         Apply rewrites the whole sensor block from AC's cached state (tuning, snapping, polling 51 31 04 = index,
         stage count, active stage, 51 31 <stage> 00 <lo> <hi> <r g b> = DPI X=Y + stage colour), then 50 03.

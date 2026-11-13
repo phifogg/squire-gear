@@ -674,12 +674,15 @@ class PowerAndSensorWriteTests(unittest.TestCase):
                 call()
 
     def test_everything_else_stays_refused(self):
-        for hex_ in ("51 31 00 00 07 00",        # DPI stage 1
+        for hex_ in ("51 31 00 00 07 00",        # DPI stage 1 without its colour
+                     "51 31 04 00 07 00 ff 00 00",   # stage 5 does not exist (field 04 = polling)
                      "51 31 04 00 04",           # polling 2000 Hz: not offered for the Keris
                      "51 31 04 00 63",           # polling: index only, never the raw read value
                      "51 31 05 00 02",           # debounce
-                     "51 31 09 00 01",           # active DPI stage
-                     "51 31 0a 00 04",           # DPI stage count
+                     "51 31 09 00 05",           # active DPI stage 5
+                     "51 31 0a 00 00",           # no stages
+                     "51 31 00 00 48 03 ff 00 00",   # 42050 DPI: above the Keris' 42000
+                     "51 31 00 00 00 00 ff 00 00",   # 50 DPI: below 100
                      "51 35 ff 00 ff 02",        # lift-off: only low/high
                      "51 35 00 00 02 00 00 1c 34 16",   # surface id 02: not an Armoury Crate preset
                      "51 35 00 00 01 00 00 1c 34",      # surface parameters cut short
@@ -930,6 +933,116 @@ class LiftoffWriteTests(unittest.TestCase):
         self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06"])
         self.assertTrue(result.sent[0].startswith("03 51 35 00 00 01 01 00 1c 34 16"))
         self.assertTrue(result.sent[1].startswith("03 50 03"))
+
+
+class DpiWriteTests(unittest.TestCase):
+    """51 31 <stage> (DPI + stage colour), 51 31 09 (active stage), 51 31 0a (stage count): approved 2026-11-13."""
+
+    def test_exact_bytes(self):
+        self.assertEqual(rb.dpi_command(3, 700, "#003dff").hex(" "), "51 31 02 00 0d 00 00 3d ff")
+        self.assertEqual(rb.dpi_command(4, 3200, "#31ff00").hex(" "), "51 31 03 00 3f 00 31 ff 00")
+        self.assertEqual(rb.dpi_command(1, 42000, "#ff0000").hex(" "), "51 31 00 00 47 03 ff 00 00")
+        self.assertEqual(rb.dpi_command(1, 100, "#ff0000").hex(" "), "51 31 00 00 01 00 ff 00 00")
+        self.assertEqual(rb.active_stage_command(3).hex(" "), "51 31 09 00 03")
+        self.assertEqual(rb.stage_count_command(4).hex(" "), "51 31 0a 00 04")
+        for call in (lambda: rb.dpi_command(0, 800, "#ff0000"), lambda: rb.dpi_command(5, 800, "#ff0000"),
+                     lambda: rb.dpi_command(1, 825, "#ff0000"), lambda: rb.dpi_command(1, 50, "#ff0000"),
+                     lambda: rb.dpi_command(1, 42050, "#ff0000"), lambda: rb.active_stage_command(5),
+                     lambda: rb.stage_count_command(0)):
+            with self.assertRaises(ValueError):
+                call()
+
+    def test_armoury_crate_dpi_packets(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["armoury_crate"]
+        capture = next(c for c in data["captures"] if c["name"].startswith("DPI stage 3"))
+        after = capture["after"]
+        built = [rb.dpi_command(i + 1, after["dpi"][i], after["dpi_colors"][i]) for i in range(4)]
+        built += [rb.stage_count_command(4), rb.active_stage_command(after["dpi_stage"])]
+        built = {rb.packet(0x03, c, 64, write=True)[:len(c) + 1].hex(" ") for c in built}
+        self.assertLessEqual(built, set(capture["packets"]))
+
+    def make(self, xy=None, colors=None, stage=4, count=4):
+        state = {"xy": xy or [[400, 400], [800, 800], [650, 650], [3200, 3200]],
+                 "colors": colors or ["#ff0000", "#c100ff", "#000000", "#31ff00"], "stage": stage, "count": count}
+        sent = []
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                data = bytes(data)
+                sent.append(data)
+                cmd = data[1:]
+                ok = [settings_reply(cmd[:2], {})]
+                if cmd[:2] == b"\x12\x07":
+                    self.replies = [settings_reply(rb.MOUSE_QUERY, {4: 80, 5: 2, 6: 20})]
+                elif cmd[:3] == b"\x12\x04\x02":
+                    values = {}
+                    for i, (x, y) in enumerate(state["xy"]):
+                        for j, v in enumerate(((x - 50) // 50, (y - 50) // 50)):
+                            values[4 + 4 * i + 2 * j], values[5 + 4 * i + 2 * j] = v & 0xFF, v >> 8
+                    self.replies = [settings_reply(cmd[:3], values)]
+                elif cmd[:3] == b"\x12\x04\x03":
+                    rgb = b"".join(bytes.fromhex(c[1:]) for c in state["colors"])
+                    self.replies = [settings_reply(cmd[:3], {4 + i: b for i, b in enumerate(rgb)})]
+                elif cmd[:2] == b"\x12\x00":
+                    self.replies = [settings_reply(cmd[:2], {4: 2, 6: 7, 11: state["stage"], 14: 10, 16: 1, 18: state["count"]})]
+                elif cmd[:3] == b"\x51\x31\x09":
+                    state["stage"] = cmd[4]
+                    self.replies = ok
+                elif cmd[:3] == b"\x51\x31\x0a":
+                    state["count"] = cmd[4]
+                    self.replies = ok
+                elif cmd[:2] == b"\x51\x31" and cmd[2] < 4:
+                    v = (int.from_bytes(cmd[4:6], "little")) * 50 + 50
+                    state["xy"][cmd[2]] = [v, v]
+                    state["colors"][cmd[2]] = "#" + cmd[6:9].hex()
+                    self.replies = ok
+                elif cmd[:2] == b"\x50\x03":
+                    self.replies = ok
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                return [{"path": b"omni", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}] \
+                    if pid == rb.PID_OMNI else []
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent, state
+
+    def test_dpi_keeps_the_stage_colour(self):
+        backend, sent, state = self.make()
+        result = rb.set_dpi(3, 700, save=True, hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.before, {"dpi_xy": [650, 650], "color": "#000000"})
+        self.assertEqual(result.after, {"dpi_xy": [700, 700], "color": "#000000"})
+        self.assertEqual(sent[3][:10].hex(" "), "03 51 31 02 00 0d 00 00 00 00")
+        self.assertEqual([p[1:4].hex(" ") for p in sent],
+                         ["12 07 00", "12 04 02", "12 04 03", "51 31 02", "12 04 02", "12 04 03", "50 03 00"])
+        self.assertTrue(result.saved)
+
+    def test_dpi_with_a_new_colour(self):
+        backend, sent, state = self.make()
+        result = rb.set_dpi(1, 1600, color="3D8BFF", hid=backend)
+        self.assertEqual((result.status, result.after), ("ok", {"dpi_xy": [1600, 1600], "color": "#3d8bff"}))
+        self.assertEqual(state["colors"][0], "#3d8bff")
+
+    def test_separate_x_y_is_not_overwritten(self):
+        backend, sent, _ = self.make(xy=[[400, 400], [800, 1200], [650, 650], [3200, 3200]])
+        with self.assertRaises(ValueError):
+            rb.set_dpi(2, 900, hid=backend)
+        self.assertNotIn("51 31", [p[1:3].hex(" ") for p in sent])
+
+    def test_active_stage_and_count(self):
+        backend, sent, state = self.make(stage=4, count=4)
+        self.assertEqual(rb.set_active_stage(2, hid=backend).after, {"dpi_stage": 2, "dpi_stage_count": 4})
+        self.assertEqual(rb.set_stage_count(3, hid=backend).after, {"dpi_stage": 2, "dpi_stage_count": 3})
+        with self.assertRaises(ValueError):                 # stage 4 is not on the button any more
+            rb.set_active_stage(4, hid=backend)
+        rb.set_active_stage(3, hid=backend)
+        with self.assertRaises(ValueError):                 # fewer stages than the active one
+            rb.set_stage_count(2, hid=backend)
+        self.assertEqual((state["stage"], state["count"]), (3, 3))
 
 
 class LowBatteryNotificationTests(unittest.TestCase):
