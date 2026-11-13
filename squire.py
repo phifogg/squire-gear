@@ -930,7 +930,8 @@ def write_verified(command, read_name, extract, matches, save: bool = False, dry
         sent = [packet(0x03, command, 64, write=True)[:shown].hex(" ") + " … (Omni, 64 bytes)",
                 packet(None, command, 65, write=True)[:shown].hex(" ") + " … (wired, 65 bytes)"]
         if save:
-            sent.append(packet(0x03, SAVE_COMMAND, 64, write=True)[:3].hex(" ") + " … (Omni, 64 bytes)")
+            sent += [packet(0x03, SAVE_COMMAND, 64, write=True)[:3].hex(" ") + " … (Omni, 64 bytes)",
+                     packet(None, SAVE_COMMAND, 65, write=True)[:3].hex(" ") + " … (wired, 65 bytes)"]
         return WriteResult("dry-run", sent, message="nothing sent")
 
     def read_value(dev, target):
@@ -987,7 +988,12 @@ def write_verified(command, read_name, extract, matches, save: bool = False, dry
                     if result.status == "ok" and save:
                         saved = exchange(dev, target, SAVE_COMMAND, debug, match=2, write=True)
                         result.sent.append(packet(target.report_id, SAVE_COMMAND, target.report_lens[0], write=True)[:3].hex(" "))
-                        result.saved = saved.status != "error"
+                        # saved only when the mouse echoes 50 03; ff aa or silence = not confirmed
+                        result.saved = saved.status == "ok"
+                        if not result.saved:
+                            reason = {"asleep": "it answered ff aa", "no-response": "no reply"}.get(
+                                saved.status, saved.raw or saved.status)
+                            result.message = f"written, but the save (50 03) was not confirmed: {reason}"
                     return result
                 finally:
                     dev.close()
@@ -1216,6 +1222,8 @@ def main() -> int:
                     print(f"  after:  {result.after}")
                 if result.saved:
                     print("  saved in the mouse (50 03)")
+            if args.save and result.status == "ok" and not result.saved:
+                return 1
             return 0 if result.status in ("ok", "dry-run") else 1
         if args.settings:
             settings = read_mouse_settings(args.debug)

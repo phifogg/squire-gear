@@ -304,6 +304,33 @@ def can_edit_liftoff(s: squire.MouseSettings) -> bool:
         return False
 
 
+def wrapping_list_factory(row):
+    """Popover rows for a ComboRow whose items are long: wrap instead of ellipsizing, with the check mark on the
+    current choice that the default list has."""
+    from gi.repository import Gtk     # GTK 4 is loaded in run(), never at import (tests run without it)
+    factory, bound = Gtk.SignalListItemFactory(), set()
+
+    def mark(item):
+        item.get_child().get_last_child().set_opacity(1 if item.get_position() == row.get_selected() else 0)
+
+    def setup(_f, item):
+        box = Gtk.Box(spacing=12)
+        box.append(Gtk.Label(xalign=0, wrap=True, max_width_chars=32, width_chars=24, hexpand=True))
+        box.append(Gtk.Image(icon_name="object-select-symbolic"))
+        item.set_child(box)
+
+    def bind(_f, item):
+        item.get_child().get_first_child().set_label(item.get_item().get_string())
+        bound.add(item)
+        mark(item)
+
+    factory.connect("setup", setup)
+    factory.connect("bind", bind)
+    factory.connect("unbind", lambda _f, item: bound.discard(item))
+    row.connect("notify::selected", lambda *_: [mark(i) for i in bound])
+    return factory
+
+
 def can_edit_surface(s: squire.MouseSettings) -> bool:
     """Only replace a surface Squire knows (or none), and only with a lift-off it can write back."""
     return s.surface_id in squire.SURFACE_PARAMS and s.liftoff in squire.LIFTOFF_CODES
@@ -659,7 +686,7 @@ def run(argv: list[str]) -> int:
                 p = preview_settings(s, self.pending)
                 if s.polling_hz in squire.POLLING_WRITE_HZ:
                     rates = sorted(squire.POLLING_WRITE_HZ)
-                    poll = Adw.ComboRow(title="Polling rate", subtitle="How often the mouse reports its position",
+                    poll = Adw.ComboRow(title="Polling rate", subtitle="Reports per second",
                                         model=Gtk.StringList.new([f"{hz} Hz" for hz in rates]))
                     poll.set_selected(rates.index(p.polling_hz))
                     poll.connect("notify::selected", lambda r, _p: self.on_other("polling_hz", rates[r.get_selected()]))
@@ -677,8 +704,12 @@ def run(argv: list[str]) -> int:
                     group.add(row("Lift-off distance", (s.liftoff or "").capitalize(),
                                   "Shown only: the surface is not one Squire knows, so it is left alone"))
                 if can_edit_surface(s):
-                    surf = Adw.ComboRow(title="Surface", subtitle="Mouse pad preset; the lift-off stays as it is",
+                    # the names are long (up to 47 characters): no subtitle, so the value on the right gets the
+                    # room; the list wraps instead of cutting names off
+                    surf = Adw.ComboRow(title="Surface",
+                                        tooltip_text="Mouse pad preset; the lift-off stays as it is",
                                         model=Gtk.StringList.new([squire.surface_name(i) for i in SURFACE_CHOICES]))
+                    surf.set_list_factory(wrapping_list_factory(surf))
                     surf.set_selected(SURFACE_CHOICES.index(p.surface_id))
                     surf.connect("notify::selected",
                                  lambda r, _p: self.on_other("surface_id", SURFACE_CHOICES[r.get_selected()]))
@@ -959,10 +990,11 @@ def run(argv: list[str]) -> int:
                     failed.append((key, result))
             if failed:
                 texts = {"asleep": "The mouse is asleep. Move it and click Apply again.",
-                         "ok": "Written, but not saved because another change failed.",
+                         "ok": "Written to the mouse's memory but not saved (lost when it is switched off).",
                          "mismatch": "The mouse did not take the new value (read back differs). Nothing was saved.",
                          "no-response": "The mouse did not answer. Move it and click Apply again."}
                 body = "\n".join(f"{change_title(k)}: {texts.get(r.status, r.status + ' ' + r.message)}"
+                                  + (f" ({r.message})" if r.status == "ok" and r.message else "")
                                   for k, r in failed)
                 dialog = Adw.AlertDialog(heading="Not applied", body=body)
                 dialog.add_response("ok", "OK")

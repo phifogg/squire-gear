@@ -537,7 +537,7 @@ class LedWriteTests(unittest.TestCase):
         result = rb.set_led("logo", "static", 100, "#ff0000", dry_run=True, hid=NoBackend())
         self.assertEqual(result.status, "dry-run")
         self.assertTrue(result.sent[0].startswith("03 51 28 00 00 00 64 ff 00 00"))
-        self.assertEqual(len(rb.set_led("logo", "static", 100, "#ff0000", save=True, dry_run=True).sent), 3)
+        self.assertEqual(len(rb.set_led("logo", "static", 100, "#ff0000", save=True, dry_run=True).sent), 4)
 
 
 class RealWriteVectorTests(unittest.TestCase):
@@ -621,6 +621,29 @@ class SetLedTests(unittest.TestCase):
         result = rb.set_led("logo", "static", 100, "#ff0000", save=True, hid=backend)
         self.assertTrue(result.saved)
         self.assertEqual(sent[-1][1:3].hex(" "), "50 03")
+
+    def test_unconfirmed_save_is_not_reported_as_saved(self):
+        for reply in ([0x03, 0xFF, 0xAA] + [0] * 61, None):   # ff aa, then silence
+            backend, sent, _ = self.make()
+            orig = backend.device
+
+            def no_save_echo(reply=reply, orig=orig):
+                dev = orig()
+                write = dev.write
+
+                def w(data):
+                    if bytes(data)[1:3] == b"\x50\x03":
+                        sent.append(bytes(data))
+                        dev.replies = [reply] if reply else []
+                        return len(data)
+                    return write(data)
+                dev.write = w
+                return dev
+            backend.device = no_save_echo
+            result = rb.set_led("logo", "static", 100, "#ff0000", save=True, hid=backend)
+            self.assertEqual(result.status, "ok")
+            self.assertFalse(result.saved)
+            self.assertIn("not confirmed", result.message)
 
     def test_asleep_mouse_gets_no_write(self):
         backend, sent, state = self.make(awake=False)
