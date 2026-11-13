@@ -675,11 +675,15 @@ class PowerAndSensorWriteTests(unittest.TestCase):
 
     def test_everything_else_stays_refused(self):
         for hex_ in ("51 31 00 00 07 00",        # DPI stage 1
-                     "51 31 04 00 03",           # polling rate
+                     "51 31 04 00 04",           # polling 2000 Hz: not offered for the Keris
+                     "51 31 04 00 63",           # polling: index only, never the raw read value
                      "51 31 05 00 02",           # debounce
                      "51 31 09 00 01",           # active DPI stage
                      "51 31 0a 00 04",           # DPI stage count
-                     "51 35 ff 00 ff 00",        # lift-off (also resets calibration)
+                     "51 35 ff 00 ff 02",        # lift-off: only low/high
+                     "51 35 00 00 02 00 00 1c 34 16",   # surface id 02: not an Armoury Crate preset
+                     "51 35 00 00 01 00 00 1c 34",      # surface parameters cut short
+                     "51 35 00 00 01 00 01 1c 34 16",   # [6] set (the echo has it, a write does not)
                      "51 31 06 00 02",           # angle snapping: only 0/1
                      "51 31 0b 00 07 00",        # angle tuning: only steps of 5
                      "51 37 00 00 05 00 14",     # power-off code 5 does not exist
@@ -692,7 +696,7 @@ class PowerAndSensorWriteTests(unittest.TestCase):
 
     def make(self, awake=True):
         """Fake mouse on the Omni that keeps power-off code, warning, snapping and tuning like the real one."""
-        state = {"off": 0x02, "warn": 20, "snap": 0, "tune": 0}
+        state = {"off": 0x02, "warn": 20, "snap": 0, "tune": 0, "poll": 0x63}
         sent = []
 
         class Dev(FakeDevice):
@@ -706,9 +710,12 @@ class PowerAndSensorWriteTests(unittest.TestCase):
                     self.replies = [settings_reply(rb.MOUSE_QUERY, {4: 80, 5: state["off"], 6: state["warn"]})]
                 elif cmd[:3] == b"\x12\x04\x00":
                     t = state["tune"] & 0xFFFF
-                    self.replies = [settings_reply(cmd[:3], {12: 0x63, 14: 2, 16: state["snap"], 18: t & 0xFF, 19: t >> 8})]
+                    self.replies = [settings_reply(cmd[:3], {12: state["poll"], 14: 2, 16: state["snap"], 18: t & 0xFF, 19: t >> 8})]
                 elif cmd[:2] == b"\x51\x37":
                     state["off"], state["warn"] = cmd[4], cmd[6]
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:3] == b"\x51\x31\x04":
+                    state["poll"] = (state["poll"] & 0xF8) | cmd[4]     # the high nibble stays, like the real one
                     self.replies = [settings_reply(cmd[:2], {})]
                 elif cmd[:3] == b"\x51\x31\x06":
                     state["snap"] = cmd[4]
@@ -748,6 +755,19 @@ class PowerAndSensorWriteTests(unittest.TestCase):
                          ("ok", {"angle_tuning": 0}, {"angle_tuning": -15}))
         self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])     # no save without asking
 
+    def test_polling_write(self):
+        self.assertEqual(rb.polling_command(1000).hex(" "), "51 31 04 00 03")
+        self.assertEqual(rb.polling_command(125).hex(" "), "51 31 04 00 00")
+        for hz in (2000, 8000, 300):
+            with self.assertRaises(ValueError):
+                rb.polling_command(hz)
+        backend, sent, state = self.make()
+        result = rb.set_polling(500, save=True, hid=backend)
+        self.assertEqual((result.status, result.before, result.after, result.saved),
+                         ("ok", {"polling_hz": 1000}, {"polling_hz": 500}, True))
+        self.assertEqual(state["poll"], 0x62)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 04", "51 31", "12 04", "50 03"])
+
     def test_mismatch_is_not_saved(self):
         backend, sent, state = self.make()
         orig = backend.device
@@ -773,6 +793,143 @@ class PowerAndSensorWriteTests(unittest.TestCase):
         backend, sent, _ = self.make(awake=False)
         self.assertEqual(rb.set_angle_snapping(True, save=True, hid=backend).status, "asleep")
         self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07"])
+
+
+class LiftoffWriteTests(unittest.TestCase):
+    """51 35: lift-off low/high, keeping the surface read from 12 06 (approved 2026-11-13)."""
+
+    def test_exact_bytes_keep_the_surface(self):
+        self.assertEqual(rb.liftoff_command("high", 0x01, "1c 34 16").hex(" "), "51 35 00 00 01 01 00 1c 34 16")
+        self.assertEqual(rb.liftoff_command("low", 0x0B, "1a 32 20").hex(" "), "51 35 00 00 0b 00 00 1a 32 20")
+        self.assertEqual(rb.liftoff_command("high", 0xFF, None).hex(" "), "51 35 ff 00 ff 01")   # no surface
+
+    def test_unknown_or_unread_surface_is_not_written(self):
+        for args in (("high", 0x02, "1c 34 16"), ("high", None, None), ("high", 0x01, None), ("medium", 0x01, "1c 34 16")):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                rb.liftoff_command(*args)
+
+    def test_armoury_crate_captures(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["armoury_crate"]
+        captures = {c["name"]: c for c in data["captures"]}
+        sheath = captures["lift-off low -> high (surface ROG Sheath)"]
+        self.assertEqual(rb.packet(0x03, rb.liftoff_command("high", 0x01, "1c 34 16"), 64, write=True)[:11].hex(" "),
+                         sheath["packets"][0])
+        for name, (liftoff, sid, params) in {sheath["name"]: ("high", 0x01, "1c 34 16"),
+                                             "surface ROG Sheath -> Balteus Qi": ("low", 0x0B, "1a 32 20")}.items():
+            s = rb.MouseSettings("m", "omni")
+            rb.parse_mouse_settings(s, "liftoff", bytes.fromhex(captures[name]["read_after"]).ljust(64, b"\0")[1:])
+            self.assertEqual((s.liftoff, s.surface_id, s.surface_params), (liftoff, sid, params))
+        presets = next(c for c in data["captures"] if "surfaces" in c)["surfaces"]
+        for preset in presets:
+            sid = int(preset["id"], 16)
+            with self.subTest(surface=preset["name"]):
+                self.assertEqual(rb.surface_name(sid), "None (no calibration)" if sid == 0xFF else preset["name"].replace(
+                    " (second tile, same name)", " (2)"))
+                command = rb.liftoff_command("low", sid, preset["params"])
+                expected = preset.get("packet") or f"03 51 35 00 00 {preset['id']} 00 00 {preset['params']}"
+                self.assertEqual(rb.packet(0x03, command, 64, write=True)[:len(command) + 1].hex(" "), expected)
+        self.assertEqual(len(rb.SURFACES), len(presets) - 1)
+
+    def make(self, surface=(0x01, b"\x1c\x34\x16"), liftoff=0, keep_surface=True):
+        state = {"id": surface[0], "params": surface[1], "lift": liftoff}
+        sent = []
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                data = bytes(data)
+                sent.append(data)
+                cmd = data[1:]
+                if cmd[:2] == b"\x12\x07":
+                    self.replies = [settings_reply(rb.MOUSE_QUERY, {4: 80, 5: 2, 6: 20})]
+                elif cmd[:2] == b"\x12\x06":
+                    none = state["id"] == 0xFF
+                    self.replies = [settings_reply(cmd[:2], {4: 0 if none else 1, 5: 0xFF if none else 0, 6: state["id"],
+                                                            7: state["lift"], 8: state["params"][0],
+                                                            9: state["params"][1], 10: state["params"][2]})]
+                elif cmd[:2] == b"\x51\x35":
+                    state["lift"] = cmd[5]
+                    if not keep_surface:          # like G-Helper's packet: the surface is gone
+                        state["id"], state["params"] = 0xFF, b"\0\0\0"
+                    elif cmd[2] == 0:
+                        state["id"], state["params"] = cmd[4], cmd[7:10]
+                    else:
+                        state["id"], state["params"] = 0xFF, b"\0\0\0"
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:2] == b"\x50\x03":
+                    self.replies = [settings_reply(cmd[:2], {})]
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                return [{"path": b"omni", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}] \
+                    if pid == rb.PID_OMNI else []
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent, state
+
+    def test_write_keeps_the_surface_reads_back_and_saves(self):
+        backend, sent, state = self.make(surface=(0x0B, b"\x1a\x32\x20"))
+        result = rb.set_liftoff("high", save=True, hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.before, {"liftoff": "low", "surface_id": 0x0B, "surface_params": "1a 32 20"})
+        self.assertEqual(result.after, {"liftoff": "high", "surface_id": 0x0B, "surface_params": "1a 32 20"})
+        self.assertTrue(result.saved)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06", "51 35", "12 06", "50 03"])
+        self.assertEqual(sent[2][:11].hex(" "), "03 51 35 00 00 0b 01 00 1a 32 20")
+
+    def test_no_surface(self):
+        backend, sent, state = self.make(surface=(0xFF, b"\0\0\0"))
+        result = rb.set_liftoff("high", hid=backend)
+        self.assertEqual((result.status, result.after["surface_id"], result.after["liftoff"]), ("ok", 0xFF, "high"))
+        self.assertEqual(sent[2][:7].hex(" "), "03 51 35 ff 00 ff 01")
+
+    def test_lost_surface_is_a_mismatch_and_not_saved(self):
+        backend, sent, _ = self.make(keep_surface=False)
+        result = rb.set_liftoff("high", save=True, hid=backend)
+        self.assertEqual(result.status, "mismatch")
+        self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])
+
+    def test_unknown_surface_sends_no_write(self):
+        backend, sent, _ = self.make(surface=(0x02, b"\x1c\x34\x16"))
+        with self.assertRaises(ValueError):
+            rb.set_liftoff("high", hid=backend)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06"])
+
+    def test_surface_keeps_the_liftoff(self):
+        self.assertEqual(rb.surface_command(0x0B, "high").hex(" "), "51 35 00 00 0b 01 00 1a 32 20")
+        self.assertEqual(rb.surface_command(rb.NO_SURFACE, "low").hex(" "), "51 35 ff 00 ff 00")
+        with self.assertRaises(ValueError):
+            rb.surface_command(0x02, "low")
+        self.assertEqual(set(rb.SURFACE_PARAMS) - {rb.NO_SURFACE}, set(rb.SURFACES))
+        backend, sent, state = self.make(liftoff=1)            # ROG Sheath, lift-off high
+        result = rb.set_surface(0x14, save=True, hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.after, {"liftoff": "high", "surface_id": 0x14, "surface_params": "37 2b 0e"})
+        self.assertEqual(sent[2][:11].hex(" "), "03 51 35 00 00 14 01 00 37 2b 0e")
+        self.assertTrue(result.saved)
+        result = rb.set_surface(rb.NO_SURFACE, hid=backend)
+        self.assertEqual(result.after, {"liftoff": "high", "surface_id": 0xFF, "surface_params": None})
+
+    def test_unknown_surface_is_not_replaced(self):
+        backend, sent, _ = self.make(surface=(0x02, b"\x1c\x34\x16"))
+        with self.assertRaises(ValueError):
+            rb.set_surface(0x01, hid=backend)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06"])
+
+    def test_surface_presets_match_the_captured_params(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["armoury_crate"]
+        presets = next(c for c in data["captures"] if "surfaces" in c)["surfaces"]
+        self.assertEqual({int(s["id"], 16): s["params"] for s in presets}, rb.SURFACE_PARAMS)
+
+    def test_dry_run_reads_but_writes_nothing(self):
+        backend, sent, _ = self.make()
+        result = rb.set_liftoff("high", save=True, dry_run=True, hid=backend)
+        self.assertEqual(result.status, "dry-run")
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06"])
+        self.assertTrue(result.sent[0].startswith("03 51 35 00 00 01 01 00 1c 34 16"))
+        self.assertTrue(result.sent[1].startswith("03 50 03"))
 
 
 class LowBatteryNotificationTests(unittest.TestCase):

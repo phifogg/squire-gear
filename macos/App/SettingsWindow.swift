@@ -91,7 +91,7 @@ struct SettingsView: View {
                 if store.demo { Text("Demo: protocol.json captures, nothing is sent").font(.caption).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            Text("Lights, power and angle settings can be changed; DPI, polling and lift-off are shown only. Nothing is sent until you click Apply.")
+            Text("Everything but DPI can be changed; DPI is shown only. Nothing is sent until you click Apply.")
                 .font(.callout)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6).padding(.horizontal, 12)
@@ -375,10 +375,40 @@ struct InspectorView: View {
 
     @ViewBuilder private var sensorRows: some View {
         let preview = store.preview ?? settings
-        InfoRow("Polling rate", settings.pollingHz.map { "\($0) Hz" } ?? "–",
-                subtitle: "raw 0x\(ReplyParser.hex([settings.pollingRaw ?? 0]))")
-        InfoRow("Lift-off distance", settings.liftoff.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "–",
-                subtitle: "Shown only: changing it also resets the surface calibration")
+        if SettingsEditing.canEditPolling(settings), let hz = preview.pollingHz {
+            Picker(selection: Binding(get: { hz }, set: { value in store.editOther { $0.polling = value } })) {
+                ForEach(Command.pollingWriteHz.keys.sorted(), id: \.self) { Text("\($0) Hz").tag($0) }
+            } label: {
+                Text("Polling rate")
+                Text("How often the mouse reports its position")
+            }
+        } else {
+            InfoRow("Polling rate", settings.pollingHz.map { "\($0) Hz" } ?? "–",
+                    subtitle: "raw 0x\(ReplyParser.hex([settings.pollingRaw ?? 0]))")
+        }
+        if SettingsEditing.canEditLiftoff(settings), let liftoff = preview.liftoff {
+            Picker(selection: Binding(get: { liftoff }, set: { value in store.editOther { $0.liftoff = value } })) {
+                Text("Low").tag("low")
+                Text("High").tag("high")
+            } label: {
+                Text("Lift-off distance")
+                Text("The surface setting stays as it is")
+            }
+        } else {
+            InfoRow("Lift-off distance", settings.liftoff.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "–",
+                    subtitle: "Shown only: the surface is not one Squire knows, so it is left alone")
+        }
+        if SettingsEditing.canEditSurface(settings), let surface = preview.surfaceID {
+            Picker(selection: Binding(get: { surface }, set: { id in store.editOther { $0.surface = id } })) {
+                ForEach(Command.surfaceChoices, id: \.self) { Text(Command.surfaceName($0) ?? "").tag($0) }
+            } label: {
+                Text("Surface")
+                Text("Mouse pad preset; the lift-off stays as it is")
+            }
+        } else {
+            InfoRow("Surface", Command.surfaceName(settings.surfaceID) ?? "–",
+                    subtitle: "Not a preset Squire knows (a calibration?), so it is left alone")
+        }
         if let snapping = preview.angleSnapping {
             Toggle(isOn: Binding(get: { snapping }, set: { on in store.editOther { $0.angleSnapping = on } })) {
                 Text("Angle snapping")

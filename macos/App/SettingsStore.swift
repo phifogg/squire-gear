@@ -143,6 +143,9 @@ final class SettingsStore: ObservableObject {
         case .power(let p): s.powerOffMinutes = p.offMinutes; s.lowWarning = p.lowWarning
         case .angleSnapping(let on): s.angleSnapping = on
         case .angleTuning(let degrees): s.angleTuning = degrees
+        case .liftoff(let value): s.liftoff = value
+        case .surface(let id): s.surfaceID = id; s.surfaceParams = Command.surfaceParams[id] ?? nil
+        case .polling(let hz): s.pollingHz = hz
         }
         r.readBack = s
         return r
@@ -167,6 +170,21 @@ final class SettingsStore: ObservableObject {
             case .angleTuning(let degrees):
                 settings?.angleTuning = degrees
                 other.angleTuning = nil
+            case .liftoff(let value):
+                settings?.liftoff = value
+                if let back = result.readBack, back.surfaceID != nil {   // the surface as read back with it
+                    settings?.surfaceID = back.surfaceID
+                    settings?.surfaceParams = back.surfaceParams
+                }
+                other.liftoff = nil
+            case .surface(let id):
+                settings?.surfaceID = id
+                settings?.surfaceParams = Command.surfaceParams[id] ?? nil
+                other.surface = nil
+            case .polling(let hz):
+                settings?.pollingHz = hz
+                if let raw = settings?.pollingRaw, let index = Command.pollingWriteHz[hz] { settings?.pollingRaw = raw & 0xF8 | index }
+                other.polling = nil
             }
         }
         if failed.isEmpty {

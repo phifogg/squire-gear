@@ -92,7 +92,7 @@ MOUSE_SETTINGS_QUERIES = {
     "led_logo": bytes([0x12, 0x03, 0x00]),      # LED zone 0 = logo
     "led_wheel": bytes([0x12, 0x03, 0x01]),     # LED zone 1 = scroll wheel
     "led_side": bytes([0x12, 0x03, 0x02]),      # LED zone 2 = side strip (G-Helper/libratbag: "underglow")
-    "liftoff": bytes([0x12, 0x06]),             # lift-off distance
+    "liftoff": bytes([0x12, 0x06]),             # lift-off distance + surface (mouse pad) preset
 }
 # The transport refuses anything not on this list.
 ALLOWED_COMMANDS = frozenset([KEYBOARD_QUERY, MOUSE_QUERY, *MOUSE_SETTINGS_QUERIES.values()])
@@ -138,6 +138,8 @@ POWER_WRITE = bytes([0x51, 0x37])        # 51 37 00 00 <power-off code> 00 <low-
 SENSOR_WRITE = bytes([0x51, 0x31])       # 51 31 <field> 00 <value lo> <value hi>
 ANGLE_SNAPPING_FIELD = 0x06
 ANGLE_TUNING_FIELD = 0x0B
+POLLING_FIELD = 0x04     # 51 31 04 00 <index>: Armoury Crate capture 2026-11-12 (index 3), approved 2026-11-13
+POLLING_WRITE_HZ = {125: 0x00, 250: 0x01, 500: 0x02, 1000: 0x03}   # what Armoury Crate offers for the Keris
 POWER_OFF_CODES = {1: 0x00, 2: 0x01, 3: 0x02, 5: 0x03, 10: 0x04, None: 0xFF}   # minutes (None = never) -> byte
 LOW_WARNING_LEVELS = (10, 20, 30, 40, 50)                                     # % (G-Helper: step 10, max 50)
 ANGLE_TUNING_DEGREES = tuple(range(-20, 21, 5))                               # G-Helper: -20..20, step 5
@@ -168,19 +170,93 @@ def angle_tuning_command(degrees: int) -> bytes:
     return command
 
 
+# Lift-off distance and surface share one command. Source: Armoury Crate captures on Windows (USBPcap, 2026-11-12,
+# protocol.json mouse_writes.armoury_crate); G-Helper writes only the "no surface" form. Approved by the owner
+# 2026-11-13. A lift-off write always carries the surface id and parameters read from 12 06 just before, so the
+# surface stays as it is (G-Helper's 51 35 ff 00 ff <lift-off> drops it: the "calibration reset").
+LIFTOFF_WRITE = bytes([0x51, 0x35])      # 51 35 00 00 <surface id> <lift-off> 00 <p1 p2 p3>
+NO_SURFACE = 0xFF                        # 51 35 ff 00 ff <lift-off>: "Default (No calibration)" in Armoury Crate
+LIFTOFF_CODES = {"low": 0x00, "high": 0x01}
+# Armoury Crate's preset surfaces (id -> name). Most share the parameters 1c 34 16. Ids 02..06 and 09 never appeared.
+SURFACES = {
+    0x00: "ROG Whetstone", 0x01: "ROG Sheath", 0x07: "ROG Scabbard", 0x08: "ROG Strix Edge", 0x0A: "Balteus",
+    0x0B: "Balteus Qi", 0x0C: "ROG Scabbard II", 0x0D: "ROG Sheath Gundam LTD",
+    0x0E: "ROG Strix Edge Call of Duty Black Ops 4 Edition", 0x0F: "ROG Sheath BLK LTD", 0x10: "ROG Sheath PNK LTD",
+    0x11: "ROG Sheath Electro Punk", 0x12: "ROG Hone Ace Aim Lab Edition", 0x13: "ROG Scabbard II EVA Edition",
+    0x14: "ROG Moonstone Ace L", 0x15: "ROG Moonstone Ace L (2)", 0x16: "ROG Hone Ace XXL",
+    0x17: "ROG Scabbard II Arctic Grey XXL", 0x18: "TUF Gaming P1 Hatsune Miku Edition", 0x19: "ROG Sheath II XXL",
+}
+
+
+# Parameters Armoury Crate writes with each preset (captured 2026-11-12); None for "no surface".
+SURFACE_PARAMS = {
+    0x00: "1c 34 16", 0x01: "1c 34 16", 0x07: "1c 34 16", 0x08: "1c 34 16", 0x0A: "1a 32 20", 0x0B: "1a 32 20",
+    0x0C: "1c 34 16", 0x0D: "1c 34 16", 0x0E: "1c 34 16", 0x0F: "1c 34 16", 0x10: "1c 34 16", 0x11: "1c 34 16",
+    0x12: "1c 34 16", 0x13: "1c 34 16", 0x14: "37 2b 0e", 0x15: "18 35 23", 0x16: "1c 34 16", 0x17: "21 23 12",
+    0x18: "1c 42 24", 0x19: "1e 34 19", NO_SURFACE: None,
+}
+
+
+def surface_name(surface_id: Optional[int]) -> Optional[str]:
+    if surface_id is None:
+        return None
+    if surface_id == NO_SURFACE:
+        return "None (no calibration)"
+    return SURFACES.get(surface_id, f"unknown (0x{surface_id:02x})")
+
+
+def liftoff_command(liftoff: str, surface_id: Optional[int], surface_params: Optional[str]) -> bytes:
+    """51 35: lift-off low/high, keeping the surface (id + parameters as read from 12 06). Raises ValueError for an
+    unknown surface, so a surface Squire does not know (a custom calibration?) is never overwritten."""
+    if liftoff not in LIFTOFF_CODES:
+        raise ValueError(f"lift-off {liftoff!r} is not low or high")
+    if surface_id == NO_SURFACE:
+        command = LIFTOFF_WRITE + bytes([NO_SURFACE, 0x00, NO_SURFACE, LIFTOFF_CODES[liftoff]])
+    elif surface_id in SURFACES and surface_params is not None and len(bytes.fromhex(surface_params)) == 3:
+        command = LIFTOFF_WRITE + bytes([0x00, 0x00, surface_id, LIFTOFF_CODES[liftoff], 0x00]) \
+            + bytes.fromhex(surface_params)
+    else:
+        raise ValueError(f"surface {surface_name(surface_id) or 'not read'}: lift-off not written, so the "
+                         "surface setting is kept")
+    assert is_allowed_write(command)
+    return command
+
+
+def surface_command(surface_id: int, liftoff: str) -> bytes:
+    """51 35 with a preset surface (or NO_SURFACE) and its Armoury Crate parameters, keeping `liftoff`."""
+    if surface_id not in SURFACE_PARAMS:
+        raise ValueError(f"surface {surface_id!r} is not one of Armoury Crate's presets")
+    return liftoff_command(liftoff, surface_id, SURFACE_PARAMS[surface_id])
+
+
+def polling_command(hz: int) -> bytes:
+    if hz not in POLLING_WRITE_HZ:
+        raise ValueError(f"polling rate {hz!r} Hz is not one of {sorted(POLLING_WRITE_HZ)}")
+    command = SENSOR_WRITE + bytes([POLLING_FIELD, 0x00, POLLING_WRITE_HZ[hz]])
+    assert is_allowed_write(command)
+    return command
+
+
 def is_allowed_write(command: bytes) -> bool:
     if command == SAVE_COMMAND:
         return True
+    if command[:2] == LIFTOFF_WRITE:
+        if len(command) == 6:
+            return command[2:5] == bytes([NO_SURFACE, 0x00, NO_SURFACE]) and command[5] in LIFTOFF_CODES.values()
+        return (len(command) == 10 and command[2:4] == b"\0\0" and command[4] in SURFACES
+                and command[5] in LIFTOFF_CODES.values() and command[6] == 0)
     if command[:2] == POWER_WRITE:
         return (len(command) == 7 and command[2:4] == b"\0\0" and command[4] in POWER_OFF_CODES.values()
                 and command[5] == 0 and command[6] in LOW_WARNING_LEVELS)
     if command[:2] == SENSOR_WRITE and len(command) >= 4 and command[3] == 0:
         if command[2] == ANGLE_SNAPPING_FIELD:
             return len(command) == 5 and command[4] in (0, 1)
+        if command[2] == POLLING_FIELD:
+            return len(command) == 5 and command[4] in POLLING_WRITE_HZ.values()
         if command[2] == ANGLE_TUNING_FIELD and len(command) == 6:
             value = int.from_bytes(command[4:6], "little", signed=True)
             return value in ANGLE_TUNING_DEGREES
-        return False   # DPI, polling, debounce, stage count, ...: not approved
+        return False   # DPI, debounce, stage count, active stage: not approved
     return (len(command) == 12 and command[:2] == LED_WRITE and command[2] in LED_ZONE_INDEX.values()
             and command[3] == 0 and command[4] in LED_WRITE_MODES.values() and command[5] <= 100
             and command[9:] == b"\0\0\0")
@@ -538,6 +614,8 @@ class MouseSettings:
     angle_snapping: Optional[bool] = None
     angle_tuning: Optional[int] = None          # degrees
     liftoff: Optional[str] = None               # low | high
+    surface_id: Optional[int] = None            # preset surface (SURFACES), 0xff = none
+    surface_params: Optional[str] = None        # its 3 parameter bytes as hex, None without a surface
     leds: dict = field(default_factory=dict)    # zone -> {mode, brightness (0-100 %), color}
     led_speed_raw: dict = field(default_factory=dict)  # zone -> raw speed byte from the reply (no effect seen)
     power_off_minutes: Optional[int] = None     # None with status ok = never
@@ -596,7 +674,10 @@ def parse_mouse_settings(s: MouseSettings, name: str, p: bytes) -> None:
                             "color": "#" + p[6:9].hex()}
         s.led_speed_raw[name[4:]] = p[12]    # [10..12] direction, random, speed (G-Helper); no effect on the Keris
     elif name == "liftoff":
+        # [6] surface id (ff = none), [7] lift-off, [8..10] surface parameters (Armoury Crate captures 2026-11-12)
         s.liftoff = {0: "low", 1: "high"}.get(p[7], f"0x{p[7]:02x}")
+        s.surface_id = p[6]
+        s.surface_params = None if p[6] == NO_SURFACE else p[8:11].hex(" ")
 
 
 def read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
@@ -670,7 +751,7 @@ def set_led(zone: str, mode: str, brightness: int, color: str = "#000000", save:
     Without save the change lives in the mouse's RAM (lost when it powers off); save=True also sends 50 03."""
     command = led_command(zone, mode, brightness, color)
     wanted = {"mode": mode, "brightness": int(brightness), "color": "#" + command[6:9].hex()}
-    return write_verified(command, f"led_{zone}", lambda s: s.leds.get(zone), lambda after: led_matches(wanted, after),
+    return write_verified(command, f"led_{zone}", lambda s: s.leds.get(zone), lambda after, _: led_matches(wanted, after),
                           save, dry_run, debug, hid)
 
 
@@ -681,32 +762,75 @@ def set_power(power_off_minutes: Optional[int], low_warning: int, save: bool = F
     wanted = {"power_off_minutes": power_off_minutes, "low_warning": low_warning}
     return write_verified(command, "battery",
                           lambda s: {"power_off_minutes": s.power_off_minutes, "low_warning": s.low_warning},
-                          lambda after: after == wanted, save, dry_run, debug, hid)
+                          lambda after, _: after == wanted, save, dry_run, debug, hid)
 
 
 def set_angle_snapping(on: bool, save: bool = False, dry_run: bool = False, debug: bool = False,
                        hid=None) -> WriteResult:
     command = angle_snapping_command(on)
     return write_verified(command, "settings", lambda s: {"angle_snapping": s.angle_snapping},
-                          lambda after: after == {"angle_snapping": bool(on)}, save, dry_run, debug, hid)
+                          lambda after, _: after == {"angle_snapping": bool(on)}, save, dry_run, debug, hid)
 
 
 def set_angle_tuning(degrees: int, save: bool = False, dry_run: bool = False, debug: bool = False,
                      hid=None) -> WriteResult:
     command = angle_tuning_command(degrees)
     return write_verified(command, "settings", lambda s: {"angle_tuning": s.angle_tuning},
-                          lambda after: after == {"angle_tuning": degrees}, save, dry_run, debug, hid)
+                          lambda after, _: after == {"angle_tuning": degrees}, save, dry_run, debug, hid)
 
 
-def write_verified(command: bytes, read_name: str, extract, matches, save: bool = False, dry_run: bool = False,
+def set_liftoff(liftoff: str, save: bool = False, dry_run: bool = False, debug: bool = False,
+                hid=None) -> WriteResult:
+    """Lift-off low/high. Reads 12 06 first and writes the surface id + parameters it found back unchanged; the
+    read-back must show the new lift-off and the same surface. --dry-run reads 12 06 (a get) to show the bytes."""
+    if liftoff not in LIFTOFF_CODES:
+        raise ValueError(f"lift-off {liftoff!r} is not low or high")
+    def extract(s):
+        return {"liftoff": s.liftoff, "surface_id": s.surface_id, "surface_params": s.surface_params}
+    def matches(after, before):
+        return bool(after and before) and after == {**before, "liftoff": liftoff}
+    return write_verified(lambda before: liftoff_command(liftoff, before["surface_id"], before["surface_params"]),
+                          "liftoff", extract, matches, save, dry_run, debug, hid)
+
+
+def set_surface(surface_id: int, save: bool = False, dry_run: bool = False, debug: bool = False,
+                hid=None) -> WriteResult:
+    """Pick a preset surface (mouse pad) or NO_SURFACE. Keeps the lift-off read from 12 06 just before (Armoury Crate
+    resets it to low). Refused while the mouse has a surface Squire does not know: it may be a calibration."""
+    if surface_id not in SURFACE_PARAMS:
+        raise ValueError(f"surface {surface_id!r} is not one of Armoury Crate's presets")
+    def extract(s):
+        return {"liftoff": s.liftoff, "surface_id": s.surface_id, "surface_params": s.surface_params}
+    def build(before):
+        if before["surface_id"] not in SURFACE_PARAMS:
+            raise ValueError(f"the mouse has surface {surface_name(before['surface_id'])}: not replaced, it may be "
+                             "a calibration")
+        return surface_command(surface_id, before["liftoff"])
+    def matches(after, before):
+        return bool(after and before) and after == {"liftoff": before["liftoff"], "surface_id": surface_id,
+                                                    "surface_params": SURFACE_PARAMS[surface_id]}
+    return write_verified(build, "liftoff", extract, matches, save, dry_run, debug, hid)
+
+
+def set_polling(hz: int, save: bool = False, dry_run: bool = False, debug: bool = False, hid=None) -> WriteResult:
+    """Polling rate 125/250/500/1000 Hz, read back from 12 04 00 [12] (low 3 bits)."""
+    command = polling_command(hz)
+    return write_verified(command, "settings", lambda s: {"polling_hz": s.polling_hz},
+                          lambda after, _: after == {"polling_hz": hz}, save, dry_run, debug, hid)
+
+
+def write_verified(command, read_name: str, extract, matches, save: bool = False, dry_run: bool = False,
                    debug: bool = False, hid=None) -> WriteResult:
     """The one write path: check the mouse is awake, read the setting, write, read it back, and save (50 03)
-    only when asked and only if the read-back matched. `extract` picks the value from parsed settings."""
-    if not is_allowed_write(command):
+    only when asked and only if the read-back matched. `extract` picks the value from parsed settings;
+    `matches(after, before)` judges the read-back. `command` is the bytes, or a function of the value read
+    before (lift-off keeps the surface it reads), checked against the allowlist once it is built."""
+    build = command if callable(command) else None
+    if build is None and not is_allowed_write(command):
         raise ValueError(f"not on the write allowlist: {command.hex(' ')}")
-    shown = len(command) + 1
     read_command = MOUSE_QUERY if read_name == "battery" else MOUSE_SETTINGS_QUERIES[read_name]
-    if dry_run:
+    if dry_run and build is None:
+        shown = len(command) + 1
         sent = [packet(0x03, command, 64, write=True)[:shown].hex(" ") + " … (Omni, 64 bytes)",
                 packet(None, command, 65, write=True)[:shown].hex(" ") + " … (wired, 65 bytes)"]
         if save:
@@ -740,13 +864,28 @@ def write_verified(command: bytes, read_name: str, extract, matches, save: bool 
                         continue
                     result = WriteResult("error")
                     result.before = read_value(dev, target)
+                    if build is not None:
+                        if result.before is None:
+                            result.message = "could not read the current value: nothing written"
+                            return result
+                        command = build(result.before)       # raises ValueError if not allowed
+                        if not is_allowed_write(command):
+                            raise ValueError(f"not on the write allowlist: {command.hex(' ')}")
+                    shown = len(command) + 1
+                    if dry_run:
+                        result.status, result.message = "dry-run", "nothing sent"
+                        result.sent.append(packet(target.report_id, command, target.report_lens[0], write=True)[:shown].hex(" ")
+                                           + (f" … ({target.report_lens[0]} bytes)"))
+                        if save:
+                            result.sent.append(packet(target.report_id, SAVE_COMMAND, target.report_lens[0], write=True)[:3].hex(" ") + " …")
+                        return result
                     ex = exchange(dev, target, command, debug, match=2, write=True)
                     result.sent.append(packet(target.report_id, command, target.report_lens[0], write=True)[:shown].hex(" "))
                     if ex.status == "error":
                         result.message = ex.raw
                         return result
                     result.after = read_value(dev, target)
-                    result.status = "ok" if matches(result.after) else "mismatch"
+                    result.status = "ok" if matches(result.after, result.before) else "mismatch"
                     if result.status == "ok" and save:
                         saved = exchange(dev, target, SAVE_COMMAND, debug, match=2, write=True)
                         result.sent.append(packet(target.report_id, SAVE_COMMAND, target.report_lens[0], write=True)[:3].hex(" "))
@@ -773,7 +912,8 @@ def print_mouse_settings(s: MouseSettings) -> None:
     print(f"  DPI button:   cycles through {s.dpi_stage_count} stages")
     print(f"  Polling rate: {s.polling_hz} Hz (raw 0x{s.polling_raw or 0:02x})   debounce {debounce}")
     print(f"  Angle:        snapping {'on' if s.angle_snapping else 'off'}, tuning {s.angle_tuning}°")
-    print(f"  Lift-off:     {s.liftoff}")
+    params = f" ({s.surface_params})" if s.surface_params else ""
+    print(f"  Lift-off:     {s.liftoff}, surface {surface_name(s.surface_id)}{params}")
     for zone in LED_ZONES:
         led = s.leds.get(zone)
         if led:
@@ -900,6 +1040,14 @@ def main() -> int:
     ap.add_argument("--set-angle-snapping", choices=["on", "off"], help="WRITE: angle snapping on or off")
     ap.add_argument("--set-angle-tuning", type=int, metavar="DEG",
                     help="WRITE: angle tuning in degrees, -20..20 in steps of 5")
+    ap.add_argument("--set-polling", type=int, choices=sorted(POLLING_WRITE_HZ), metavar="HZ",
+                    help="WRITE: polling rate, 125, 250, 500 or 1000 Hz")
+    ap.add_argument("--set-surface", metavar="ID",
+                    help="WRITE: surface (mouse pad) preset by hex id (see --list-surfaces) or 'none'; keeps the lift-off")
+    ap.add_argument("--list-surfaces", action="store_true", help="List the surface presets; sends nothing")
+    ap.add_argument("--set-liftoff", choices=list(LIFTOFF_CODES),
+                    help="WRITE: lift-off distance, keeps the surface (mouse pad) setting; --dry-run reads it "
+                         "and prints the bytes")
     ap.add_argument("--mode", choices=list(LED_WRITE_MODES), default="static")
     ap.add_argument("--brightness", type=int, default=100)
     ap.add_argument("--color", default="#ffffff")
@@ -914,8 +1062,13 @@ def main() -> int:
         if args.list:
             list_devices()
             return 0
+        if args.list_surfaces:
+            for sid in sorted(SURFACE_PARAMS, key=lambda i: (i == NO_SURFACE, surface_name(i))):
+                print(f"  {'none' if sid == NO_SURFACE else f'{sid:02x}'}  {surface_name(sid)}")
+            return 0
         writes = [w for w in (args.set_led, args.set_power, args.set_angle_snapping,
-                              args.set_angle_tuning is not None or None) if w]
+                              args.set_angle_tuning is not None or None, args.set_liftoff, args.set_polling,
+                              args.set_surface) if w]
         if len(writes) > 1:
             print("refused: one write per call", file=sys.stderr)
             return 2
@@ -930,6 +1083,13 @@ def main() -> int:
                     result = set_power(minutes, int(warn) if warn.isdigit() else -1, **options)
                 elif args.set_angle_snapping:
                     result = set_angle_snapping(args.set_angle_snapping == "on", **options)
+                elif args.set_liftoff:
+                    result = set_liftoff(args.set_liftoff, **options)
+                elif args.set_polling:
+                    result = set_polling(args.set_polling, **options)
+                elif args.set_surface:
+                    sid = NO_SURFACE if args.set_surface.lower() == "none" else int(args.set_surface, 16)
+                    result = set_surface(sid, **options)
                 else:
                     result = set_angle_tuning(args.set_angle_tuning, **options)
             except ValueError as error:

@@ -109,11 +109,14 @@ public final class HIDReader {
     /// The one write path: checks the mouse is awake, reads the setting, writes, reads it back, and with `save`
     /// sends 50 03, but only if the read-back matched. Without save the change lives in the mouse's RAM only.
     public func write(_ change: SettingChange, save: Bool) -> (result: WriteResult, diagnostics: [String]) {
-        let command: Command
-        do { command = try change.command() } catch {
-            return (WriteResult(status: .error, message: "\(error)"), [])
+        // Lift-off is built from the 12 06 read below (it keeps the surface); everything else is checked up front.
+        var prebuilt: Command? = nil
+        if !change.needsCurrent {
+            do { prebuilt = try change.command() } catch {
+                return (WriteResult(status: .error, message: "\(error)"), [])
+            }
         }
-        return DeviceLock.run {
+        return DeviceLock.run { [prebuilt] in
             var log: [String] = []
             let devices = listDevices(log: &log)
             var result = WriteResult(status: .notFound)
@@ -128,13 +131,26 @@ public final class HIDReader {
                     result = WriteResult(status: .error)
                     let before = readBack(device, target: target, change: change, log: &log)
                     result.before = Self.led(change, before)
+                    let command: Command
+                    if let prebuilt {
+                        command = prebuilt
+                    } else {
+                        guard let before else {
+                            result.message = "could not read the current value: nothing written"
+                            return (result, log)
+                        }
+                        do { command = try change.command(current: before) } catch {
+                            result.message = "\(error)"
+                            return (result, log)
+                        }
+                    }
                     let written = exchange(device, target: target, command: command, log: &log)
                     result.sent.append(Self.describe(target: target, command: command, prefix: command.bytes.count + 1))
                     if written.status == .error { result.message = written.raw; return (result, log) }
                     let after = readBack(device, target: target, change: change, log: &log)
                     result.after = Self.led(change, after)
                     result.readBack = after
-                    result.status = after.map { change.matches($0) } == true ? .ok : .mismatch
+                    result.status = after.map { change.matches($0, before: before) } == true ? .ok : .mismatch
                     if result.status == .ok && save {
                         let saved = exchange(device, target: target, command: .save, log: &log)
                         result.sent.append(Self.describe(target: target, command: .save, prefix: 3))

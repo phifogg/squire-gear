@@ -141,6 +141,8 @@ public struct MouseSettings: Equatable, Sendable {
     public var angleSnapping: Bool?
     public var angleTuning: Int?
     public var liftoff: String?         // low | high
+    public var surfaceID: UInt8?        // preset surface (Command.surfaces), 0xff = none
+    public var surfaceParams: [UInt8]?  // its 3 parameter bytes, nil without a surface
     public var leds: [LEDZone: LEDState] = [:]
     public var powerOffMinutes: Int?    // nil with status ok = never
     public var lowWarning: Int?
@@ -212,7 +214,10 @@ public struct MouseSettings: Equatable, Sendable {
             let zone: LEDZone = query == .ledLogo ? .logo : query == .ledWheel ? .wheel : .side
             leds[zone] = LEDState(mode: LEDMode(byte: p[4]), brightness: Int(p[5]), color: RGB(p[6], p[7], p[8]))
         case .liftoff:
+            // [6] surface id (ff = none), [7] lift-off, [8..10] surface parameters (Armoury Crate captures)
             liftoff = p[7] == 0 ? "low" : p[7] == 1 ? "high" : "0x" + ReplyParser.hex([p[7]])
+            surfaceID = p[6]
+            surfaceParams = p[6] == Command.noSurface ? nil : Array(p[8...10])
         }
     }
 }
@@ -224,14 +229,32 @@ public enum SettingChange: Equatable, Hashable, Sendable {
     case power(PowerSetting)
     case angleSnapping(Bool)
     case angleTuning(Int)
+    case liftoff(String)        // low | high; keeps the surface
+    case surface(UInt8)         // preset id or Command.noSurface; keeps the lift-off
+    case polling(Int)           // Hz
 
-    public func command() throws -> Command {
+    /// The bytes. Lift-off needs the surface from `current` (the 12 06 read right before the write).
+    public func command(current: MouseSettings? = nil) throws -> Command {
         switch self {
         case .led(let zone, let led): return try .setLED(zone, led)
         case .power(let power): return try .setPower(power)
         case .angleSnapping(let on): return try .setAngleSnapping(on)
         case .angleTuning(let degrees): return try .setAngleTuning(degrees)
+        case .liftoff(let value):
+            return try .setLiftoff(value, surfaceID: current?.surfaceID, surfaceParams: current?.surfaceParams)
+        case .surface(let id):
+            // never replace a surface Squire does not know: it may be a calibration
+            guard let current, let now = current.surfaceID, Command.surfaceParams[now] != nil, let liftoff = current.liftoff else {
+                throw CommandError.notAllowed("surface \(Command.surfaceName(current?.surfaceID) ?? "not read"): not replaced")
+            }
+            return try .setSurface(id, liftoff: liftoff)
+        case .polling(let hz): return try .setPolling(hz)
         }
+    }
+
+    /// Built from the value read just before the write (not from the window's older read).
+    public var needsCurrent: Bool {
+        switch self { case .liftoff, .surface: return true; default: return false }
     }
 
     /// The read that shows the value: nil = the battery query 12 07.
@@ -240,17 +263,26 @@ public enum SettingChange: Equatable, Hashable, Sendable {
         case .led(let zone, _): return .led(zone)
         case .power: return nil
         case .angleSnapping, .angleTuning: return .settings
+        case .liftoff, .surface: return .liftoff
+        case .polling: return .settings
         }
     }
 
-    /// Does the mouse (as read) already have this value?
-    public func matches(_ s: MouseSettings) -> Bool {
+    /// Does the mouse (as read) already have this value? With `before`, lift-off also needs the surface unchanged.
+    public func matches(_ s: MouseSettings, before: MouseSettings? = nil) -> Bool {
         switch self {
         case .led(let zone, let led): return led.matches(s.leds[zone])
         case .power(let power):
             return s.lowWarning == power.lowWarning && s.powerOffMinutes == power.offMinutes && s.status == .ok
         case .angleSnapping(let on): return s.angleSnapping == on
         case .angleTuning(let degrees): return s.angleTuning == degrees
+        case .liftoff(let value):
+            return s.liftoff == value
+                && (before.map { $0.surfaceID == s.surfaceID && $0.surfaceParams == s.surfaceParams } ?? true)
+        case .surface(let id):
+            return s.surfaceID == id && s.surfaceParams == Command.surfaceParams[id] ?? nil
+                && (before.map { $0.liftoff == s.liftoff } ?? true)
+        case .polling(let hz): return s.pollingHz == hz
         }
     }
 
@@ -261,6 +293,9 @@ public enum SettingChange: Equatable, Hashable, Sendable {
         case .power: return "Power"
         case .angleSnapping: return "Angle snapping"
         case .angleTuning: return "Angle tuning"
+        case .liftoff: return "Lift-off distance"
+        case .surface: return "Surface"
+        case .polling: return "Polling rate"
         }
     }
 }

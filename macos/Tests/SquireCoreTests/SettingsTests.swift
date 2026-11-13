@@ -38,6 +38,8 @@ private func json() throws -> [String: Any] {
                 case "dpi": #expect(s.dpi == (value as! [Int]).map { Optional($0) })
                 case "dpi_colors": #expect(s.dpiColors.map(\.hex) == value as! [String])
                 case "liftoff": #expect(s.liftoff == value as? String)
+                case "surface_id": #expect(s.surfaceID.map(Int.init) == value as? Int)
+                case "surface_params": #expect(s.surfaceParams.map(ReplyParser.hex) == value as? String)
                 case "logo", "wheel", "side":
                     let led = value as! [String: Any]
                     let state = s.leds[LEDZone(rawValue: key)!]
@@ -116,6 +118,11 @@ private func json() throws -> [String: Any] {
                 command = try .setPower(PowerSetting(offMinutes: args[0] as? Int, lowWarning: args[1] as! Int))
             case "angle_snapping_command": command = try .setAngleSnapping(args[0] as! Bool)
             case "angle_tuning_command": command = try .setAngleTuning(args[0] as! Int)
+            case "polling_command": command = try .setPolling(args[0] as! Int)
+            case "surface_command": command = try .setSurface(UInt8(args[0] as! Int), liftoff: args[1] as! String)
+            case "liftoff_command":
+                command = try .setLiftoff(args[0] as! String, surfaceID: UInt8(args[1] as! Int),
+                                          surfaceParams: bytes(args[2] as! String))
             default: Issue.record("unknown function \(write["function"]!)"); continue
             }
             let head = bytes(write["packet"] as! String)
@@ -141,14 +148,88 @@ private func json() throws -> [String: Any] {
         #expect(throws: CommandError.self) { try Command.setAngleTuning(25) }
     }
 
-    @Test(arguments: ["51 31 00 00 07 00", "51 31 04 00 03", "51 31 05 00 02", "51 31 09 00 01", "51 31 0a 00 04",
-                      "51 35 ff 00 ff 00", "51 31 06 00 02", "51 31 0b 00 07 00", "51 37 00 00 05 00 14",
+    @Test(arguments: ["51 31 00 00 07 00", "51 31 04 00 04", "51 31 04 00 63", "51 31 05 00 02", "51 31 09 00 01", "51 31 0a 00 04",
+                      "51 35 ff 00 ff 02", "51 35 00 00 02 00 00 1c 34 16", "51 35 00 00 01 00 00 1c 34",
+                      "51 35 00 00 01 00 01 1c 34 16", "51 31 06 00 02", "51 31 0b 00 07 00", "51 37 00 00 05 00 14",
                       "51 37 00 01 03 00 14", "50 02 01"])
     func everythingElseStaysRefused(hex: String) {
         #expect(!Allowlist.isAllowedWrite(bytes(hex)))
         #expect(throws: CommandError.self) {
             try Packet.build(reportID: 0x03, command: Command(bytes(hex), isWrite: true), length: 64)
         }
+    }
+
+    /// Same as test_squire.py LiftoffWriteTests: the surface read from 12 06 is written back unchanged.
+    @Test func liftoffKeepsTheSurface() throws {
+        #expect(try Command.setLiftoff("high", surfaceID: 0x01, surfaceParams: [0x1C, 0x34, 0x16]).bytes
+                == bytes("51 35 00 00 01 01 00 1c 34 16"))
+        #expect(try Command.setLiftoff("low", surfaceID: 0x0B, surfaceParams: [0x1A, 0x32, 0x20]).bytes
+                == bytes("51 35 00 00 0b 00 00 1a 32 20"))
+        #expect(try Command.setLiftoff("high", surfaceID: 0xFF, surfaceParams: nil).bytes == bytes("51 35 ff 00 ff 01"))
+        #expect(throws: CommandError.self) { try Command.setLiftoff("high", surfaceID: 0x02, surfaceParams: [1, 2, 3]) }
+        #expect(throws: CommandError.self) { try Command.setLiftoff("high", surfaceID: nil, surfaceParams: nil) }
+        #expect(throws: CommandError.self) { try Command.setLiftoff("medium", surfaceID: 0xFF, surfaceParams: nil) }
+        #expect(throws: CommandError.self) { try SettingChange.liftoff("high").command() }   // no read: nothing to keep
+        #expect(SettingChange.liftoff("high").needsCurrent && SettingChange.liftoff("high").readBack == .liftoff)
+    }
+
+    /// protocol.json mouse_writes.armoury_crate: Squire builds the same packets Armoury Crate sent, and parses its reads.
+    @Test func liftoffMatchesTheArmouryCrateCaptures() throws {
+        let section = (try json()["mouse_writes"] as! [String: Any])["armoury_crate"] as! [String: Any]
+        let captures = section["captures"] as! [[String: Any]]
+        let sheath = captures.first { $0["name"] as? String == "lift-off low -> high (surface ROG Sheath)" }!
+        let command = try Command.setLiftoff("high", surfaceID: 0x01, surfaceParams: [0x1C, 0x34, 0x16])
+        #expect(Array(try Packet.build(reportID: 0x03, command: command, length: 64).prefix(11))
+                == bytes((sheath["packets"] as! [String])[0]))
+        var s = MouseSettings()
+        let read = bytes(sheath["read_after"] as! String)
+        s.apply(.liftoff, Array((read + [UInt8](repeating: 0, count: 64 - read.count)).dropFirst()))
+        #expect(s.liftoff == "high" && s.surfaceID == 0x01 && s.surfaceParams == [0x1C, 0x34, 0x16])
+        let presets = captures.compactMap { $0["surfaces"] as? [[String: Any]] }.first!
+        for preset in presets {
+            let id = UInt8(preset["id"] as! String, radix: 16)!
+            let params = (preset["params"] as? String).map(bytes)
+            let name = (preset["name"] as! String).replacingOccurrences(of: " (second tile, same name)", with: " (2)")
+            #expect(Command.surfaceName(id) == (id == 0xFF ? "None (no calibration)" : name))
+            let c = try Command.setLiftoff("low", surfaceID: id, surfaceParams: params)
+            let expected = preset["packet"] as? String ?? "03 51 35 00 00 \(preset["id"]!) 00 00 \(preset["params"]!)"
+            #expect(Array(try Packet.build(reportID: 0x03, command: c, length: 64).prefix(c.bytes.count + 1)) == bytes(expected))
+        }
+        #expect(Command.surfaces.count == presets.count - 1)
+    }
+
+    /// Same as test_squire.py test_polling_write / test_surface_keeps_the_liftoff.
+    @Test func pollingAndSurfaceExactBytes() throws {
+        #expect(try Command.setPolling(1000).bytes == bytes("51 31 04 00 03"))
+        #expect(try Command.setPolling(125).bytes == bytes("51 31 04 00 00"))
+        #expect(throws: CommandError.self) { try Command.setPolling(2000) }
+        #expect(try Command.setSurface(0x0B, liftoff: "high").bytes == bytes("51 35 00 00 0b 01 00 1a 32 20"))
+        #expect(try Command.setSurface(0xFF, liftoff: "low").bytes == bytes("51 35 ff 00 ff 00"))
+        #expect(throws: CommandError.self) { try Command.setSurface(0x02, liftoff: "low") }
+        var unknown = MouseSettings()
+        unknown.liftoff = "low"; unknown.surfaceID = 0x02; unknown.surfaceParams = [1, 2, 3]
+        #expect(throws: CommandError.self) { try SettingChange.surface(0x01).command(current: unknown) }   // a calibration?
+        #expect(Command.surfaceChoices.first == 0xFF && Set(Command.surfaceChoices) == Set(Command.surfaceParams.keys))
+    }
+
+    @Test func surfaceParamsMatchTheCapturedPresets() throws {
+        let section = (try json()["mouse_writes"] as! [String: Any])["armoury_crate"] as! [String: Any]
+        let presets = (section["captures"] as! [[String: Any]]).compactMap { $0["surfaces"] as? [[String: Any]] }.first!
+        #expect(presets.count == Command.surfaceParams.count)
+        for preset in presets {
+            let id = UInt8(preset["id"] as! String, radix: 16)!
+            #expect(Command.surfaceParams[id] == .some((preset["params"] as? String).map(bytes)), "\(preset["name"]!)")
+        }
+    }
+
+    @Test func liftoffReadBackMustKeepTheSurface() {
+        var before = MouseSettings()
+        before.liftoff = "low"; before.surfaceID = 0x01; before.surfaceParams = [0x1C, 0x34, 0x16]
+        var after = before
+        after.liftoff = "high"
+        #expect(SettingChange.liftoff("high").matches(after, before: before))
+        after.surfaceID = 0xFF; after.surfaceParams = nil      // surface lost, like G-Helper's packet
+        #expect(!SettingChange.liftoff("high").matches(after, before: before))
     }
 
     @Test func settingChangeReadBackAndMatch() {
@@ -288,6 +369,37 @@ private func json() throws -> [String: Any] {
         var odd = s
         odd.lowWarning = 15
         #expect(!SettingsEditing.canEditPower(odd))
+    }
+
+    /// Same plan as test_squire_settings.py test_liftoff_edit_keeps_the_surface.
+    @Test func liftoffEditPlansExactBytes() throws {
+        let s = try settings()   // demo capture: no surface, lift-off low
+        #expect(s.surfaceID == 0xFF && s.liftoff == "low" && SettingsEditing.canEditLiftoff(s))
+        let other = SettingsEditing.edit(OtherEdits(), s) { $0.liftoff = "high" }
+        #expect(SettingsEditing.plannedPackets(s, pending: [:], other: other) == ["03 51 35 ff 00 ff 01 …", "03 50 03 …  (save)"])
+        #expect(SettingsEditing.summary(SettingsEditing.preview(s, pending: [:], other: other), .sensor) == "1000 Hz · lift-off high")
+        var sheath = s
+        sheath.surfaceID = 0x01; sheath.surfaceParams = [0x1C, 0x34, 0x16]
+        #expect(SettingsEditing.plannedPackets(sheath, pending: [:], other: other).first == "03 51 35 00 00 01 01 00 1c 34 16 …")
+        #expect(SettingsEditing.edit(other, s) { $0.liftoff = "low" }.isEmpty)
+        var unknown = s
+        unknown.surfaceID = 0x02; unknown.surfaceParams = [0x1C, 0x34, 0x16]
+        #expect(!SettingsEditing.canEditLiftoff(unknown))
+    }
+
+    /// Same plan as test_squire_settings.py test_polling_and_surface_plan_exact_bytes.
+    @Test func pollingAndSurfacePlanExactBytes() throws {
+        var s = try settings()
+        s.surfaceID = 0x01; s.surfaceParams = [0x1C, 0x34, 0x16]
+        let other = SettingsEditing.edit(OtherEdits(), s) { $0.polling = 500; $0.surface = 0x0B; $0.liftoff = "high" }
+        #expect(SettingsEditing.plannedPackets(s, pending: [:], other: other)
+                == ["03 51 31 04 00 02 …", "03 51 35 00 00 0b 00 00 1a 32 20 …",
+                    "03 51 35 00 00 0b 01 00 1a 32 20 …", "03 50 03 …  (save)"])
+        let preview = SettingsEditing.preview(s, pending: [:], other: other)
+        #expect(preview.pollingHz == 500 && preview.surfaceID == 0x0B && preview.surfaceParams == [0x1A, 0x32, 0x20])
+        #expect(SettingsEditing.edit(OtherEdits(), s) { $0.surface = 0x01 }.isEmpty)
+        #expect(SettingsEditing.canEditSurface(s) && SettingsEditing.canEditPolling(s))
+        #expect(SettingsEditing.plannedPackets(s, pending: [:], other: OtherEdits(surface: 0xFF)).first == "03 51 35 ff 00 ff 00 …")
     }
 
     @Test func linkedEditSetsEveryZone() throws {

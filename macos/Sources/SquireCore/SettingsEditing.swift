@@ -44,21 +44,32 @@ public enum SettingsZone: String, CaseIterable, Sendable, Identifiable {
     public static let chips: [SettingsZone] = [.dpi, .sensor, .power]
 }
 
-/// Pending edits besides the lights: power (51 37) and the sensor's angle settings (51 31 06 / 0b).
+/// Pending edits besides the lights: power (51 37), the sensor's angle settings (51 31 06 / 0b) and lift-off (51 35).
 public struct OtherEdits: Equatable, Sendable {
     public var power: PowerSetting?
     public var angleSnapping: Bool?
     public var angleTuning: Int?
-    public init(power: PowerSetting? = nil, angleSnapping: Bool? = nil, angleTuning: Int? = nil) {
+    public var liftoff: String?
+    public var surface: UInt8?
+    public var polling: Int?
+    public init(power: PowerSetting? = nil, angleSnapping: Bool? = nil, angleTuning: Int? = nil, liftoff: String? = nil,
+                surface: UInt8? = nil, polling: Int? = nil) {
         self.power = power
         self.angleSnapping = angleSnapping
         self.angleTuning = angleTuning
+        self.liftoff = liftoff
+        self.surface = surface
+        self.polling = polling
     }
-    public var isEmpty: Bool { power == nil && angleSnapping == nil && angleTuning == nil }
+    public var isEmpty: Bool {
+        power == nil && angleSnapping == nil && angleTuning == nil && liftoff == nil && surface == nil && polling == nil
+    }
 
+    /// Fixed order, as in the Linux window. Surface before lift-off: the surface write keeps the lift-off the mouse
+    /// has, then lift-off keeps the new surface.
     var changes: [SettingChange] {
-        [power.map { .power($0) }, angleSnapping.map { .angleSnapping($0) }, angleTuning.map { .angleTuning($0) }]
-            .compactMap { $0 }
+        [power.map { .power($0) }, angleSnapping.map { .angleSnapping($0) }, angleTuning.map { .angleTuning($0) },
+         polling.map { .polling($0) }, surface.map { .surface($0) }, liftoff.map { .liftoff($0) }].compactMap { $0 }
     }
 }
 
@@ -94,6 +105,12 @@ public enum SettingsEditing {
         }
         if let on = other.angleSnapping { p.angleSnapping = on }
         if let degrees = other.angleTuning { p.angleTuning = degrees }
+        if let value = other.liftoff { p.liftoff = value }
+        if let hz = other.polling { p.pollingHz = hz }
+        if let id = other.surface {
+            p.surfaceID = id
+            p.surfaceParams = Command.surfaceParams[id] ?? nil
+        }
         return p
     }
 
@@ -109,7 +126,26 @@ public enum SettingsEditing {
         if let power = o.power, SettingChange.power(power).matches(s) { o.power = nil }
         if let on = o.angleSnapping, SettingChange.angleSnapping(on).matches(s) { o.angleSnapping = nil }
         if let degrees = o.angleTuning, SettingChange.angleTuning(degrees).matches(s) { o.angleTuning = nil }
+        if let value = o.liftoff, SettingChange.liftoff(value).matches(s) { o.liftoff = nil }
+        if let id = o.surface, SettingChange.surface(id).matches(s) { o.surface = nil }
+        if let hz = o.polling, SettingChange.polling(hz).matches(s) { o.polling = nil }
         return o
+    }
+
+    /// Surface can be changed only from one Squire knows (or none): an unknown one may be a calibration.
+    public static func canEditSurface(_ s: MouseSettings) -> Bool {
+        guard let id = s.surfaceID, Command.surfaceParams[id] != nil, let l = s.liftoff else { return false }
+        return Command.liftoffCodes[l] != nil
+    }
+
+    public static func canEditPolling(_ s: MouseSettings) -> Bool {
+        s.pollingHz.map { Command.pollingWriteHz[$0] != nil } ?? false
+    }
+
+    /// Lift-off can be edited only with a surface Squire knows (or none): an unknown one may be a calibration.
+    public static func canEditLiftoff(_ s: MouseSettings) -> Bool {
+        guard let value = s.liftoff, Command.liftoffCodes[value] != nil else { return false }
+        return (try? Command.setLiftoff(value, surfaceID: s.surfaceID, surfaceParams: s.surfaceParams)) != nil
     }
 
     /// Power can be edited only when the warning level read from the mouse is one Squire can write back.
@@ -167,8 +203,13 @@ public enum SettingsEditing {
         let reportID: UInt8? = omni ? 0x03 : nil
         let length = omni ? 64 : 65
         var lines: [String] = []
+        let after = preview(s, pending: pending, other: other)
         for change in changes(s, pending: pending, other: other) {
-            guard let command = try? change.command(),
+            // surface keeps the lift-off as read; lift-off keeps the surface of the preview (a new one is written
+            // first). HIDReader reads 12 06 again right before each of them.
+            let current: MouseSettings
+            if case .liftoff = change { current = after } else { current = s }
+            guard let command = try? change.command(current: current),
                   let bytes = try? Packet.build(reportID: reportID, command: command, length: length) else { continue }
             lines.append(ReplyParser.hex(Array(bytes.prefix(command.bytes.count + 1))) + " …")
         }

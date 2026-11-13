@@ -3,8 +3,8 @@
 
 Devices on the left; the selected device drawn in the middle with clickable zones and callouts; the values for
 the selected zone on the right. Shows what squire.read_mouse_settings reads; the three lights, power-off and
-low-battery warning, angle snapping and tuning can be changed, and are written only on an explicit Apply (read
-back, then one save). DPI, polling and lift-off are shown only.
+low-battery warning, angle snapping and tuning, polling rate, surface and lift-off distance can be changed, and are
+written only on an explicit Apply (read back, then one save). DPI is shown only.
 
 Runs as its own process because the tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process.
 """
@@ -150,9 +150,12 @@ EDIT_MODES = list(squire.LED_WRITE_MODES)      # static, breathing, color-cycle,
 
 
 # Besides the light zones, `pending` can hold these keys (power: {"power_off_minutes", "low_warning"}; the others a
-# bool / degrees). Bytes approved and confirmed on the device 2026-11-12 (protocol.json settings_writes).
-OTHER_KEYS = ("power", "angle_snapping", "angle_tuning")
-OTHER_TITLES = {"power": "Power", "angle_snapping": "Angle snapping", "angle_tuning": "Angle tuning"}
+# bool / degrees / "low" or "high"). Power and angle bytes approved and confirmed on the device 2026-11-12
+# (protocol.json settings_writes); polling, surface and lift-off approved 2026-11-13 (armoury_crate captures).
+# Surface comes before lift-off: the surface write keeps the lift-off the mouse has, then lift-off keeps the new surface.
+OTHER_KEYS = ("power", "angle_snapping", "angle_tuning", "polling_hz", "surface_id", "liftoff")
+OTHER_TITLES = {"power": "Power", "angle_snapping": "Angle snapping", "angle_tuning": "Angle tuning",
+                "polling_hz": "Polling rate", "surface_id": "Surface", "liftoff": "Lift-off distance"}
 POWER_OFF_CHOICES = [1, 2, 3, 5, 10, None]      # minutes, None = never
 
 
@@ -167,9 +170,11 @@ def preview_settings(s: squire.MouseSettings, pending: dict) -> squire.MouseSett
     import dataclasses
     leds = {k: v for k, v in pending.items() if k in squire.LED_ZONES}
     other = dict(pending.get("power", {}))
-    for key in ("angle_snapping", "angle_tuning"):
+    for key in ("angle_snapping", "angle_tuning", "liftoff", "polling_hz", "surface_id"):
         if key in pending:
             other[key] = pending[key]
+    if "surface_id" in pending:
+        other["surface_params"] = squire.SURFACE_PARAMS.get(pending["surface_id"])
     return dataclasses.replace(s, leds={**s.leds, **leds}, **other)
 
 
@@ -187,13 +192,23 @@ def change_title(key: str) -> str:
     return ZONE_TITLES.get(key) if key in squire.LED_ZONES else OTHER_TITLES[key]
 
 
-def change_command(key: str, value) -> bytes:
+def change_command(s: squire.MouseSettings, key: str, value, after: Optional[squire.MouseSettings] = None) -> bytes:
+    """The bytes for one change. Surface keeps the lift-off as last read; lift-off keeps the surface of `after` (the
+    preview: a new surface is written first). set_surface()/set_liftoff() read 12 06 again right before they write,
+    so what is sent keeps whatever the mouse has at that moment."""
     if key in squire.LED_ZONES:
         return squire.led_command(key, value["mode"], value["brightness"], value["color"])
     if key == "power":
         return squire.power_command(value["power_off_minutes"], value["low_warning"])
     if key == "angle_snapping":
         return squire.angle_snapping_command(value)
+    if key == "liftoff":
+        after = after or s
+        return squire.liftoff_command(value, after.surface_id, after.surface_params)
+    if key == "surface_id":
+        return squire.surface_command(value, s.liftoff)
+    if key == "polling_hz":
+        return squire.polling_command(value)
     return squire.angle_tuning_command(value)
 
 
@@ -204,6 +219,12 @@ def write_change(key: str, value, save: bool) -> "squire.WriteResult":
         return squire.set_power(value["power_off_minutes"], value["low_warning"], save=save)
     if key == "angle_snapping":
         return squire.set_angle_snapping(value, save=save)
+    if key == "liftoff":
+        return squire.set_liftoff(value, save=save)
+    if key == "surface_id":
+        return squire.set_surface(value, save=save)
+    if key == "polling_hz":
+        return squire.set_polling(value, save=save)
     return squire.set_angle_tuning(value, save=save)
 
 
@@ -215,6 +236,24 @@ def edit_other(s: squire.MouseSettings, pending: dict, key: str, value) -> dict:
     else:
         pending[key] = value
     return pending
+
+
+def can_edit_liftoff(s: squire.MouseSettings) -> bool:
+    """Only with a surface Squire knows (or none): an unknown one could be a calibration it must not touch."""
+    try:
+        squire.liftoff_command("low", s.surface_id, s.surface_params)
+        return s.liftoff in squire.LIFTOFF_CODES
+    except ValueError:
+        return False
+
+
+def can_edit_surface(s: squire.MouseSettings) -> bool:
+    """Only replace a surface Squire knows (or none), and only with a lift-off it can write back."""
+    return s.surface_id in squire.SURFACE_PARAMS and s.liftoff in squire.LIFTOFF_CODES
+
+
+# Surface choices: none first, then the presets by name
+SURFACE_CHOICES = [squire.NO_SURFACE] + sorted(squire.SURFACES, key=lambda i: squire.SURFACES[i])
 
 
 def can_edit_power(s: squire.MouseSettings) -> bool:
@@ -257,8 +296,9 @@ def planned_packets(s: squire.MouseSettings, pending: dict) -> list[str]:
     report_id = 0x03 if s.connection == "omni" else None
     length = 64 if s.connection == "omni" else 65
     lines = []
+    after = preview_settings(s, pending)
     for key in changes(s, pending):
-        command = change_command(key, pending[key])
+        command = change_command(s, key, pending[key], after)
         lines.append(squire.packet(report_id, command, length, write=True)[:len(command) + 1].hex(" ") + " …")
     if lines:
         lines.append(squire.packet(report_id, squire.SAVE_COMMAND, length, write=True)[:3].hex(" ") + " …  (save)")
@@ -329,7 +369,7 @@ def run(argv: list[str]) -> int:
             self.refresh_button.connect("clicked", lambda _: self.refresh())
             header.pack_start(self.refresh_button)
             self.content_view.add_top_bar(header)
-            self.banner = Adw.Banner(title="Lights, power and angle settings can be changed; DPI, polling and lift-off are shown only. "
+            self.banner = Adw.Banner(title="Everything but DPI can be changed; DPI is shown only. "
                                            "Nothing is sent until you click Apply.", revealed=True)
             self.content_view.add_top_bar(self.banner)
             split.set_content(Adw.NavigationPage(title="Settings", child=self.content_view))
@@ -568,10 +608,35 @@ def run(argv: list[str]) -> int:
                 group.add(row("Stages on the DPI button", str(count)))
             elif zone == "sensor":
                 p = preview_settings(s, self.pending)
-                group.add(row("Polling rate", f"{s.polling_hz} Hz",
-                              f"raw 0x{s.polling_raw or 0:02x}"))
-                group.add(row("Lift-off distance", (s.liftoff or "").capitalize(),
-                              "Shown only: changing it also resets the surface calibration"))
+                if s.polling_hz in squire.POLLING_WRITE_HZ:
+                    rates = sorted(squire.POLLING_WRITE_HZ)
+                    poll = Adw.ComboRow(title="Polling rate", subtitle="How often the mouse reports its position",
+                                        model=Gtk.StringList.new([f"{hz} Hz" for hz in rates]))
+                    poll.set_selected(rates.index(p.polling_hz))
+                    poll.connect("notify::selected", lambda r, _p: self.on_other("polling_hz", rates[r.get_selected()]))
+                    group.add(poll)
+                else:
+                    group.add(row("Polling rate", f"{s.polling_hz} Hz", f"raw 0x{s.polling_raw or 0:02x}"))
+                if can_edit_liftoff(s):
+                    choices = list(squire.LIFTOFF_CODES)
+                    lift = Adw.ComboRow(title="Lift-off distance", subtitle="The surface setting stays as it is",
+                                        model=Gtk.StringList.new([c.capitalize() for c in choices]))
+                    lift.set_selected(choices.index(p.liftoff))
+                    lift.connect("notify::selected", lambda r, _p: self.on_other("liftoff", choices[r.get_selected()]))
+                    group.add(lift)
+                else:
+                    group.add(row("Lift-off distance", (s.liftoff or "").capitalize(),
+                                  "Shown only: the surface is not one Squire knows, so it is left alone"))
+                if can_edit_surface(s):
+                    surf = Adw.ComboRow(title="Surface", subtitle="Mouse pad preset; the lift-off stays as it is",
+                                        model=Gtk.StringList.new([squire.surface_name(i) for i in SURFACE_CHOICES]))
+                    surf.set_selected(SURFACE_CHOICES.index(p.surface_id))
+                    surf.connect("notify::selected",
+                                 lambda r, _p: self.on_other("surface_id", SURFACE_CHOICES[r.get_selected()]))
+                    group.add(surf)
+                else:
+                    group.add(row("Surface", squire.surface_name(s.surface_id) or "–",
+                                  "Not a preset Squire knows (a calibration?), so it is left alone"))
                 if p.angle_snapping is not None:
                     snap = Adw.SwitchRow(title="Angle snapping", active=p.angle_snapping,
                                          subtitle="Straightens nearly horizontal and vertical movements")
@@ -778,6 +843,10 @@ def run(argv: list[str]) -> int:
                         self.settings.low_warning = value["low_warning"]
                     else:
                         setattr(self.settings, key, value)
+                    if key == "surface_id":
+                        self.settings.surface_params = squire.SURFACE_PARAMS.get(value)
+                    elif key == "polling_hz" and self.settings.polling_raw is not None:
+                        self.settings.polling_raw = (self.settings.polling_raw & 0xF8) | squire.POLLING_WRITE_HZ[value]
                     self.pending.pop(key, None)
                 else:
                     failed.append((key, result))

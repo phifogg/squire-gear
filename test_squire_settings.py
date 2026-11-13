@@ -167,6 +167,47 @@ class EditTests(unittest.TestCase):
         self.assertFalse(ui.can_edit_power(dataclasses.replace(self.s, low_warning=15)))
         self.assertFalse(ui.can_edit_power(dataclasses.replace(self.s, low_warning=None)))
 
+    def test_liftoff_edit_keeps_the_surface(self):
+        import dataclasses
+        # demo capture: no surface (ff), lift-off low
+        self.assertEqual((self.s.surface_id, self.s.liftoff), (0xFF, "low"))
+        pending = ui.edit_other(self.s, {}, "liftoff", "high")
+        self.assertEqual(ui.planned_packets(self.s, pending), ["03 51 35 ff 00 ff 01 …", "03 50 03 …  (save)"])
+        self.assertEqual(ui.zone_summary(ui.preview_settings(self.s, pending), "sensor"), "1000 Hz · lift-off high")
+        self.assertIn("Lift-off distance", ui.apply_status(self.s, pending))
+        sheath = dataclasses.replace(self.s, surface_id=0x01, surface_params="1c 34 16")
+        self.assertEqual(ui.planned_packets(sheath, pending)[0], "03 51 35 00 00 01 01 00 1c 34 16 …")
+        self.assertEqual(ui.edit_other(self.s, pending, "liftoff", "low"), {})
+
+    def test_liftoff_is_shown_only_for_a_surface_squire_does_not_know(self):
+        import dataclasses
+        self.assertTrue(ui.can_edit_liftoff(self.s))
+        self.assertFalse(ui.can_edit_liftoff(dataclasses.replace(self.s, surface_id=0x02, surface_params="1c 34 16")))
+        self.assertFalse(ui.can_edit_liftoff(dataclasses.replace(self.s, surface_id=None)))
+
+    def test_polling_and_surface_plan_exact_bytes(self):
+        import dataclasses
+        sheath = dataclasses.replace(self.s, surface_id=0x01, surface_params="1c 34 16")
+        pending = ui.edit_other(sheath, {}, "polling_hz", 500)
+        pending = ui.edit_other(sheath, pending, "surface_id", 0x0B)
+        pending = ui.edit_other(sheath, pending, "liftoff", "high")
+        self.assertEqual(ui.changes(sheath, pending), ["polling_hz", "surface_id", "liftoff"])
+        # surface first with the lift-off the mouse has, then lift-off with the new surface
+        self.assertEqual(ui.planned_packets(sheath, pending),
+                         ["03 51 31 04 00 02 …", "03 51 35 00 00 0b 00 00 1a 32 20 …",
+                          "03 51 35 00 00 0b 01 00 1a 32 20 …", "03 50 03 …  (save)"])
+        preview = ui.preview_settings(sheath, pending)
+        self.assertEqual((preview.polling_hz, preview.surface_id, preview.surface_params), (500, 0x0B, "1a 32 20"))
+        self.assertEqual(ui.edit_other(sheath, {}, "surface_id", 0x01), {})
+        self.assertEqual(ui.planned_packets(sheath, {"surface_id": 0xFF})[0], "03 51 35 ff 00 ff 00 …")
+
+    def test_surface_choices(self):
+        import dataclasses
+        self.assertEqual(ui.SURFACE_CHOICES[0], 0xFF)
+        self.assertEqual(set(ui.SURFACE_CHOICES), set(squire.SURFACE_PARAMS))
+        self.assertTrue(ui.can_edit_surface(self.s))
+        self.assertFalse(ui.can_edit_surface(dataclasses.replace(self.s, surface_id=0x02)))
+
     def test_wired_mouse_plans_unnumbered_packets(self):
         import dataclasses
         wired = dataclasses.replace(self.s, connection="wired")

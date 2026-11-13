@@ -34,7 +34,8 @@ if CommandLine.arguments.contains("--settings") {
     print("  Polling rate: \(s.pollingHz ?? 0) Hz (raw 0x\(ReplyParser.hex([s.pollingRaw ?? 0])))   debounce "
           + (s.debounceMs.map { "\($0) ms" } ?? "index \(s.debounceIndex ?? -1)"))
     print("  Angle:        snapping \(s.angleSnapping == true ? "on" : "off"), tuning \(s.angleTuning ?? 0)°")
-    print("  Lift-off:     \(s.liftoff ?? "?")")
+    let params = s.surfaceParams.map { " (" + ReplyParser.hex($0) + ")" } ?? ""
+    print("  Lift-off:     \(s.liftoff ?? "?"), surface \(Command.surfaceName(s.surfaceID) ?? "?")\(params)")
     for zone in LEDZone.allCases {
         if let led = s.leds[zone] {
             print("  LED \(zone.rawValue.padding(toLength: 6, withPad: " ", startingAt: 0))    \(led.mode.name), \(led.brightness) %, \(led.color.hex)")

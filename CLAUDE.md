@@ -120,8 +120,16 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   `51 37 00 00 <power-off> 00 <warning %>` (power-off 00..04 = 1/2/3/5/10 min, ff never; warning 10..50 step 10;
   always both, read back with 12 07 [5],[6]), `51 31 06 00 <0/1>` (angle snapping, read back 12 04 00 [16]),
   `51 31 0b 00 <lo> <hi>` (angle tuning, signed LE16, -20..20 step 5, read back 12 04 00 [18..19]). One generic
-  path: squire.write_verified() / HIDReader.write(SettingChange). Not approved: lift-off `51 35 ff 00 ff <0/1>`
-  (G-Helper: also resets the surface calibration; check in Armoury Crate first), polling `51 31 04`, debounce
+  path: squire.write_verified() / HIDReader.write(SettingChange).
+  Approved 2026-11-13 (bytes from the Armoury Crate captures, `mouse_writes.armoury_crate`): lift-off
+  `51 35 00 00 <surface id> <0/1> 00 <p1 p2 p3>` with surface id + params taken from a 12 06 read made right before
+  the write in the same device session (never from a window's older read), or `51 35 ff 00 ff <0/1>` only when that
+  read shows no surface (ff). Only surface ids from Armoury Crate's preset list (squire.SURFACES); an unknown id is
+  refused (could be a custom calibration). The read-back must show the new lift-off AND the same surface + params.
+  Also approved 2026-11-13: surface preset `51 35 00 00 <id> <lift-off as read> 00 <AC params for id>` (or the ff
+  form for none; params from squire.SURFACE_PARAMS; refused while the mouse has an unknown surface; read-back must
+  show the new surface and the unchanged lift-off) and polling `51 31 04 00 <0..3>` (125/250/500/1000 Hz, index only,
+  read back 12 04 00 [12] low 3 bits). Not approved: debounce
   `51 31 05` (G-Helper offers none for the Keris), DPI `51 31 <stage>` (X/Y unclear), stage count `51 31 0a`,
   active stage `51 31 09`. Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
@@ -207,7 +215,15 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
         --set-angle-tuning) and both windows (Power / Sensor chips), branch `mouse-settings-writes` (2026-11-12).
         CLI writes confirmed on the device via Omni; Apply in the macOS window confirmed incl. off/on and an LED
         change through the new write path (owner, 2026-11-12); Linux window not tried yet
-  - [ ] Lift-off write: only after checking surface calibration in Armoury Crate (see Rules)
+  - [x] Lift-off write, keeping the surface (2026-11-13): CLI `--set-liftoff low|high` (--dry-run reads 12 06 and
+        prints the exact bytes), both windows (Sensor chip: Low/High picker + Surface row; shown only for an unknown
+        surface). CLI write confirmed on the device via Omni (high, unsaved, surface ROG Sheath kept, then back to
+        low; same bytes as AC; protocol.json settings_writes). Not yet: window Apply + off/on, Linux window.
+        Reads with firmware 01.00.10 / 07.00.08 parse fine on macOS (2026-11-13)
+  - [x] Polling rate + surface preset writes (2026-11-13): CLI `--set-polling HZ`, `--set-surface ID|none`,
+        `--list-surfaces`; both windows (Sensor chip pickers; surface written before lift-off when both change).
+        CLI writes confirmed on the device via Omni (500 Hz and back, Balteus Qi and back to ROG Sheath with lift-off
+        kept; unsaved; protocol.json settings_writes). Not yet: window Apply + off/on, Linux window
   - [x] Armoury Crate capture on Windows (USBPcap, 2026-11-12, protocol.json `mouse_writes.armoury_crate`): one
         Apply rewrites the whole sensor block from AC's cached state (tuning, snapping, polling 51 31 04 = index,
         stage count, active stage, 51 31 <stage> 00 <lo> <hi> <r g b> = DPI X=Y + stage colour), then 50 03.
@@ -217,7 +233,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
         12 06 reads [6] surface id (ff = none), [7] lift-off, [8..10] params. All 21 AC presets captured (ids 00,01,07,08,0a..19 +
         ff "Default (No calibration)"; table in protocol.json): 01 ROG Sheath, 0b Balteus Qi, most share params
         1c 34 16. G-Helper's `51 35 ff 00 ff <0/1>` drops the surface. A Squire
-        lift-off write would read 12 06 and keep surface + params (not approved yet). AC resets lift-off to low
+        lift-off write reads 12 06 and keeps surface + params (approved 2026-11-13). AC resets lift-off to low
         on a surface change. Armoury Crate has no debounce setting for the Keris.
   - [x] Firmware from `12 00` fixed (2026-11-12): mouse 01.00.09 (cable [4..6], Omni [14..16]), receiver 07.00.02
         (Omni [4..6]); cable reply in protocol.json `mouse_settings_wired`

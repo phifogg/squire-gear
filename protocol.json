@@ -206,9 +206,11 @@
         "command": "liftoff",
         "reply": "03 12 06 00 00 00 ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
         "expect": {
-          "liftoff": "low"
+          "liftoff": "low",
+          "surface_id": 255,
+          "surface_params": null
         },
-        "notes": "[7]=00 low (G-Helper). [5..6]=ff ff unknown."
+        "notes": "[7]=00 low (G-Helper). [6]=ff: no surface selected (Armoury Crate captures 2026-11-12, mouse_writes.armoury_crate); [8..10] surface parameters, 00 without a surface. [5]=ff goes with no surface (00 with one)."
       }
     ]
   },
@@ -318,6 +320,30 @@
             "angle_tuning": -10
           },
           "notes": "Field 0b, signed LE16 degrees (-20..20, step 5 in G-Helper). Read back with 12 04 00 [18..19]. Restored with 51 31 0b 00 00 00."
+        },
+        {
+          "name": "lift-off high, surface ROG Sheath kept",
+          "function": "liftoff_command",
+          "args": ["high", 1, "1c 34 16"],
+          "packet": "03 51 35 00 00 01 01 00 1c 34 16",
+          "read_back": {"liftoff": "high", "surface_id": 1, "surface_params": "1c 34 16"},
+          "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-liftoff high, unsaved), firmware 01.00.10 / receiver 07.00.08. Surface id and parameters came from the 12 06 read right before; 12 06 read back [7]=01 with the same surface. Same bytes as Armoury Crate's capture. Restored with 51 35 00 00 01 00 00 1c 34 16 (read back low, surface unchanged)."
+        },
+        {
+          "name": "polling 500 Hz",
+          "function": "polling_command",
+          "args": [500],
+          "packet": "03 51 31 04 00 02",
+          "read_back": {"polling_hz": 500},
+          "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-polling 500, unsaved). Index only, as Armoury Crate writes it (51 31 04 00 03 = 1000 Hz); 12 04 00 [12] read back 500 Hz in the low 3 bits. Restored with 51 31 04 00 03 (read back 1000 Hz, raw 0x63 again)."
+        },
+        {
+          "name": "surface Balteus Qi, lift-off kept",
+          "function": "surface_command",
+          "args": [11, "low"],
+          "packet": "03 51 35 00 00 0b 00 00 1a 32 20",
+          "read_back": {"liftoff": "low", "surface_id": 11, "surface_params": "1a 32 20"},
+          "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-surface 0b, unsaved) from ROG Sheath; lift-off low read from 12 06 right before and kept. Same bytes as Armoury Crate. Restored with 51 35 00 00 01 00 00 1c 34 16 (ROG Sheath, read back unchanged lift-off)."
         }
       ]
     },
