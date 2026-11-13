@@ -387,6 +387,42 @@ class MouseSettingsParseTests(unittest.TestCase):
         self.assertEqual((s.power_off_minutes, s.low_warning), (3, 20))
 
 
+class RealKeyboardSettingsCaptureTests(unittest.TestCase):
+    """protocol.json keyboard_settings: real replies from the Falchion RX Low Profile."""
+
+    def test_captures(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["keyboard_settings"]
+        s = rb.KeyboardSettings("k", "omni")
+        for capture in data["captures"]:
+            reply = bytes.fromhex(capture["reply"])
+            command = rb.KEYBOARD_SETTINGS_QUERIES[capture["command"]]
+            base = rb.find_echo(reply, command)
+            self.assertEqual(base, 1, capture["command"])
+            rb.parse_keyboard_settings(s, capture["command"], reply[base:])
+            for key, value in capture["expect"].items():
+                with self.subTest(command=capture["command"], key=key):
+                    self.assertEqual(getattr(s, key), value)
+
+    def test_battery_reply_gives_warning_level(self):
+        vectors = json.loads((Path(__file__).parent / "protocol.json").read_text())["vectors"]
+        kb = next(v for v in vectors if v["device"] == "keyboard" and v["connection"] == "omni")
+        s = rb.KeyboardSettings("k", "omni")
+        rb.parse_keyboard_settings(s, "battery", bytes.fromhex(kb["reply"])[1:])
+        self.assertEqual(s.low_warning, 20)
+
+    def test_unknown_layout_and_effect_are_kept_raw(self):
+        s = rb.KeyboardSettings("k", "omni")
+        rb.parse_keyboard_settings(s, "layout", bytes([0x12, 0x12, 0, 0, 0x02, 0x63] + [0] * 58))
+        self.assertEqual((s.layout_id, s.layout), (0x63, None))
+        rb.parse_keyboard_settings(s, "profile", bytes([0x12, 0x00] + [0] * 7 + [0xF1, 0x01] + [0] * 53))
+        self.assertEqual((s.light_mode, s.profile, s.receiver_firmware), ("host-driven", 1, None))
+
+    def test_keyboard_reads_are_get_requests_on_the_allowlist(self):
+        for command in rb.KEYBOARD_SETTINGS_QUERIES.values():
+            self.assertEqual(command[0], 0x12)
+            self.assertIn(command, rb.ALLOWED_COMMANDS)
+
+
 class RealMouseSettingsCaptureTests(unittest.TestCase):
     """protocol.json mouse_settings: real replies from the Keris II Origin."""
 

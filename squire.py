@@ -94,8 +94,15 @@ MOUSE_SETTINGS_QUERIES = {
     "led_side": bytes([0x12, 0x03, 0x02]),      # LED zone 2 = side strip (G-Helper/libratbag: "underglow")
     "liftoff": bytes([0x12, 0x06]),             # lift-off distance + surface (mouse pad) preset
 }
+# Read-only commands for the Falchion RX Low Profile settings (approved by the owner 2026-11-13). Source, facts only:
+# G-Helper app/Peripherals/Keyboard/AsusKeyboard.cs (GPL-3.0); rogdriver (no license) sends the same two.
+KEYBOARD_SETTINGS_QUERIES = {
+    "profile": bytes([0x12, 0x00]),             # firmware, current lighting effect, active profile
+    "layout": bytes([0x12, 0x12]),              # factory layout id (ISO / ANSI)
+}
 # The transport refuses anything not on this list.
-ALLOWED_COMMANDS = frozenset([KEYBOARD_QUERY, MOUSE_QUERY, *MOUSE_SETTINGS_QUERIES.values()])
+ALLOWED_COMMANDS = frozenset([KEYBOARD_QUERY, MOUSE_QUERY, *MOUSE_SETTINGS_QUERIES.values(),
+                              *KEYBOARD_SETTINGS_QUERIES.values()])
 
 
 # --- Writes (allowlist) ---
@@ -769,6 +776,101 @@ def _read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
     return result
 
 
+# --- Keyboard settings (Falchion RX Low Profile), read-only ---
+# Lighting effect ids in 12 00 [9] (G-Helper KeyboardLightingMode); 0xf1 = the host drives the LEDs directly.
+KEYBOARD_LIGHT_MODES = {0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "reactive", 0x04: "wave",
+                        0x05: "ripple", 0x06: "starry-night", 0x07: "quicksand", 0x08: "current", 0x09: "raindrop",
+                        0xF1: "host-driven"}
+# Factory layout ids in 12 12 [5]: 3/4/5/17 from G-Helper, 25 = CH-DE confirmed by the owner (2026-11-13).
+KEYBOARD_LAYOUTS = {3: "DE", 4: "UK", 5: "FR", 17: "US", 25: "CH-DE"}
+# Layout ids G-Helper draws as ISO (an extra key left of Z, tall Enter)
+KEYBOARD_ISO_LAYOUTS = frozenset([3, 4, 5, 7, 8, 11, 12, 15, 18, 19, 20, 23, 25])
+
+
+@dataclass
+class KeyboardSettings:
+    name: str
+    connection: str
+    status: str = "ok"                          # ok | asleep | no-response | no-access | error | not-found
+    profile: Optional[int] = None               # 1-based (01/02 = profile 1/2, owner 2026-11-13; 5 profiles)
+    light_mode: Optional[str] = None            # effect the keyboard runs now (colour is not readable)
+    layout_id: Optional[int] = None
+    layout: Optional[str] = None                # e.g. CH-DE; None for an id Squire does not know
+    iso: Optional[bool] = None
+    sleep_minutes: Optional[int] = None         # 12 01 [6], mouse coding assumed (G-Helper); not confirmed
+    low_warning: Optional[int] = None
+    receiver_firmware: Optional[str] = None     # the Omni receiver's (Omni only)
+    raw: dict = field(default_factory=dict)     # command name -> reply hex (for captures)
+
+
+def parse_keyboard_settings(s: KeyboardSettings, name: str, p: bytes) -> None:
+    """Fill s from one reply payload p (starting at the echoed command)."""
+    if len(p) < 14:
+        return
+    if name == "battery":
+        s.sleep_minutes = POWER_OFF_MINUTES.get(p[6])
+        s.low_warning = p[9] if 1 <= p[9] <= 100 else None
+    elif name == "profile":
+        s.light_mode = KEYBOARD_LIGHT_MODES.get(p[9], f"0x{p[9]:02x}")
+        s.profile = p[10] if 1 <= p[10] <= 5 else None
+        if s.connection == "omni" and any(p[4:7]):
+            s.receiver_firmware = f"{p[6]:02X}.{p[5]:02X}.{p[4]:02X}"
+    elif name == "layout":
+        s.layout_id = p[5]
+        s.layout = KEYBOARD_LAYOUTS.get(p[5])
+        s.iso = p[5] in KEYBOARD_ISO_LAYOUTS
+
+
+def read_keyboard_settings(debug: bool = False, hid=None) -> KeyboardSettings:
+    with device_lock():
+        hid = hid or load_backend()
+        result = KeyboardSettings("ROG Falchion RX LP", "", status="not-found")
+        for target in (t for t in TARGETS if t.device == "keyboard"):
+            for path in enumerate_paths(hid, target.pid):
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                except (OSError, IOError) as error:
+                    if debug:
+                        print(f"[keyboard] open {path!r} failed: {error}", file=sys.stderr)
+                    if isinstance(error, PermissionError):
+                        result.status = "no-access"
+                    continue
+                try:
+                    settings = KeyboardSettings(target.name, "omni" if target.pid == PID_OMNI else "wired")
+                    battery = exchange(dev, target, target.query, debug)
+                    if battery.status != "ok":
+                        result = settings
+                        result.status = battery.status
+                        continue   # asleep here; maybe it is on the other connection
+                    settings.raw["battery"] = battery.payload.hex(" ")
+                    parse_keyboard_settings(settings, "battery", battery.payload)
+                    for name, command in KEYBOARD_SETTINGS_QUERIES.items():
+                        ex = exchange(dev, target, command, debug)
+                        if ex.status != "ok":
+                            settings.raw[name] = ex.status
+                            continue
+                        settings.raw[name] = ex.payload.hex(" ")
+                        parse_keyboard_settings(settings, name, ex.payload)
+                    return settings
+                finally:
+                    dev.close()
+        return result
+
+
+def print_keyboard_settings(s: KeyboardSettings) -> None:
+    if s.status != "ok":
+        print(f"{s.name}: {s.status}")
+        return
+    receiver = f", receiver {s.receiver_firmware}" if s.receiver_firmware else ""
+    print(f"{s.name} ({s.connection}){receiver}, profile {s.profile}")
+    layout = s.layout or f"unknown id {s.layout_id}"
+    print(f"  Layout:       {layout}{' (ISO)' if s.iso else ''}")
+    print(f"  Lighting:     {s.light_mode} (the colour cannot be read)")
+    sleep = "never" if s.sleep_minutes is None else f"{s.sleep_minutes} min"
+    print(f"  Power:        sleep after {sleep} (not confirmed), low-battery warning {s.low_warning} %")
+
+
 @dataclass
 class WriteResult:
     status: str                    # ok | mismatch | asleep | no-response | no-access | not-found | error | dry-run
@@ -1164,6 +1266,8 @@ def main() -> int:
     ap.add_argument("--save", action="store_true", help="after a write, store it in the mouse (50 03)")
     ap.add_argument("--settings", action="store_true",
                     help="Read the mouse settings (DPI, LEDs, sensor, power); read-only, add --json for JSON")
+    ap.add_argument("--keyboard-settings", action="store_true",
+                    help="Read the keyboard settings (profile, layout, lighting effect); read-only, add --json")
     ap.add_argument("--debug", action="store_true", help="Print raw replies to stderr")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = ap.parse_args()
@@ -1225,6 +1329,13 @@ def main() -> int:
             if args.save and result.status == "ok" and not result.saved:
                 return 1
             return 0 if result.status in ("ok", "dry-run") else 1
+        if args.keyboard_settings:
+            settings = read_keyboard_settings(args.debug)
+            if args.json:
+                print(json.dumps(asdict(settings), indent=2, ensure_ascii=False))
+            else:
+                print_keyboard_settings(settings)
+            return 0
         if args.settings:
             settings = read_mouse_settings(args.debug)
             if args.json:

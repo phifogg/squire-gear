@@ -455,5 +455,49 @@
         }
       ]
     }
+  },
+  "keyboard_settings": {
+    "_comment": "Real replies of the ROG Falchion RX Low Profile via the ROG Omni receiver, captured 2026-11-13 on Linux (hidraw, report ID 02). Read-only get requests, approved by the owner 2026-11-13. Indices relative to the echo. Only 'expect' values that are confirmed; the rest is in the notes until the owner confirms it.",
+    "captures": [
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 03 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "reactive",
+          "profile": 1
+        },
+        "notes": "[4..6]=08 00 07 receiver firmware 07.00.08 (same receiver and value as the mouse's 12 00 the same day). [9]=03 current lighting effect reactive (G-Helper ids; f1 = host-driven), confirmed by the owner: reactive in red. [10]=01 active profile, 1-based: the owner's keyboard is on profile 1 of 5 (confirmed with profiles 2 and 5 below). [11..13]=13 00 05 maybe keyboard firmware 05.00.13 (unconfirmed). [8]=06 unknown. The colour is not in the reply."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 06 02 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "starry-night",
+          "profile": 2
+        },
+        "notes": "After the owner switched to profile 2 on the keyboard (2026-11-13): [10]=02 = profile 2, so [10] is 1-based (G-Helper's mapping would say profile 3). [9]=06 starry night, confirmed by the owner (violet stars). [11..13]=13 00 05 unchanged, consistent with a firmware version."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 08 05 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "light_mode": "current",
+          "profile": 5
+        },
+        "notes": "Owner switched to profile 5 (2026-11-13): [10]=05 = profile 5, so the count is 1-based up to the last profile (G-Helper's 'reported == count -> profile 0' does not apply to the Falchion RX LP). [9]=08 = G-Helper's 'Current'; on the device a random key lights up, then the 3 keys to its right, then another key, and so on. Armoury Crate's name for it: to be checked on Windows."
+      },
+      {
+        "command": "layout",
+        "reply": "02 12 12 00 00 02 19 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "layout_id": 25,
+          "layout": "CH-DE",
+          "iso": true
+        },
+        "notes": "[5] factory layout id (G-Helper: 3 DE, 4 UK, 5 FR, 17 US); 0x19 = 25 = CH-DE, confirmed by the owner (2026-11-13), on G-Helper's ISO list. [4]=02 unknown."
+      }
+    ]
   }
 }
