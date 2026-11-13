@@ -218,12 +218,14 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
   - [x] Lift-off write, keeping the surface (2026-11-13): CLI `--set-liftoff low|high` (--dry-run reads 12 06 and
         prints the exact bytes), both windows (Sensor chip: Low/High picker + Surface row; shown only for an unknown
         surface). CLI write confirmed on the device via Omni (high, unsaved, surface ROG Sheath kept, then back to
-        low; same bytes as AC; protocol.json settings_writes). Not yet: window Apply + off/on, Linux window.
+        low; same bytes as AC; protocol.json settings_writes). Apply in the macOS window confirmed (owner,
+        2026-11-13); Linux window not tried yet.
         Reads with firmware 01.00.10 / 07.00.08 parse fine on macOS (2026-11-13)
   - [x] Polling rate + surface preset writes (2026-11-13): CLI `--set-polling HZ`, `--set-surface ID|none`,
         `--list-surfaces`; both windows (Sensor chip pickers; surface written before lift-off when both change).
         CLI writes confirmed on the device via Omni (500 Hz and back, Balteus Qi and back to ROG Sheath with lift-off
-        kept; unsaved; protocol.json settings_writes). Not yet: window Apply + off/on, Linux window
+        kept; unsaved; protocol.json settings_writes). Apply in the macOS window confirmed (owner, 2026-11-13);
+        Linux window not tried yet
   - [x] Armoury Crate capture on Windows (USBPcap, 2026-11-12, protocol.json `mouse_writes.armoury_crate`): one
         Apply rewrites the whole sensor block from AC's cached state (tuning, snapping, polling 51 31 04 = index,
         stage count, active stage, 51 31 <stage> 00 <lo> <hi> <r g b> = DPI X=Y + stage colour), then 50 03.
