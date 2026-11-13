@@ -10,7 +10,7 @@ struct SquireApp: App {
         Self.handleLaunchArguments()
     }
 
-    /// Development aids: `--settings` opens the settings window at launch; `--screenshot PATH [ZONE] [edit] [linked]`
+    /// Development aids: `--settings` opens the settings window at launch; `--screenshot PATH [ZONE|keyboard] [edit] [linked]`
     /// also saves it as PNG and quits (`linked`: the edit with "Same effect on all zones" on); `--demo` shows the
     /// protocol.json captures and sends nothing.
     private static func handleLaunchArguments() {
@@ -20,6 +20,7 @@ struct SquireApp: App {
             SettingsWindowController.shared.show()
             guard let i = args.firstIndex(of: "--screenshot"), i + 1 < args.count else { return }
             if i + 2 < args.count, let zone = SettingsZone(rawValue: args[i + 2]) { SettingsStore.shared.selected = zone }
+            if i + 2 < args.count, args[i + 2] == "keyboard" { SettingsStore.shared.device = .keyboard }
             if args.contains("edit") {   // sample edit, never sent: static blue on the selected light
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     let store = SettingsStore.shared

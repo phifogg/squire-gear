@@ -299,7 +299,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       sleep, warning (2026-11-13). Linux window: read-only keyboard page with a drawing (own
       65 % artwork, ISO/ANSI from 12 12, CH-DE legends; keys = lighting zone, chips profile/layout/power; neutral glow
       until the colour can be read) (2026-11-13). macOS window: same keyboard page (KeyboardSettings.swift, KeyboardDrawing),
-      squire-probe --keyboard-settings; written on Linux, NOT yet built or run on a Mac (2026-11-13).
+      squire-probe --keyboard-settings; written on Linux. On the Mac via Omni (2026-11-13): builds, swift test passes,
+      probe and squire.py read the same values, `--repeat 30` no crash, keyboard page and a mouse LED Apply confirmed
+      by the owner in the window. `--screenshot PATH keyboard` selects the keyboard page on macOS too.
       Next: find how to read the LED colour. Windows TODO with Armoury Crate:
       effect names (G-Helper's "current" = a random key, then the 3 keys to its right), sleep timeout values for
       12 01 [6], keyboard firmware ([11..13] of 12 00 = 05.00.13?), and a capture of how AC reads the LED colour.
