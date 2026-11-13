@@ -319,7 +319,7 @@ private func json() throws -> [String: Any] {
 
 @Suite struct AllowlistTests {
     @Test func everyReadIsAGetRequest() {
-        #expect(Allowlist.reads.count == 10)
+        #expect(Allowlist.reads.count == 11)   // 2 battery + 8 mouse settings + keyboard 12 12 (12 00 is shared)
         #expect(Allowlist.reads.allSatisfy { $0.first == 0x12 })
     }
 

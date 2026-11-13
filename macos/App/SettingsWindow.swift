@@ -4,7 +4,7 @@ import SquireCore
 
 /// The settings window, opened from "Settings…" in the popover. Same layout as the Linux window: devices on the
 /// left; the selected device drawn in the middle with clickable zones and callouts; the selected zone's settings
-/// on the right, with Show bytes / Revert / Apply below.
+/// on the right, with Show bytes / Revert / Apply below (mouse). The keyboard page is shown only so far.
 ///
 /// An AppKit-managed window (not a SwiftUI `Window` scene): it opens only on request, never at launch.
 @MainActor
@@ -90,13 +90,15 @@ struct SettingsView: View {
                     Label("Read again", systemImage: "arrow.clockwise")
                 }
                 .disabled(store.loading || store.applying)
-                .help("Read the settings from the mouse again")
+                .help("Read the settings again")
                 if store.loading && store.settings != nil { ProgressView().controlSize(.small) }
                 Spacer()
                 if store.demo { Text("Demo: protocol.json captures, nothing is sent").font(.caption).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            Text("Lights, DPI, sensor and power settings can be changed. Nothing is sent until you click Apply.")
+            Text(store.device == .keyboard
+                 ? "Keyboard settings are shown only so far; changing them comes next."
+                 : "Lights, DPI, sensor and power settings can be changed. Nothing is sent until you click Apply.")
                 .font(.callout)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6).padding(.horizontal, 12)
@@ -106,9 +108,18 @@ struct SettingsView: View {
 
     @ViewBuilder private var content: some View {
         if store.device == .keyboard {
-            let battery = store.batteries[.keyboard]?.percent.map { "Battery \($0) %. " } ?? ""
-            StatusPage(systemImage: "keyboard", title: "Keyboard settings come later",
-                       text: "\(battery)Squire starts with the mouse; the keyboard follows.")
+            if let keyboard = store.keyboard {
+                if keyboard.status == .ok {
+                    KeyboardSettingsView(store: store, settings: keyboard)
+                } else {
+                    let (title, text) = Self.keyboardStatusTexts[keyboard.status]
+                        ?? ("Could not read the keyboard", keyboard.status.rawValue)
+                    StatusPage(systemImage: "keyboard", title: title, text: text)
+                }
+            } else {
+                StatusPage(systemImage: nil, title: "Reading the keyboard…",
+                           text: "Squire reads the current settings. This takes about a second.")
+            }
         } else if let settings = store.settings {
             if settings.status == .ok {
                 MouseSettingsView(store: store, settings: settings)
@@ -126,6 +137,13 @@ struct SettingsView: View {
         .asleep: ("The mouse is asleep", "Move the mouse, then read again."),
         .noResponse: ("No answer from the mouse", "Move the mouse, then read again."),
         .notFound: ("Mouse not found", "Plug in the Omni receiver or the USB cable."),
+        .noAccess: ("No access to the receiver", "macOS refused to open the receiver."),
+    ]
+
+    static let keyboardStatusTexts: [MouseSettings.Status: (String, String)] = [
+        .asleep: ("The keyboard is asleep", "Press a key, then read again."),
+        .noResponse: ("No answer from the keyboard", "Press a key, then read again."),
+        .notFound: ("Keyboard not found", "Plug in the Omni receiver or the USB cable."),
         .noAccess: ("No access to the receiver", "macOS refused to open the receiver."),
     ]
 }
@@ -159,7 +177,7 @@ struct DeviceSidebarRow: View {
         } else {
             text = loaded ? "not found" : "…"
         }
-        return device == .keyboard ? text + " · settings later" : text
+        return text
     }
 }
 
@@ -284,13 +302,15 @@ struct StageView: View {
 
 struct Hotspot: View {
     let selected: Bool
+    /// false for a large hotspot over coloured parts (the keyboard's keys): a tint would look like an LED colour.
+    var tinted = true
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.accentColor.opacity(selected ? 0.16 : hovering ? 0.12 : 0.001))
+                .fill(Color.accentColor.opacity(tinted ? (selected ? 0.16 : hovering ? 0.12 : 0.001) : 0.001))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.45),
@@ -323,6 +343,135 @@ struct ZoneCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - keyboard page (shown only)
+
+struct KeyboardSettingsView: View {
+    @ObservedObject var store: SettingsStore
+    let settings: KeyboardSettings
+
+    var body: some View {
+        HStack(spacing: 0) {
+            GeometryReader { geo in
+                let scale = min(1, geo.size.width / (StageView.size.width + 16), geo.size.height / (StageView.size.height + 16))
+                KeyboardStageView(store: store, settings: settings)
+                    .scaleEffect(scale)
+                    .frame(width: geo.size.width, height: geo.size.height)
+            }
+            .background(Color.primary.opacity(0.03))
+            Divider()
+            KeyboardInspectorView(store: store, settings: settings)
+                .frame(width: 360)
+        }
+    }
+}
+
+/// Same 660 x 660 stage and coordinates as the Linux keyboard page.
+struct KeyboardStageView: View {
+    @ObservedObject var store: SettingsStore
+    let settings: KeyboardSettings
+
+    static let drawing = CGPoint(x: (StageView.size.width - KeyboardDrawing.size.width) / 2, y: 230)
+
+    var body: some View {
+        let d = Self.drawing, size = KeyboardDrawing.size, pad = KeyboardDrawing.pad
+        let lightSelected = store.keyboardZone == .light
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            VStack(alignment: .leading, spacing: 4) {
+                Text(settings.name).font(.title2).bold()
+                if let b = store.batteries[.keyboard], let percent = b.percent {
+                    Text("Battery \(percent) %" + (b.charging ? " · charging" : "")).foregroundStyle(.secondary)
+                }
+            }
+            .offset(x: 32, y: 24)
+
+            KeyboardDrawing(settings: settings)
+                .offset(x: d.x, y: d.y)
+
+            // the keys are the lighting zone: one outline over all of them, with a callout above
+            Path { p in
+                p.move(to: CGPoint(x: StageView.size.width / 2, y: d.y - 20))
+                p.addLine(to: CGPoint(x: StageView.size.width / 2, y: d.y + pad - 4))
+            }
+            .stroke(lightSelected ? Color.accentColor : Color.primary.opacity(0.45),
+                    style: StrokeStyle(lineWidth: 1, dash: lightSelected ? [] : [3, 3]))
+            Hotspot(selected: lightSelected, tinted: false) { store.keyboardZone = .light }
+                .frame(width: size.width - 2 * pad + 8, height: size.height - 2 * pad + 8)
+                .help("Lighting")
+                .accessibilityLabel("Lighting")
+                .offset(x: d.x + pad - 4, y: d.y + pad - 4)
+            KeyboardZoneCard(zone: .light, settings: settings, selected: lightSelected, width: 170) {
+                store.keyboardZone = .light
+            }
+            .offset(x: StageView.size.width / 2 - 85, y: d.y - 76)
+
+            VStack(spacing: 10) {
+                Text("Click the keys, or one of these:").foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    ForEach(KeyboardZone.chips) { zone in
+                        KeyboardZoneCard(zone: zone, settings: settings, selected: zone == store.keyboardZone,
+                                         width: 190) { store.keyboardZone = zone }
+                    }
+                }
+            }
+            .frame(width: StageView.size.width - 64)
+            .offset(x: 32, y: 520)
+        }
+        .frame(width: StageView.size.width, height: StageView.size.height, alignment: .topLeading)
+    }
+}
+
+struct KeyboardZoneCard: View {
+    let zone: KeyboardZone
+    let settings: KeyboardSettings
+    let selected: Bool
+    let width: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(zone.title).font(.headline)
+                Text(zone.summary(settings)).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .frame(width: width, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: selected ? 2 : 1))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct KeyboardInspectorView: View {
+    @ObservedObject var store: SettingsStore
+    let settings: KeyboardSettings
+
+    var body: some View {
+        let zone = store.keyboardZone
+        Form {
+            Section {
+                ForEach(Array(zone.rows(settings).enumerated()), id: \.offset) { _, row in
+                    InfoRow(row.0, row.1, subtitle: row.2)
+                }
+            } header: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(zone.title).font(.headline)
+                    Text("Shown only").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section("Device") {
+                InfoRow("Connection", settings.connection == .wired ? "Wired" : "Omni receiver")
+                if let receiver = settings.receiverFirmware { InfoRow("Receiver firmware", receiver) }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

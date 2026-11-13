@@ -12,6 +12,9 @@ final class SettingsStore: ObservableObject {
     let demo = CommandLine.arguments.contains("--demo")
 
     @Published private(set) var settings: MouseSettings?
+    @Published private(set) var keyboard: KeyboardSettings?
+    /// The selected part of the keyboard page (keys = lighting, or a chip).
+    @Published var keyboardZone: KeyboardZone = .light
     @Published private(set) var batteries: [Battery.Device: Battery] = [:]
     @Published var device: Battery.Device? = .mouse
     @Published var selected: SettingsZone = .logo
@@ -35,19 +38,23 @@ final class SettingsStore: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             var batteries: [Battery] = []
             var settings: MouseSettings
+            var keyboard: KeyboardSettings
             if demo, let demoData = Self.demoData() {
-                (batteries, settings) = demoData
+                (batteries, settings, keyboard) = demoData
             } else if demo {
                 settings = MouseSettings(status: .error)
+                keyboard = KeyboardSettings(status: .error)
             } else {
                 // IOKit reads pump a run loop for up to a second or so: keep them off the main thread.
                 batteries = HIDReader().read().batteries
                 settings = HIDReader().readMouseSettings().settings
+                keyboard = HIDReader().readKeyboardSettings().settings
             }
             DispatchQueue.main.async {
                 self.loading = false
                 self.batteries = Dictionary(uniqueKeysWithValues: batteries.map { ($0.device, $0) })
                 self.settings = settings
+                self.keyboard = keyboard
                 // keep pending edits only for zones the mouse still reports
                 self.pending = self.pending.filter { settings.leds[$0.key] != nil }
                 self.other = SettingsEditing.edit(self.other, settings) { _ in }   // drop what now matches
@@ -55,10 +62,11 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    private nonisolated static func demoData() -> (batteries: [Battery], settings: MouseSettings)? {
+    private nonisolated static func demoData() -> (batteries: [Battery], settings: MouseSettings, keyboard: KeyboardSettings)? {
         guard let url = Bundle.main.url(forResource: "protocol", withExtension: "json"),
               let captures = try? ProtocolCaptures.load(url) else { return nil }
-        return captures.demo()
+        let demo = captures.demo()
+        return (demo.batteries, demo.settings, captures.demoKeyboard())
     }
 
     // MARK: editing
@@ -182,12 +190,14 @@ final class SettingsStore: ObservableObject {
         }
         let texts: [WriteResult.Status: String] = [
             .asleep: "The mouse is asleep. Move it and click Apply again.",
-            .ok: "Written, but not saved because another change failed.",
+            .ok: "Written to the mouse's memory but not saved (lost when it is switched off).",
             .mismatch: "The mouse did not take the new value (read back differs). Nothing was saved.",
             .noResponse: "The mouse did not answer. Move it and click Apply again.",
         ]
-        failure = failed.map { change, result in
-            "\(change.title): " + (texts[result.status] ?? "\(result.status.rawValue) \(result.message)")
+        failure = failed.map { (change: SettingChange, result: WriteResult) -> String in
+            let text: String = texts[result.status] ?? "\(result.status.rawValue) \(result.message)"
+            let detail: String = result.status == .ok && !result.message.isEmpty ? " (\(result.message))" : ""
+            return "\(change.title): \(text)\(detail)"
         }.joined(separator: "\n")
     }
 

@@ -38,11 +38,11 @@ macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project
   Sources/SquireCore   pure logic: targets, command allowlist + packets (Commands.swift), reply parsing,
                        mouse settings parsing (MouseSettings.swift), settings window logic (SettingsEditing.swift),
                        low-battery rules (Swift Testing tests, read protocol.json)
-  Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, setLED;
+  Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, readKeyboardSettings, write;
                        DeviceLock = same flock file as squire.device_lock
-  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings (mouse settings, read-only)
+  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings / --keyboard-settings (read-only)
   App/                 SwiftUI MenuBarExtra app (BatteryStore, Views), settings window (SettingsWindow,
-                       SettingsStore, MouseDrawing; same layout as the Linux window), Assets
+                       SettingsStore, MouseDrawing, KeyboardDrawing; same layout as the Linux window), Assets
   scripts/             build-release.sh (universal, ad-hoc signed zip), make-icon.swift
 ```
 
@@ -298,7 +298,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] Keyboard (Falchion RX LP), branch `keyboard-read`: `--keyboard-settings` reads profile, layout, lighting effect,
       sleep, warning (2026-11-13). Linux window: read-only keyboard page with a drawing (own
       65 % artwork, ISO/ANSI from 12 12, CH-DE legends; keys = lighting zone, chips profile/layout/power; neutral glow
-      until the colour can be read) (2026-11-13). Next: find how to read the LED colour; macOS window. Windows TODO with Armoury Crate:
+      until the colour can be read) (2026-11-13). macOS window: same keyboard page (KeyboardSettings.swift, KeyboardDrawing),
+      squire-probe --keyboard-settings; written on Linux, NOT yet built or run on a Mac (2026-11-13).
+      Next: find how to read the LED colour. Windows TODO with Armoury Crate:
       effect names (G-Helper's "current" = a random key, then the 3 keys to its right), sleep timeout values for
       12 01 [6], keyboard firmware ([11..13] of 12 00 = 05.00.13?), and a capture of how AC reads the LED colour.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

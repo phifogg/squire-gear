@@ -273,8 +273,12 @@ public struct ProtocolCaptures: Decodable, Sendable {
 
     public let vectors: [Vector]
     let mouseSettings: MouseSettingsSection
+    let keyboardSettings: MouseSettingsSection?
     public var settingsCaptures: [SettingsCapture] { mouseSettings.captures }
-    enum CodingKeys: String, CodingKey { case vectors, mouseSettings = "mouse_settings" }
+    public var keyboardCaptures: [SettingsCapture] { keyboardSettings?.captures ?? [] }
+    enum CodingKeys: String, CodingKey {
+        case vectors, mouseSettings = "mouse_settings", keyboardSettings = "keyboard_settings"
+    }
 
     public static func load(_ url: URL) throws -> ProtocolCaptures {
         try JSONDecoder().decode(ProtocolCaptures.self, from: Data(contentsOf: url))

@@ -5,6 +5,7 @@ import SquireHID
 // Read-only diagnostics: prints what IOKit sees and the parsed batteries.
 // Sends only read commands (12 ..) to vendor-defined collections; never writes.
 // --settings: read the mouse settings (DPI, LEDs, sensor, power), like `squire.py --settings`.
+// --keyboard-settings: read the keyboard settings (profile, layout, effect), like `squire.py --keyboard-settings`.
 // --repeat N: read N times in one process (what the app does every 60 s). Used to catch lifetime bugs
 // in the IOKit callbacks that a single read never triggers.
 if let index = CommandLine.arguments.firstIndex(of: "--repeat"),
@@ -42,6 +43,20 @@ if CommandLine.arguments.contains("--settings") {
         }
     }
     print("  Power:        off after \(s.powerOffMinutes.map { "\($0) min" } ?? "never"), low-battery warning \(s.lowWarning.map(String.init) ?? "?") %")
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--keyboard-settings") {
+    let r = HIDReader().readKeyboardSettings()
+    if CommandLine.arguments.contains("--debug") { r.diagnostics.forEach { print($0) }; print("---") }
+    let k = r.settings
+    guard k.status == .ok else { print("\(k.name): \(k.status.rawValue)"); exit(0) }
+    print("\(k.name) (\(k.connection?.rawValue ?? "?"))\(k.receiverFirmware.map { ", receiver \($0)" } ?? ""), profile \(k.profile.map(String.init) ?? "?")")
+    let layoutID = k.layoutID.map(String.init) ?? "?"
+    let layout = k.layout ?? "unknown id " + layoutID
+    print("  Layout:       " + layout + (k.iso == true ? " (ISO)" : ""))
+    print("  Lighting:     \(k.lightMode ?? "?") (the colour cannot be read)")
+    print("  Power:        sleep after \(k.sleepMinutes.map { "\($0) min" } ?? "never") (not confirmed), low-battery warning \(k.lowWarning.map(String.init) ?? "?") %")
     exit(0)
 }
 
