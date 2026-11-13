@@ -98,6 +98,20 @@
         "low_warning": 20
       },
       "notes": "Captured 2026-11-10 on Linux (Ubuntu 26.04, kernel 7.0) via /dev/hidraw, ROG Omni receiver interface 2 (one hidraw node with three top-level collections ff02/ff00/ff01). Written as 03 12 07 (64 bytes); reply includes the report ID like hidapi on macOS. [5]=80 %, [7]=0x14 warning 20 %, [8..9]=0x0fa8 4008 mV?, [10]=00 not charging. Same keyboard reply as the first vector (78 %) at the same time."
+    },
+    {
+      "device": "mouse",
+      "model": "ROG Keris II Origin",
+      "connection": "omni",
+      "report_id": 3,
+      "query": "12 07",
+      "reply": "03 12 07 00 00 53 02 1e c6 0f 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "expect": {
+        "percent": 83,
+        "charging": false,
+        "low_warning": 30
+      },
+      "notes": "Captured 2026-11-12 on Windows 11 (hidapi; each collection has its own path, Col03 = ff01 takes report ID 03). Right after the owner changed the low-battery warning from 20 % to 30 % in Armoury Crate: [7]=0x1e follows it (it was 0x14 a minute before, otherwise the same reply except [12]). So the device warning level is what Armoury Crate sets. [12] was 00 before and 01 after; earlier captures had 01, meaning unknown."
     }
   ],
   "mouse_settings": {
@@ -124,7 +138,7 @@
           "angle_snapping": false,
           "angle_tuning": 0
         },
-        "notes": "[4..11]=ff: no DPI here (separate X/Y mouse, see dpi_xy). [12]=0x63: low 3 bits 3 = 1000 Hz; high nibble 6 would be 8000 Hz in G-Helper's booster mode (unverified which applies; check the rate in Armoury Crate on Windows). [13]=06 unknown. [14]=02 debounce 12 ms. [16]=00 angle snapping off. [18..19]=0 angle tuning 0."
+        "notes": "[4..11]=ff: no DPI here (separate X/Y mouse, see dpi_xy). [12]=0x63: low 3 bits 3 = 1000 Hz; the high nibble 6 is not a rate (G-Helper reads it as 8000 Hz booster mode; Armoury Crate shows 1000 Hz for this mouse, owner 2026-11-12). [13]=06 unknown. [14]=02 debounce 12 ms. [16]=00 angle snapping off. [18..19]=0 angle tuning 0."
       },
       {
         "command": "dpi_xy",
@@ -192,9 +206,11 @@
         "command": "liftoff",
         "reply": "03 12 06 00 00 00 ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
         "expect": {
-          "liftoff": "low"
+          "liftoff": "low",
+          "surface_id": 255,
+          "surface_params": null
         },
-        "notes": "[7]=00 low (G-Helper). [5..6]=ff ff unknown."
+        "notes": "[7]=00 low (G-Helper). [6]=ff: no surface selected (Armoury Crate captures 2026-11-12, mouse_writes.armoury_crate); [8..10] surface parameters, 00 without a surface. [5]=ff goes with no surface (00 with one)."
       }
     ]
   },
@@ -253,7 +269,7 @@
     ],
     "save": {
       "packet": "03 50 03",
-      "notes": "Save to flash. Confirmed 2026-11-10 by the owner in the settings window: logo set to static blue, Apply (write, read back, 50 03), mouse switched off and on: the logo stayed blue. Restored to colour cycle 50 % the same way."
+      "notes": "Save to flash. Confirmed 2026-11-10 by the owner in the settings window: logo set to static blue, Apply (write, read back, 50 03), mouse switched off and on: the logo stayed blue. Restored to colour cycle 50 % the same way. 2026-11-13 on Linux (Omni): the mouse answers 50 03 with an echo (03 50 03 …), which Squire now requires before it reports a change as saved."
     },
     "speed_test": {
       "packets": [
@@ -263,6 +279,181 @@
         "03 51 28 00 00 01 64 35 84 e4 00 00 09"
       ],
       "notes": "2026-11-10, not saved: byte [11] (G-Helper animation speed 05 fast / 09 slow) is stored per zone (read back at [12] of 12 03 NN) but has no visible effect on the Keris II Origin: colour cycle looked the same as the other zones, breathing pulsed 3 times in 10 s with 05 and with 09. Squire does not send it; restored to the owner's saved breathing 100 % #3584e4 with [11] = 00."
+    },
+    "settings_writes": {
+      "_comment": "Power and sensor writes confirmed on the ROG Keris II Origin via the ROG Omni receiver (report ID 03), 2026-11-12 on macOS (squire.py CLI, hidapi). Bytes from G-Helper (approved by the owner before the first send). Not saved: each was written, read back, then the original value written back. 'function' + 'args' = the squire.py builder.",
+      "writes": [
+        {
+          "name": "power-off 5 min, warning 30 %",
+          "function": "power_command",
+          "args": [
+            5,
+            30
+          ],
+          "packet": "03 51 37 00 00 03 00 1e",
+          "read_back": {
+            "power_off_minutes": 5,
+            "low_warning": 30
+          },
+          "notes": "[4] power-off code (00..04 = 1/2/3/5/10 min, ff never), [6] low-battery warning %. Read back with 12 07 [5], [6]. Restored with 51 37 00 00 02 00 14 (3 min, 20 %)."
+        },
+        {
+          "name": "angle snapping on",
+          "function": "angle_snapping_command",
+          "args": [
+            true
+          ],
+          "packet": "03 51 31 06 00 01",
+          "read_back": {
+            "angle_snapping": true
+          },
+          "notes": "Field 06, value 0/1. Read back with 12 04 00 [16]. Restored with 51 31 06 00 00."
+        },
+        {
+          "name": "angle tuning -10°",
+          "function": "angle_tuning_command",
+          "args": [
+            -10
+          ],
+          "packet": "03 51 31 0b 00 f6 ff",
+          "read_back": {
+            "angle_tuning": -10
+          },
+          "notes": "Field 0b, signed LE16 degrees (-20..20, step 5 in G-Helper). Read back with 12 04 00 [18..19]. Restored with 51 31 0b 00 00 00."
+        },
+        {
+          "name": "lift-off high, surface ROG Sheath kept",
+          "function": "liftoff_command",
+          "args": ["high", 1, "1c 34 16"],
+          "packet": "03 51 35 00 00 01 01 00 1c 34 16",
+          "read_back": {"liftoff": "high", "surface_id": 1, "surface_params": "1c 34 16"},
+          "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-liftoff high, unsaved), firmware 01.00.10 / receiver 07.00.08. Surface id and parameters came from the 12 06 read right before; 12 06 read back [7]=01 with the same surface. Same bytes as Armoury Crate's capture. Restored with 51 35 00 00 01 00 00 1c 34 16 (read back low, surface unchanged)."
+        },
+        {
+          "name": "polling 500 Hz",
+          "function": "polling_command",
+          "args": [500],
+          "packet": "03 51 31 04 00 02",
+          "read_back": {"polling_hz": 500},
+          "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-polling 500, unsaved). Index only, as Armoury Crate writes it (51 31 04 00 03 = 1000 Hz); 12 04 00 [12] read back 500 Hz in the low 3 bits. Restored with 51 31 04 00 03 (read back 1000 Hz, raw 0x63 again)."
+        },
+        {
+          "name": "surface Balteus Qi, lift-off kept",
+          "function": "surface_command",
+          "args": [11, "low"],
+          "packet": "03 51 35 00 00 0b 00 00 1a 32 20",
+          "read_back": {"liftoff": "low", "surface_id": 11, "surface_params": "1a 32 20"},
+          "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-surface 0b, unsaved) from ROG Sheath; lift-off low read from 12 06 right before and kept. Same bytes as Armoury Crate. Restored with 51 35 00 00 01 00 00 1c 34 16 (ROG Sheath, read back unchanged lift-off)."
+        },
+        {
+          "name": "DPI stage 3 1650, colour kept",
+          "function": "dpi_command",
+          "args": [3, 1650, "#003dff"],
+          "packet": "03 51 31 02 00 20 00 00 3d ff",
+          "read_back": {"dpi_xy": [1650, 1650], "color": "#003dff"},
+          "notes": "Sent by Squire 2026-11-13 on macOS via the Omni (squire.py --set-dpi 3 1650, unsaved); colour from the 12 04 03 read right before. 12 04 02 read back X and Y 1650, 12 04 03 the same colour. Restored with 51 31 02 00 1f 00 00 3d ff (1600)."
+        },
+        {
+          "name": "DPI stage 3 colour #ffaa00",
+          "function": "dpi_command",
+          "args": [3, 1600, "#ffaa00"],
+          "packet": "03 51 31 02 00 1f 00 ff aa 00",
+          "read_back": {"dpi_xy": [1600, 1600], "color": "#ffaa00"},
+          "notes": "Sent by Squire 2026-11-13 (--set-dpi 3 1600 --color #ffaa00, unsaved). Restored with #003dff."
+        },
+        {
+          "name": "active DPI stage 2",
+          "function": "active_stage_command",
+          "args": [2],
+          "packet": "03 51 31 09 00 02",
+          "read_back": {"dpi_stage": 2, "dpi_stage_count": 4},
+          "notes": "Sent by Squire 2026-11-13 (--set-dpi-stage 2, unsaved); 12 00 [11] read back 2, count unchanged. Restored with 51 31 09 00 03."
+        },
+        {
+          "name": "DPI stage count 3",
+          "function": "stage_count_command",
+          "args": [3],
+          "packet": "03 51 31 0a 00 03",
+          "read_back": {"dpi_stage": 3, "dpi_stage_count": 3},
+          "notes": "Sent by Squire 2026-11-13 (--set-dpi-count 3, unsaved, stage 3 active); 12 00 [18] read back 3. Restored with 51 31 0a 00 04."
+        }
+      ]
+    },
+    "armoury_crate": {
+      "_comment": "Writes sent by Armoury Crate on Windows 11, captured with USBPcap 2026-11-12 (ROG Omni receiver, endpoint 0x03 OUT / 0x83 IN = interface 2, report ID 03). Each OUT packet was echoed unchanged on 0x83. Armoury Crate sent no reads in the capture: it writes from its own cached state. Not used by Squire yet; documentation for the next writes (not approved, see CLAUDE.md Rules).",
+      "captures": [
+        {
+          "name": "DPI stage 3: 650 -> 700, Apply",
+          "packets": [
+            "03 51 31 0b 00 00 00",
+            "03 51 31 06 00 00",
+            "03 51 31 04 00 03",
+            "03 51 31 0a 00 04",
+            "03 51 31 09 00 03",
+            "03 51 31 00 00 07 00 ff 00 00",
+            "03 51 31 01 00 0f 00 c1 00 ff",
+            "03 51 31 02 00 0d 00 00 3d ff",
+            "03 51 31 03 00 3f 00 31 ff 00",
+            "03 50 03"
+          ],
+          "before": {"dpi": [400, 800, 650, 3200], "dpi_stage": 4, "dpi_colors": ["#ff0000", "#c100ff", "#000000", "#31ff00"], "angle_snapping": true, "angle_tuning": 0, "polling_raw": 99},
+          "after": {"dpi": [400, 800, 700, 3200], "dpi_stage": 3, "dpi_colors": ["#ff0000", "#c100ff", "#003dff", "#31ff00"], "angle_snapping": false, "angle_tuning": 0, "polling_raw": 99},
+          "notes": "One Apply rewrites the whole sensor block, then saves. 51 31 0b = angle tuning 0 and 51 31 06 = angle snapping off (same bytes as G-Helper); 51 31 04 00 03 = polling index 3 = 1000 Hz (reads back as 0x63: the high nibble is not part of the write); 51 31 0a 00 04 = 4 stages on the DPI button; 51 31 09 00 03 = active stage, same value as 12 00 [11] (1-based: stage 3 is active afterwards, it was 4); 51 31 <stage 0-based> 00 <lo> <hi> <r g b> = DPI (v*50+50, sets X and Y alike, 12 04 02 reads 0d 00 0d 00) plus the stage colour (12 04 03). No debounce (51 31 05) and no lift-off write. Active stage 4 -> 3: the owner had to select stage 3 in Armoury Crate to edit it. Side effects the owner did not choose: angle snapping on -> off and the colour of stage 3 #000000 -> #003dff, both from Armoury Crate's own state (it overwrites values changed by other tools without reading them first). Mouse firmware 01.00.10 and receiver 07.00.08 at the time (the owner updated both in Armoury Crate the same day, from 01.00.09 / 07.00.02); all reads parse the same with the new firmware."
+        },
+        {
+          "name": "lift-off low -> high (surface ROG Sheath)",
+          "packets": [
+            "03 51 35 00 00 01 01 00 1c 34 16",
+            "03 50 03"
+          ],
+          "echo": "03 51 35 00 00 01 01 01 1c 34 16",
+          "read_after": "03 12 06 00 00 01 00 01 01 1c 34 16",
+          "notes": "Owner had selected the surface ROG Sheath in Armoury Crate before (not captured), then switched lift-off to high. Write (relative to 51): [2..3] 00 00, [4] surface id 01 = ROG Sheath, [5] lift-off 01 = high, [6] 00 (the echo returns 01 here: ack?), [7..9] surface parameters 1c 34 16 (from Armoury Crate's surface list, no calibration was run). Read 12 06 (relative to 12): [4] 01, [5] 00, [6] surface id, [7] lift-off, [8..10] the same parameters. On 2026-11-10 (no surface selected) 12 06 read [4] 00, [5..6] ff ff, [7] 00, [8..10] 00: surface ff = none. G-Helper writes 51 35 ff 00 ff <lift-off>, i.e. surface ff without parameters: that is why it 'resets the calibration'. A safe lift-off write keeps [6] and [8..10] from a 12 06 read."
+        },
+        {
+          "name": "surface ROG Sheath -> Balteus Qi",
+          "packets": [
+            "03 51 35 00 00 0b 00 00 1a 32 20",
+            "03 50 03"
+          ],
+          "echo": "03 51 35 00 00 0b 00 01 1a 32 20",
+          "read_after": "03 12 06 00 00 01 00 0b 00 1a 32 20",
+          "notes": "Owner selected the surface Balteus Qi only: surface id 0b, parameters 1a 32 20. Armoury Crate also set lift-off back to low (00) without being asked; its UI shows low too. So a surface change in Armoury Crate resets lift-off."
+        },
+        {
+          "name": "all 21 surface presets, clicked in grid order, then ROG Sheath again",
+          "packet_format": "03 51 35 00 00 <id> 00 00 <p1 p2 p3>, each followed by 03 50 03",
+          "surfaces": [
+            {"grid": "1/1", "id": "ff", "params": null, "name": "Default (No calibration)", "packet": "03 51 35 ff 00 ff 00"},
+            {"grid": "1/2", "id": "18", "params": "1c 42 24", "name": "TUF Gaming P1 Hatsune Miku Edition"},
+            {"grid": "1/3", "id": "17", "params": "21 23 12", "name": "ROG Scabbard II Arctic Grey XXL"},
+            {"grid": "1/4", "id": "19", "params": "1e 34 19", "name": "ROG Sheath II XXL"},
+            {"grid": "1/5", "id": "14", "params": "37 2b 0e", "name": "ROG Moonstone Ace L"},
+            {"grid": "1/6", "id": "15", "params": "18 35 23", "name": "ROG Moonstone Ace L (second tile, same name)"},
+            {"grid": "1/7", "id": "16", "params": "1c 34 16", "name": "ROG Hone Ace XXL"},
+            {"grid": "1/8", "id": "12", "params": "1c 34 16", "name": "ROG Hone Ace Aim Lab Edition"},
+            {"grid": "1/9", "id": "13", "params": "1c 34 16", "name": "ROG Scabbard II EVA Edition"},
+            {"grid": "2/1", "id": "0c", "params": "1c 34 16", "name": "ROG Scabbard II"},
+            {"grid": "2/2", "id": "0d", "params": "1c 34 16", "name": "ROG Sheath Gundam LTD"},
+            {"grid": "2/3", "id": "0b", "params": "1a 32 20", "name": "Balteus Qi"},
+            {"grid": "2/4", "id": "0a", "params": "1a 32 20", "name": "Balteus"},
+            {"grid": "2/5", "id": "07", "params": "1c 34 16", "name": "ROG Scabbard"},
+            {"grid": "2/6", "id": "08", "params": "1c 34 16", "name": "ROG Strix Edge"},
+            {"grid": "2/7", "id": "0e", "params": "1c 34 16", "name": "ROG Strix Edge Call of Duty Black Ops 4 Edition"},
+            {"grid": "2/8", "id": "00", "params": "1c 34 16", "name": "ROG Whetstone"},
+            {"grid": "2/9", "id": "01", "params": "1c 34 16", "name": "ROG Sheath"},
+            {"grid": "3/1", "id": "0f", "params": "1c 34 16", "name": "ROG Sheath BLK LTD"},
+            {"grid": "3/2", "id": "10", "params": "1c 34 16", "name": "ROG Sheath PNK LTD"},
+            {"grid": "3/3", "id": "11", "params": "1c 34 16", "name": "ROG Sheath Electro Punk"}
+          ],
+          "background_reads": {
+            "keyboard": {"packet": "02 12 03", "reply": "02 12 03 00 00 01"},
+            "mouse": {"packet": "03 12 00 02", "reply": "03 12 00 02 00 01"},
+            "notes": "Armoury Crate polls these every few seconds next to 12 01 / 12 07 (keyboard 12 03, mouse 12 00 02; [4] = 01 both times: connected/online?). Not on Squire's allowlist."
+          },
+          "notes": "Captured 2026-11-12, grid = row/column of the 'Preset surfaces / Mouse pad' list in Armoury Crate (9 + 9 + 3 tiles). 'Default (No calibration)' writes surface ff without parameters, the same packet as G-Helper's lift-off write (lift-off low here). Ids 02..06 and 09 do not appear. Parameters 1c 34 16 are shared by most surfaces (default tuning?). Every click wrote lift-off 00. Ended on ROG Sheath (01), lift-off low."
+        }
+      ]
     }
   }
 }

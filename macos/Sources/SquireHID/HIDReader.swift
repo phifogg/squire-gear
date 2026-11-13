@@ -101,15 +101,22 @@ public final class HIDReader {
 
     // MARK: writes (only on an explicit click in the app)
 
-    /// Sets one LED zone, then reads it back. Checks the mouse is awake first. With `save`, also sends 50 03,
-    /// but only if the read-back matched. Without save the change lives in the mouse's RAM only.
+    /// Sets one LED zone, then reads it back. See `write`.
     public func setLED(_ zone: LEDZone, _ led: LEDState, save: Bool) -> (result: WriteResult, diagnostics: [String]) {
-        let command: Command
-        do { command = try Command.setLED(zone, led) } catch {
-            return (WriteResult(status: .error, message: "\(error)"), [])
+        write(.led(zone, led), save: save)
+    }
+
+    /// The one write path: checks the mouse is awake, reads the setting, writes, reads it back, and with `save`
+    /// sends 50 03, but only if the read-back matched. Without save the change lives in the mouse's RAM only.
+    public func write(_ change: SettingChange, save: Bool) -> (result: WriteResult, diagnostics: [String]) {
+        // Lift-off is built from the 12 06 read below (it keeps the surface); everything else is checked up front.
+        var prebuilt: Command? = nil
+        if !change.needsCurrent {
+            do { prebuilt = try change.command() } catch {
+                return (WriteResult(status: .error, message: "\(error)"), [])
+            }
         }
-        let readBack = SettingsQuery.led(zone)
-        return DeviceLock.run {
+        return DeviceLock.run { [prebuilt] in
             var log: [String] = []
             let devices = listDevices(log: &log)
             var result = WriteResult(status: .notFound)
@@ -122,12 +129,28 @@ public final class HIDReader {
                         continue
                     }
                     result = WriteResult(status: .error)
-                    result.before = readLED(device, target: target, query: readBack, zone: zone, log: &log)
+                    let before = readBack(device, target: target, change: change, log: &log)
+                    result.before = Self.led(change, before)
+                    let command: Command
+                    if let prebuilt {
+                        command = prebuilt
+                    } else {
+                        guard let before else {
+                            result.message = "could not read the current value: nothing written"
+                            return (result, log)
+                        }
+                        do { command = try change.command(current: before) } catch {
+                            result.message = "\(error)"
+                            return (result, log)
+                        }
+                    }
                     let written = exchange(device, target: target, command: command, log: &log)
-                    result.sent.append(Self.describe(target: target, command: command, prefix: 13))
+                    result.sent.append(Self.describe(target: target, command: command, prefix: command.bytes.count + 1))
                     if written.status == .error { result.message = written.raw; return (result, log) }
-                    result.after = readLED(device, target: target, query: readBack, zone: zone, log: &log)
-                    result.status = led.matches(result.after) ? .ok : .mismatch
+                    let after = readBack(device, target: target, change: change, log: &log)
+                    result.after = Self.led(change, after)
+                    result.readBack = after
+                    result.status = after.map { change.matches($0, before: before) } == true ? .ok : .mismatch
                     if result.status == .ok && save {
                         let saved = exchange(device, target: target, command: .save, log: &log)
                         result.sent.append(Self.describe(target: target, command: .save, prefix: 3))
@@ -140,13 +163,20 @@ public final class HIDReader {
         }
     }
 
-    private func readLED(_ device: IOHIDDevice, target: Target, query: SettingsQuery, zone: LEDZone,
-                         log: inout [String]) -> LEDState? {
-        let ex = exchange(device, target: target, command: query.command, log: &log)
-        guard ex.status == .ok else { return nil }
-        var tmp = MouseSettings()
-        tmp.apply(query, ex.payload)
-        return tmp.leds[zone]
+    /// Reads the value `change` touches; nil if the read failed.
+    private func readBack(_ device: IOHIDDevice, target: Target, change: SettingChange, log: inout [String]) -> MouseSettings? {
+        var s = MouseSettings(connection: target.connection)
+        for query in change.reads {
+            let ex = exchange(device, target: target, command: query?.command ?? .mouseBattery, log: &log)
+            guard ex.status == .ok else { return nil }
+            if let query { s.apply(query, ex.payload) } else { s.applyBattery(ex.payload) }
+        }
+        return s
+    }
+
+    private static func led(_ change: SettingChange, _ s: MouseSettings?) -> LEDState? {
+        if case .led(let zone, _) = change { return s?.leds[zone] }
+        return nil
     }
 
     // MARK: transport

@@ -537,7 +537,7 @@ class LedWriteTests(unittest.TestCase):
         result = rb.set_led("logo", "static", 100, "#ff0000", dry_run=True, hid=NoBackend())
         self.assertEqual(result.status, "dry-run")
         self.assertTrue(result.sent[0].startswith("03 51 28 00 00 00 64 ff 00 00"))
-        self.assertEqual(len(rb.set_led("logo", "static", 100, "#ff0000", save=True, dry_run=True).sent), 3)
+        self.assertEqual(len(rb.set_led("logo", "static", 100, "#ff0000", save=True, dry_run=True).sent), 4)
 
 
 class RealWriteVectorTests(unittest.TestCase):
@@ -554,6 +554,20 @@ class RealWriteVectorTests(unittest.TestCase):
                 self.assertEqual(packet[:len(head)], head)
                 self.assertEqual(set(packet[len(head):]), {0})
                 self.assertTrue(rb.led_matches(a, w["read_back"]))
+
+
+class RealSettingsWriteVectorTests(unittest.TestCase):
+    """protocol.json mouse_writes.settings_writes: power and sensor writes confirmed on the device."""
+
+    def test_confirmed_writes(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["settings_writes"]
+        for w in data["writes"]:
+            with self.subTest(name=w["name"]):
+                command = getattr(rb, w["function"])(*w["args"])
+                head = bytes.fromhex(w["packet"])
+                packet = rb.packet(0x03, command, 64, write=True)
+                self.assertEqual(packet[:len(head)], head)
+                self.assertEqual(set(packet[len(head):]), {0})
 
 
 class SetLedTests(unittest.TestCase):
@@ -608,6 +622,29 @@ class SetLedTests(unittest.TestCase):
         self.assertTrue(result.saved)
         self.assertEqual(sent[-1][1:3].hex(" "), "50 03")
 
+    def test_unconfirmed_save_is_not_reported_as_saved(self):
+        for reply in ([0x03, 0xFF, 0xAA] + [0] * 61, None):   # ff aa, then silence
+            backend, sent, _ = self.make()
+            orig = backend.device
+
+            def no_save_echo(reply=reply, orig=orig):
+                dev = orig()
+                write = dev.write
+
+                def w(data):
+                    if bytes(data)[1:3] == b"\x50\x03":
+                        sent.append(bytes(data))
+                        dev.replies = [reply] if reply else []
+                        return len(data)
+                    return write(data)
+                dev.write = w
+                return dev
+            backend.device = no_save_echo
+            result = rb.set_led("logo", "static", 100, "#ff0000", save=True, hid=backend)
+            self.assertEqual(result.status, "ok")
+            self.assertFalse(result.saved)
+            self.assertIn("not confirmed", result.message)
+
     def test_asleep_mouse_gets_no_write(self):
         backend, sent, state = self.make(awake=False)
         result = rb.set_led("logo", "static", 100, "#ff0000", hid=backend)
@@ -635,6 +672,400 @@ class SetLedTests(unittest.TestCase):
         self.assertEqual(result.status, "mismatch")
         self.assertFalse(result.saved)
         self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])
+
+
+class PowerAndSensorWriteTests(unittest.TestCase):
+    """51 37 (power-off + warning) and 51 31 06 / 0b (angle snapping / tuning): approved 2026-11-12."""
+
+    def test_exact_bytes(self):
+        self.assertEqual(rb.power_command(5, 20).hex(" "), "51 37 00 00 03 00 14")
+        self.assertEqual(rb.power_command(None, 50).hex(" "), "51 37 00 00 ff 00 32")
+        self.assertEqual(rb.power_command(1, 10).hex(" "), "51 37 00 00 00 00 0a")
+        self.assertEqual(rb.angle_snapping_command(True).hex(" "), "51 31 06 00 01")
+        self.assertEqual(rb.angle_snapping_command(False).hex(" "), "51 31 06 00 00")
+        self.assertEqual(rb.angle_tuning_command(-20).hex(" "), "51 31 0b 00 ec ff")
+        self.assertEqual(rb.angle_tuning_command(15).hex(" "), "51 31 0b 00 0f 00")
+        data = rb.packet(None, rb.power_command(3, 20), 65, write=True)
+        self.assertEqual((len(data), data[:8].hex(" ")), (65, "00 51 37 00 00 02 00 14"))
+        self.assertEqual(set(data[8:]), {0})
+
+    def test_invalid_values_are_refused(self):
+        for call in (lambda: rb.power_command(4, 20), lambda: rb.power_command(0, 20),
+                     lambda: rb.power_command(5, 25), lambda: rb.power_command(5, 0), lambda: rb.power_command(5, 60),
+                     lambda: rb.angle_tuning_command(7), lambda: rb.angle_tuning_command(25)):
+            with self.assertRaises(ValueError):
+                call()
+
+    def test_everything_else_stays_refused(self):
+        for hex_ in ("51 31 00 00 07 00",        # DPI stage 1 without its colour
+                     "51 31 04 00 07 00 ff 00 00",   # stage 5 does not exist (field 04 = polling)
+                     "51 31 04 00 04",           # polling 2000 Hz: not offered for the Keris
+                     "51 31 04 00 63",           # polling: index only, never the raw read value
+                     "51 31 05 00 02",           # debounce
+                     "51 31 09 00 05",           # active DPI stage 5
+                     "51 31 0a 00 00",           # no stages
+                     "51 31 00 00 48 03 ff 00 00",   # 42050 DPI: above the Keris' 42000
+                     "51 31 00 00 00 00 ff 00 00",   # 50 DPI: below 100
+                     "51 35 ff 00 ff 02",        # lift-off: only low/high
+                     "51 35 00 00 02 00 00 1c 34 16",   # surface id 02: not an Armoury Crate preset
+                     "51 35 00 00 01 00 00 1c 34",      # surface parameters cut short
+                     "51 35 00 00 01 00 01 1c 34 16",   # [6] set (the echo has it, a write does not)
+                     "51 31 06 00 02",           # angle snapping: only 0/1
+                     "51 31 0b 00 07 00",        # angle tuning: only steps of 5
+                     "51 37 00 00 05 00 14",     # power-off code 5 does not exist
+                     "51 37 00 01 03 00 14",     # reserved byte set
+                     "50 02 01"):                # profile switch: never
+            with self.subTest(command=hex_):
+                self.assertFalse(rb.is_allowed_write(bytes.fromhex(hex_)))
+                with self.assertRaises(ValueError):
+                    rb.packet(0x03, bytes.fromhex(hex_), 64, write=True)
+
+    def make(self, awake=True):
+        """Fake mouse on the Omni that keeps power-off code, warning, snapping and tuning like the real one."""
+        state = {"off": 0x02, "warn": 20, "snap": 0, "tune": 0, "poll": 0x63}
+        sent = []
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                data = bytes(data)
+                sent.append(data)
+                cmd = data[1:]
+                if not awake:
+                    self.replies = [[0x03, 0xFF, 0xAA] + [0] * 61]
+                elif cmd[:2] == b"\x12\x07":
+                    self.replies = [settings_reply(rb.MOUSE_QUERY, {4: 80, 5: state["off"], 6: state["warn"]})]
+                elif cmd[:3] == b"\x12\x04\x00":
+                    t = state["tune"] & 0xFFFF
+                    self.replies = [settings_reply(cmd[:3], {12: state["poll"], 14: 2, 16: state["snap"], 18: t & 0xFF, 19: t >> 8})]
+                elif cmd[:2] == b"\x51\x37":
+                    state["off"], state["warn"] = cmd[4], cmd[6]
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:3] == b"\x51\x31\x04":
+                    state["poll"] = (state["poll"] & 0xF8) | cmd[4]     # the high nibble stays, like the real one
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:3] == b"\x51\x31\x06":
+                    state["snap"] = cmd[4]
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:3] == b"\x51\x31\x0b":
+                    state["tune"] = int.from_bytes(cmd[4:6], "little", signed=True)
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:2] == b"\x50\x03":
+                    self.replies = [settings_reply(cmd[:2], {})]
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                return [{"path": b"omni", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}] \
+                    if pid == rb.PID_OMNI else []
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent, state
+
+    def test_power_write_reads_back_and_saves(self):
+        backend, sent, state = self.make()
+        result = rb.set_power(10, 30, save=True, hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.before, {"power_off_minutes": 3, "low_warning": 20})
+        self.assertEqual(result.after, {"power_off_minutes": 10, "low_warning": 30})
+        self.assertTrue(result.saved)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 07", "51 37", "12 07", "50 03"])
+        self.assertEqual(rb.set_power(None, 30, hid=backend).after["power_off_minutes"], None)   # never
+
+    def test_angle_writes_read_back(self):
+        backend, sent, state = self.make()
+        self.assertEqual(rb.set_angle_snapping(True, hid=backend).after, {"angle_snapping": True})
+        result = rb.set_angle_tuning(-15, hid=backend)
+        self.assertEqual((result.status, result.before, result.after),
+                         ("ok", {"angle_tuning": 0}, {"angle_tuning": -15}))
+        self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])     # no save without asking
+
+    def test_polling_write(self):
+        self.assertEqual(rb.polling_command(1000).hex(" "), "51 31 04 00 03")
+        self.assertEqual(rb.polling_command(125).hex(" "), "51 31 04 00 00")
+        for hz in (2000, 8000, 300):
+            with self.assertRaises(ValueError):
+                rb.polling_command(hz)
+        backend, sent, state = self.make()
+        result = rb.set_polling(500, save=True, hid=backend)
+        self.assertEqual((result.status, result.before, result.after, result.saved),
+                         ("ok", {"polling_hz": 1000}, {"polling_hz": 500}, True))
+        self.assertEqual(state["poll"], 0x62)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 04", "51 31", "12 04", "50 03"])
+
+    def test_mismatch_is_not_saved(self):
+        backend, sent, state = self.make()
+        orig = backend.device
+
+        def stubborn():
+            dev = orig()
+            write = dev.write
+
+            def ignore(data):
+                if bytes(data)[1:3] == b"\x51\x37":
+                    sent.append(bytes(data))
+                    dev.replies = []
+                    return len(data)
+                return write(data)
+            dev.write = ignore
+            return dev
+        backend.device = stubborn
+        result = rb.set_power(5, 20, save=True, hid=backend)
+        self.assertEqual(result.status, "mismatch")
+        self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])
+
+    def test_asleep_mouse_gets_no_write(self):
+        backend, sent, _ = self.make(awake=False)
+        self.assertEqual(rb.set_angle_snapping(True, save=True, hid=backend).status, "asleep")
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07"])
+
+
+class LiftoffWriteTests(unittest.TestCase):
+    """51 35: lift-off low/high, keeping the surface read from 12 06 (approved 2026-11-13)."""
+
+    def test_exact_bytes_keep_the_surface(self):
+        self.assertEqual(rb.liftoff_command("high", 0x01, "1c 34 16").hex(" "), "51 35 00 00 01 01 00 1c 34 16")
+        self.assertEqual(rb.liftoff_command("low", 0x0B, "1a 32 20").hex(" "), "51 35 00 00 0b 00 00 1a 32 20")
+        self.assertEqual(rb.liftoff_command("high", 0xFF, None).hex(" "), "51 35 ff 00 ff 01")   # no surface
+
+    def test_unknown_or_unread_surface_is_not_written(self):
+        for args in (("high", 0x02, "1c 34 16"), ("high", None, None), ("high", 0x01, None), ("medium", 0x01, "1c 34 16")):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                rb.liftoff_command(*args)
+
+    def test_armoury_crate_captures(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["armoury_crate"]
+        captures = {c["name"]: c for c in data["captures"]}
+        sheath = captures["lift-off low -> high (surface ROG Sheath)"]
+        self.assertEqual(rb.packet(0x03, rb.liftoff_command("high", 0x01, "1c 34 16"), 64, write=True)[:11].hex(" "),
+                         sheath["packets"][0])
+        for name, (liftoff, sid, params) in {sheath["name"]: ("high", 0x01, "1c 34 16"),
+                                             "surface ROG Sheath -> Balteus Qi": ("low", 0x0B, "1a 32 20")}.items():
+            s = rb.MouseSettings("m", "omni")
+            rb.parse_mouse_settings(s, "liftoff", bytes.fromhex(captures[name]["read_after"]).ljust(64, b"\0")[1:])
+            self.assertEqual((s.liftoff, s.surface_id, s.surface_params), (liftoff, sid, params))
+        presets = next(c for c in data["captures"] if "surfaces" in c)["surfaces"]
+        for preset in presets:
+            sid = int(preset["id"], 16)
+            with self.subTest(surface=preset["name"]):
+                self.assertEqual(rb.surface_name(sid), "None (no calibration)" if sid == 0xFF else preset["name"].replace(
+                    " (second tile, same name)", " (2)"))
+                command = rb.liftoff_command("low", sid, preset["params"])
+                expected = preset.get("packet") or f"03 51 35 00 00 {preset['id']} 00 00 {preset['params']}"
+                self.assertEqual(rb.packet(0x03, command, 64, write=True)[:len(command) + 1].hex(" "), expected)
+        self.assertEqual(len(rb.SURFACES), len(presets) - 1)
+
+    def make(self, surface=(0x01, b"\x1c\x34\x16"), liftoff=0, keep_surface=True):
+        state = {"id": surface[0], "params": surface[1], "lift": liftoff}
+        sent = []
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                data = bytes(data)
+                sent.append(data)
+                cmd = data[1:]
+                if cmd[:2] == b"\x12\x07":
+                    self.replies = [settings_reply(rb.MOUSE_QUERY, {4: 80, 5: 2, 6: 20})]
+                elif cmd[:2] == b"\x12\x06":
+                    none = state["id"] == 0xFF
+                    self.replies = [settings_reply(cmd[:2], {4: 0 if none else 1, 5: 0xFF if none else 0, 6: state["id"],
+                                                            7: state["lift"], 8: state["params"][0],
+                                                            9: state["params"][1], 10: state["params"][2]})]
+                elif cmd[:2] == b"\x51\x35":
+                    state["lift"] = cmd[5]
+                    if not keep_surface:          # like G-Helper's packet: the surface is gone
+                        state["id"], state["params"] = 0xFF, b"\0\0\0"
+                    elif cmd[2] == 0:
+                        state["id"], state["params"] = cmd[4], cmd[7:10]
+                    else:
+                        state["id"], state["params"] = 0xFF, b"\0\0\0"
+                    self.replies = [settings_reply(cmd[:2], {})]
+                elif cmd[:2] == b"\x50\x03":
+                    self.replies = [settings_reply(cmd[:2], {})]
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                return [{"path": b"omni", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}] \
+                    if pid == rb.PID_OMNI else []
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent, state
+
+    def test_write_keeps_the_surface_reads_back_and_saves(self):
+        backend, sent, state = self.make(surface=(0x0B, b"\x1a\x32\x20"))
+        result = rb.set_liftoff("high", save=True, hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.before, {"liftoff": "low", "surface_id": 0x0B, "surface_params": "1a 32 20"})
+        self.assertEqual(result.after, {"liftoff": "high", "surface_id": 0x0B, "surface_params": "1a 32 20"})
+        self.assertTrue(result.saved)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06", "51 35", "12 06", "50 03"])
+        self.assertEqual(sent[2][:11].hex(" "), "03 51 35 00 00 0b 01 00 1a 32 20")
+
+    def test_no_surface(self):
+        backend, sent, state = self.make(surface=(0xFF, b"\0\0\0"))
+        result = rb.set_liftoff("high", hid=backend)
+        self.assertEqual((result.status, result.after["surface_id"], result.after["liftoff"]), ("ok", 0xFF, "high"))
+        self.assertEqual(sent[2][:7].hex(" "), "03 51 35 ff 00 ff 01")
+
+    def test_lost_surface_is_a_mismatch_and_not_saved(self):
+        backend, sent, _ = self.make(keep_surface=False)
+        result = rb.set_liftoff("high", save=True, hid=backend)
+        self.assertEqual(result.status, "mismatch")
+        self.assertNotIn("50 03", [p[1:3].hex(" ") for p in sent])
+
+    def test_unknown_surface_sends_no_write(self):
+        backend, sent, _ = self.make(surface=(0x02, b"\x1c\x34\x16"))
+        with self.assertRaises(ValueError):
+            rb.set_liftoff("high", hid=backend)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06"])
+
+    def test_surface_keeps_the_liftoff(self):
+        self.assertEqual(rb.surface_command(0x0B, "high").hex(" "), "51 35 00 00 0b 01 00 1a 32 20")
+        self.assertEqual(rb.surface_command(rb.NO_SURFACE, "low").hex(" "), "51 35 ff 00 ff 00")
+        with self.assertRaises(ValueError):
+            rb.surface_command(0x02, "low")
+        self.assertEqual(set(rb.SURFACE_PARAMS) - {rb.NO_SURFACE}, set(rb.SURFACES))
+        backend, sent, state = self.make(liftoff=1)            # ROG Sheath, lift-off high
+        result = rb.set_surface(0x14, save=True, hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.after, {"liftoff": "high", "surface_id": 0x14, "surface_params": "37 2b 0e"})
+        self.assertEqual(sent[2][:11].hex(" "), "03 51 35 00 00 14 01 00 37 2b 0e")
+        self.assertTrue(result.saved)
+        result = rb.set_surface(rb.NO_SURFACE, hid=backend)
+        self.assertEqual(result.after, {"liftoff": "high", "surface_id": 0xFF, "surface_params": None})
+
+    def test_unknown_surface_is_not_replaced(self):
+        backend, sent, _ = self.make(surface=(0x02, b"\x1c\x34\x16"))
+        with self.assertRaises(ValueError):
+            rb.set_surface(0x01, hid=backend)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06"])
+
+    def test_surface_presets_match_the_captured_params(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["armoury_crate"]
+        presets = next(c for c in data["captures"] if "surfaces" in c)["surfaces"]
+        self.assertEqual({int(s["id"], 16): s["params"] for s in presets}, rb.SURFACE_PARAMS)
+
+    def test_dry_run_reads_but_writes_nothing(self):
+        backend, sent, _ = self.make()
+        result = rb.set_liftoff("high", save=True, dry_run=True, hid=backend)
+        self.assertEqual(result.status, "dry-run")
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 07", "12 06"])
+        self.assertTrue(result.sent[0].startswith("03 51 35 00 00 01 01 00 1c 34 16"))
+        self.assertTrue(result.sent[1].startswith("03 50 03"))
+
+
+class DpiWriteTests(unittest.TestCase):
+    """51 31 <stage> (DPI + stage colour), 51 31 09 (active stage), 51 31 0a (stage count): approved 2026-11-13."""
+
+    def test_exact_bytes(self):
+        self.assertEqual(rb.dpi_command(3, 700, "#003dff").hex(" "), "51 31 02 00 0d 00 00 3d ff")
+        self.assertEqual(rb.dpi_command(4, 3200, "#31ff00").hex(" "), "51 31 03 00 3f 00 31 ff 00")
+        self.assertEqual(rb.dpi_command(1, 42000, "#ff0000").hex(" "), "51 31 00 00 47 03 ff 00 00")
+        self.assertEqual(rb.dpi_command(1, 100, "#ff0000").hex(" "), "51 31 00 00 01 00 ff 00 00")
+        self.assertEqual(rb.active_stage_command(3).hex(" "), "51 31 09 00 03")
+        self.assertEqual(rb.stage_count_command(4).hex(" "), "51 31 0a 00 04")
+        for call in (lambda: rb.dpi_command(0, 800, "#ff0000"), lambda: rb.dpi_command(5, 800, "#ff0000"),
+                     lambda: rb.dpi_command(1, 825, "#ff0000"), lambda: rb.dpi_command(1, 50, "#ff0000"),
+                     lambda: rb.dpi_command(1, 42050, "#ff0000"), lambda: rb.active_stage_command(5),
+                     lambda: rb.stage_count_command(0)):
+            with self.assertRaises(ValueError):
+                call()
+
+    def test_armoury_crate_dpi_packets(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["armoury_crate"]
+        capture = next(c for c in data["captures"] if c["name"].startswith("DPI stage 3"))
+        after = capture["after"]
+        built = [rb.dpi_command(i + 1, after["dpi"][i], after["dpi_colors"][i]) for i in range(4)]
+        built += [rb.stage_count_command(4), rb.active_stage_command(after["dpi_stage"])]
+        built = {rb.packet(0x03, c, 64, write=True)[:len(c) + 1].hex(" ") for c in built}
+        self.assertLessEqual(built, set(capture["packets"]))
+
+    def make(self, xy=None, colors=None, stage=4, count=4):
+        state = {"xy": xy or [[400, 400], [800, 800], [650, 650], [3200, 3200]],
+                 "colors": colors or ["#ff0000", "#c100ff", "#000000", "#31ff00"], "stage": stage, "count": count}
+        sent = []
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                data = bytes(data)
+                sent.append(data)
+                cmd = data[1:]
+                ok = [settings_reply(cmd[:2], {})]
+                if cmd[:2] == b"\x12\x07":
+                    self.replies = [settings_reply(rb.MOUSE_QUERY, {4: 80, 5: 2, 6: 20})]
+                elif cmd[:3] == b"\x12\x04\x02":
+                    values = {}
+                    for i, (x, y) in enumerate(state["xy"]):
+                        for j, v in enumerate(((x - 50) // 50, (y - 50) // 50)):
+                            values[4 + 4 * i + 2 * j], values[5 + 4 * i + 2 * j] = v & 0xFF, v >> 8
+                    self.replies = [settings_reply(cmd[:3], values)]
+                elif cmd[:3] == b"\x12\x04\x03":
+                    rgb = b"".join(bytes.fromhex(c[1:]) for c in state["colors"])
+                    self.replies = [settings_reply(cmd[:3], {4 + i: b for i, b in enumerate(rgb)})]
+                elif cmd[:2] == b"\x12\x00":
+                    self.replies = [settings_reply(cmd[:2], {4: 2, 6: 7, 11: state["stage"], 14: 10, 16: 1, 18: state["count"]})]
+                elif cmd[:3] == b"\x51\x31\x09":
+                    state["stage"] = cmd[4]
+                    self.replies = ok
+                elif cmd[:3] == b"\x51\x31\x0a":
+                    state["count"] = cmd[4]
+                    self.replies = ok
+                elif cmd[:2] == b"\x51\x31" and cmd[2] < 4:
+                    v = (int.from_bytes(cmd[4:6], "little")) * 50 + 50
+                    state["xy"][cmd[2]] = [v, v]
+                    state["colors"][cmd[2]] = "#" + cmd[6:9].hex()
+                    self.replies = ok
+                elif cmd[:2] == b"\x50\x03":
+                    self.replies = ok
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                return [{"path": b"omni", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}] \
+                    if pid == rb.PID_OMNI else []
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent, state
+
+    def test_dpi_keeps_the_stage_colour(self):
+        backend, sent, state = self.make()
+        result = rb.set_dpi(3, 700, save=True, hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.before, {"dpi_xy": [650, 650], "color": "#000000"})
+        self.assertEqual(result.after, {"dpi_xy": [700, 700], "color": "#000000"})
+        self.assertEqual(sent[3][:10].hex(" "), "03 51 31 02 00 0d 00 00 00 00")
+        self.assertEqual([p[1:4].hex(" ") for p in sent],
+                         ["12 07 00", "12 04 02", "12 04 03", "51 31 02", "12 04 02", "12 04 03", "50 03 00"])
+        self.assertTrue(result.saved)
+
+    def test_dpi_with_a_new_colour(self):
+        backend, sent, state = self.make()
+        result = rb.set_dpi(1, 1600, color="3D8BFF", hid=backend)
+        self.assertEqual((result.status, result.after), ("ok", {"dpi_xy": [1600, 1600], "color": "#3d8bff"}))
+        self.assertEqual(state["colors"][0], "#3d8bff")
+
+    def test_separate_x_y_is_not_overwritten(self):
+        backend, sent, _ = self.make(xy=[[400, 400], [800, 1200], [650, 650], [3200, 3200]])
+        with self.assertRaises(ValueError):
+            rb.set_dpi(2, 900, hid=backend)
+        self.assertNotIn("51 31", [p[1:3].hex(" ") for p in sent])
+
+    def test_active_stage_and_count(self):
+        backend, sent, state = self.make(stage=4, count=4)
+        self.assertEqual(rb.set_active_stage(2, hid=backend).after, {"dpi_stage": 2, "dpi_stage_count": 4})
+        self.assertEqual(rb.set_stage_count(3, hid=backend).after, {"dpi_stage": 2, "dpi_stage_count": 3})
+        with self.assertRaises(ValueError):                 # stage 4 is not on the button any more
+            rb.set_active_stage(4, hid=backend)
+        rb.set_active_stage(3, hid=backend)
+        with self.assertRaises(ValueError):                 # fewer stages than the active one
+            rb.set_stage_count(2, hid=backend)
+        self.assertEqual((state["stage"], state["count"]), (3, 3))
 
 
 class LowBatteryNotificationTests(unittest.TestCase):

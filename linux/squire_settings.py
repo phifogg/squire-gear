@@ -2,9 +2,10 @@
 """Squire settings window for Linux (GTK 4 + libadwaita).
 
 Devices on the left; the selected device drawn in the middle with clickable zones and callouts; the values for
-the selected zone on the right. Shows what squire.read_mouse_settings reads; the three lights can be changed,
-and are written only on an explicit Apply (squire.set_led: read back, then one save). DPI, sensor and power are
-shown only so far.
+the selected zone on the right. Shows what squire.read_mouse_settings reads; the three lights, power-off and
+low-battery warning, angle snapping and tuning, polling rate, surface, lift-off distance and the DPI stages (value,
+colour, active stage, stage count) can be changed, and are written only on an explicit Apply (read back, then one
+save).
 
 Runs as its own process because the tray is GTK 3 (AppIndicator) and GTK 3 and 4 cannot share a process.
 """
@@ -149,14 +150,199 @@ EDITABLE_ZONES = ("logo", "wheel", "side")
 EDIT_MODES = list(squire.LED_WRITE_MODES)      # static, breathing, color-cycle, react, battery, off
 
 
+# Besides the light zones, `pending` can hold these keys (power: {"power_off_minutes", "low_warning"}; the others a
+# bool / degrees / "low" or "high"). Power and angle bytes approved and confirmed on the device 2026-11-12
+# (protocol.json settings_writes); polling, surface and lift-off approved 2026-11-13 (armoury_crate captures).
+# Surface comes before lift-off: the surface write keeps the lift-off the mouse has, then lift-off keeps the new surface.
+# DPI (approved 2026-11-13): "dpi_1".."dpi_4" = {"dpi", "color"} per stage, "dpi_stage" (active), "dpi_stage_count".
+DPI_KEYS = tuple(f"dpi_{i}" for i in range(1, squire.DPI_STAGES + 1))
+OTHER_KEYS = DPI_KEYS + ("dpi_stage", "dpi_stage_count", "power", "angle_snapping", "angle_tuning", "polling_hz",
+                         "surface_id", "liftoff")
+OTHER_TITLES = {"power": "Power", "angle_snapping": "Angle snapping", "angle_tuning": "Angle tuning",
+                "polling_hz": "Polling rate", "surface_id": "Surface", "liftoff": "Lift-off distance",
+                "dpi_stage": "Active DPI stage", "dpi_stage_count": "DPI stages",
+                **{key: f"DPI stage {key[4:]}" for key in DPI_KEYS}}
+POWER_OFF_CHOICES = [1, 2, 3, 5, 10, None]      # minutes, None = never
+
+
+def current_other(s: squire.MouseSettings, key: str):
+    if key == "power":
+        return {"power_off_minutes": s.power_off_minutes, "low_warning": s.low_warning}
+    if key in DPI_KEYS:
+        i = int(key[4:]) - 1
+        if i >= len(s.dpi_xy) or i >= len(s.dpi_colors):
+            return None
+        return {"dpi": s.dpi_xy[i][0], "color": s.dpi_colors[i]}
+    return getattr(s, key)
+
+
+def can_edit_dpi(s: squire.MouseSettings, stage: int) -> bool:
+    """A stage with separate X/Y values is shown only: the write sets both alike."""
+    i = stage - 1
+    return i < len(s.dpi_xy) and i < len(s.dpi_colors) and s.dpi_xy[i][0] == s.dpi_xy[i][1]
+
+
+def edit_dpi_stages(s: squire.MouseSettings, pending: dict, active: Optional[int] = None,
+                    count: Optional[int] = None) -> dict:
+    """Active stage or stage count. They stay consistent: a stage beyond the count raises the count, a count below
+    the active stage lowers the active stage."""
+    p = preview_settings(s, pending)
+    new_active = active if active is not None else p.dpi_stage
+    new_count = count if count is not None else p.dpi_stage_count
+    if active is not None and new_active > new_count:
+        new_count = new_active
+    if count is not None and new_active > new_count:
+        new_active = new_count
+    pending = edit_other(s, pending, "dpi_stage", new_active)
+    return edit_other(s, pending, "dpi_stage_count", new_count)
+
+
 def preview_settings(s: squire.MouseSettings, pending: dict) -> squire.MouseSettings:
-    """The settings as they will be after Apply (for the drawing and the callouts)."""
+    """The settings as they will be after Apply (for the drawing, the callouts and the chips)."""
     import dataclasses
-    return dataclasses.replace(s, leds={**s.leds, **pending})
+    leds = {k: v for k, v in pending.items() if k in squire.LED_ZONES}
+    other = dict(pending.get("power", {}))
+    for key in ("angle_snapping", "angle_tuning", "liftoff", "polling_hz", "surface_id", "dpi_stage", "dpi_stage_count"):
+        if key in pending:
+            other[key] = pending[key]
+    if any(key in pending for key in DPI_KEYS):
+        dpi, xy, colors = list(s.dpi), [list(v) for v in s.dpi_xy], list(s.dpi_colors)
+        for key in DPI_KEYS:
+            if key in pending:
+                i = int(key[4:]) - 1
+                dpi[i], xy[i], colors[i] = pending[key]["dpi"], [pending[key]["dpi"]] * 2, pending[key]["color"]
+        other.update(dpi=dpi, dpi_xy=xy, dpi_colors=colors)
+    if "surface_id" in pending:
+        other["surface_params"] = squire.SURFACE_PARAMS.get(pending["surface_id"])
+    return dataclasses.replace(s, leds={**s.leds, **leds}, **other)
 
 
 def changed_zones(s: squire.MouseSettings, pending: dict) -> list[str]:
-    return [zone for zone, led in pending.items() if not squire.led_matches(led, s.leds.get(zone))]
+    return [zone for zone, led in pending.items()
+            if zone in squire.LED_ZONES and not squire.led_matches(led, s.leds.get(zone))]
+
+
+def changes(s: squire.MouseSettings, pending: dict) -> list[str]:
+    """Everything Apply will write, in a fixed order: changed light zones, then OTHER_KEYS. The active stage goes
+    after the stage count only when it is beyond the count the mouse has (the mouse refuses neither, but Squire keeps
+    the active stage on the button at every step)."""
+    keys = list(OTHER_KEYS)
+    if pending.get("dpi_stage", 0) > (s.dpi_stage_count or 0):
+        keys.remove("dpi_stage")
+        keys.insert(keys.index("dpi_stage_count") + 1, "dpi_stage")
+    return changed_zones(s, pending) + [k for k in keys if k in pending and pending[k] != current_other(s, k)]
+
+
+def change_title(key: str) -> str:
+    return ZONE_TITLES.get(key) if key in squire.LED_ZONES else OTHER_TITLES[key]
+
+
+def change_command(s: squire.MouseSettings, key: str, value, after: Optional[squire.MouseSettings] = None) -> bytes:
+    """The bytes for one change. Surface keeps the lift-off as last read; lift-off keeps the surface of `after` (the
+    preview: a new surface is written first). set_surface()/set_liftoff() read 12 06 again right before they write,
+    so what is sent keeps whatever the mouse has at that moment."""
+    if key in squire.LED_ZONES:
+        return squire.led_command(key, value["mode"], value["brightness"], value["color"])
+    if key == "power":
+        return squire.power_command(value["power_off_minutes"], value["low_warning"])
+    if key == "angle_snapping":
+        return squire.angle_snapping_command(value)
+    if key == "liftoff":
+        after = after or s
+        return squire.liftoff_command(value, after.surface_id, after.surface_params)
+    if key == "surface_id":
+        return squire.surface_command(value, s.liftoff)
+    if key == "polling_hz":
+        return squire.polling_command(value)
+    if key in DPI_KEYS:
+        return squire.dpi_command(int(key[4:]), value["dpi"], value["color"])
+    if key == "dpi_stage":
+        return squire.active_stage_command(value)
+    if key == "dpi_stage_count":
+        return squire.stage_count_command(value)
+    return squire.angle_tuning_command(value)
+
+
+def write_change(key: str, value, save: bool) -> "squire.WriteResult":
+    if key in squire.LED_ZONES:
+        return squire.set_led(key, value["mode"], value["brightness"], value["color"], save=save)
+    if key == "power":
+        return squire.set_power(value["power_off_minutes"], value["low_warning"], save=save)
+    if key == "angle_snapping":
+        return squire.set_angle_snapping(value, save=save)
+    if key == "liftoff":
+        return squire.set_liftoff(value, save=save)
+    if key == "surface_id":
+        return squire.set_surface(value, save=save)
+    if key == "polling_hz":
+        return squire.set_polling(value, save=save)
+    if key in DPI_KEYS:
+        return squire.set_dpi(int(key[4:]), value["dpi"], color=value["color"], save=save)
+    if key == "dpi_stage":
+        return squire.set_active_stage(value, save=save)
+    if key == "dpi_stage_count":
+        return squire.set_stage_count(value, save=save)
+    return squire.set_angle_tuning(value, save=save)
+
+
+def edit_other(s: squire.MouseSettings, pending: dict, key: str, value) -> dict:
+    """A power or sensor edit: kept pending, or dropped when it is back to what the mouse has."""
+    pending = dict(pending)
+    if value == current_other(s, key):
+        pending.pop(key, None)
+    else:
+        pending[key] = value
+    return pending
+
+
+def can_edit_liftoff(s: squire.MouseSettings) -> bool:
+    """Only with a surface Squire knows (or none): an unknown one could be a calibration it must not touch."""
+    try:
+        squire.liftoff_command("low", s.surface_id, s.surface_params)
+        return s.liftoff in squire.LIFTOFF_CODES
+    except ValueError:
+        return False
+
+
+def wrapping_list_factory(row):
+    """Popover rows for a ComboRow whose items are long: wrap instead of ellipsizing, with the check mark on the
+    current choice that the default list has."""
+    from gi.repository import Gtk     # GTK 4 is loaded in run(), never at import (tests run without it)
+    factory, bound = Gtk.SignalListItemFactory(), set()
+
+    def mark(item):
+        item.get_child().get_last_child().set_opacity(1 if item.get_position() == row.get_selected() else 0)
+
+    def setup(_f, item):
+        box = Gtk.Box(spacing=12)
+        box.append(Gtk.Label(xalign=0, wrap=True, max_width_chars=32, width_chars=24, hexpand=True))
+        box.append(Gtk.Image(icon_name="object-select-symbolic"))
+        item.set_child(box)
+
+    def bind(_f, item):
+        item.get_child().get_first_child().set_label(item.get_item().get_string())
+        bound.add(item)
+        mark(item)
+
+    factory.connect("setup", setup)
+    factory.connect("bind", bind)
+    factory.connect("unbind", lambda _f, item: bound.discard(item))
+    row.connect("notify::selected", lambda *_: [mark(i) for i in bound])
+    return factory
+
+
+def can_edit_surface(s: squire.MouseSettings) -> bool:
+    """Only replace a surface Squire knows (or none), and only with a lift-off it can write back."""
+    return s.surface_id in squire.SURFACE_PARAMS and s.liftoff in squire.LIFTOFF_CODES
+
+
+# Surface choices: none first, then the presets by name
+SURFACE_CHOICES = [squire.NO_SURFACE] + sorted(squire.SURFACES, key=lambda i: squire.SURFACES[i])
+
+
+def can_edit_power(s: squire.MouseSettings) -> bool:
+    """Only when the warning level read from the mouse is one Squire can write back."""
+    return s.low_warning in squire.LOW_WARNING_LEVELS and s.power_off_minutes in squire.POWER_OFF_CODES
 
 
 def edit_pending(s: squire.MouseSettings, pending: dict, zone: str, linked: bool = False, **changes) -> dict:
@@ -182,10 +368,10 @@ def can_link(s: squire.MouseSettings, pending: dict, zone: str) -> bool:
 
 
 def apply_status(s: squire.MouseSettings, pending: dict) -> str:
-    zones = changed_zones(s, pending)
-    if not zones:
+    keys = changes(s, pending)
+    if not keys:
         return "Showing the values read from the mouse. Nothing is sent until you click Apply."
-    names = ", ".join(ZONE_TITLES[z] for z in zones)
+    names = ", ".join(change_title(k) for k in keys)
     return f"Not sent yet: {names}. Apply writes it to the mouse, reads it back and saves it."
 
 
@@ -194,10 +380,10 @@ def planned_packets(s: squire.MouseSettings, pending: dict) -> list[str]:
     report_id = 0x03 if s.connection == "omni" else None
     length = 64 if s.connection == "omni" else 65
     lines = []
-    for zone in changed_zones(s, pending):
-        led = pending[zone]
-        command = squire.led_command(zone, led["mode"], led["brightness"], led["color"])
-        lines.append(squire.packet(report_id, command, length, write=True)[:13].hex(" ") + " …")
+    after = preview_settings(s, pending)
+    for key in changes(s, pending):
+        command = change_command(s, key, pending[key], after)
+        lines.append(squire.packet(report_id, command, length, write=True)[:len(command) + 1].hex(" ") + " …")
     if lines:
         lines.append(squire.packet(report_id, squire.SAVE_COMMAND, length, write=True)[:3].hex(" ") + " …  (save)")
     return lines
@@ -267,7 +453,7 @@ def run(argv: list[str]) -> int:
             self.refresh_button.connect("clicked", lambda _: self.refresh())
             header.pack_start(self.refresh_button)
             self.content_view.add_top_bar(header)
-            self.banner = Adw.Banner(title="The lights can be changed; DPI, sensor and power are shown only so far. "
+            self.banner = Adw.Banner(title="Lights, DPI, sensor and power settings can be changed. "
                                            "Nothing is sent until you click Apply.", revealed=True)
             self.content_view.add_top_bar(self.banner)
             split.set_content(Adw.NavigationPage(title="Settings", child=self.content_view))
@@ -495,28 +681,79 @@ def run(argv: list[str]) -> int:
                 else:
                     group.add(row("Not read", ""))
             elif zone == "dpi":
-                count = s.dpi_stage_count or len(s.dpi)
-                for i, dpi in enumerate(s.dpi[:count]):
-                    xy = s.dpi_xy[i] if i < len(s.dpi_xy) else None
-                    sub = "active" if s.dpi_stage == i + 1 else ""
-                    if xy and xy[0] != xy[1]:
-                        sub = (sub + " · " if sub else "") + f"X {xy[0]} / Y {xy[1]}"
-                    color = s.dpi_colors[i] if i < len(s.dpi_colors) else "none"
-                    group.add(row(f"Stage {i + 1}", f"{dpi} DPI", sub, suffix=swatch(color)))
-                group.add(row("Stages on the DPI button", str(count)))
+                self.build_dpi_editor(group, s)
             elif zone == "sensor":
-                group.add(row("Polling rate", f"{s.polling_hz} Hz",
-                              f"raw 0x{s.polling_raw or 0:02x}; 8000 Hz mode not confirmed yet"))
-                group.add(row("Lift-off distance", (s.liftoff or "").capitalize()))
-                group.add(row("Angle snapping", "On" if s.angle_snapping else "Off"))
-                group.add(row("Angle tuning", f"{s.angle_tuning}°"))
+                p = preview_settings(s, self.pending)
+                if s.polling_hz in squire.POLLING_WRITE_HZ:
+                    rates = sorted(squire.POLLING_WRITE_HZ)
+                    poll = Adw.ComboRow(title="Polling rate", subtitle="Reports per second",
+                                        model=Gtk.StringList.new([f"{hz} Hz" for hz in rates]))
+                    poll.set_selected(rates.index(p.polling_hz))
+                    poll.connect("notify::selected", lambda r, _p: self.on_other("polling_hz", rates[r.get_selected()]))
+                    group.add(poll)
+                else:
+                    group.add(row("Polling rate", f"{s.polling_hz} Hz", f"raw 0x{s.polling_raw or 0:02x}"))
+                if can_edit_liftoff(s):
+                    choices = list(squire.LIFTOFF_CODES)
+                    lift = Adw.ComboRow(title="Lift-off distance", subtitle="The surface setting stays as it is",
+                                        model=Gtk.StringList.new([c.capitalize() for c in choices]))
+                    lift.set_selected(choices.index(p.liftoff))
+                    lift.connect("notify::selected", lambda r, _p: self.on_other("liftoff", choices[r.get_selected()]))
+                    group.add(lift)
+                else:
+                    group.add(row("Lift-off distance", (s.liftoff or "").capitalize(),
+                                  "Shown only: the surface is not one Squire knows, so it is left alone"))
+                if can_edit_surface(s):
+                    # the names are long (up to 47 characters): no subtitle, so the value on the right gets the
+                    # room; the list wraps instead of cutting names off
+                    surf = Adw.ComboRow(title="Surface",
+                                        tooltip_text="Mouse pad preset; the lift-off stays as it is",
+                                        model=Gtk.StringList.new([squire.surface_name(i) for i in SURFACE_CHOICES]))
+                    surf.set_list_factory(wrapping_list_factory(surf))
+                    surf.set_selected(SURFACE_CHOICES.index(p.surface_id))
+                    surf.connect("notify::selected",
+                                 lambda r, _p: self.on_other("surface_id", SURFACE_CHOICES[r.get_selected()]))
+                    group.add(surf)
+                else:
+                    group.add(row("Surface", squire.surface_name(s.surface_id) or "–",
+                                  "Not a preset Squire knows (a calibration?), so it is left alone"))
+                if p.angle_snapping is not None:
+                    snap = Adw.SwitchRow(title="Angle snapping", active=p.angle_snapping,
+                                         subtitle="Straightens nearly horizontal and vertical movements")
+                    snap.connect("notify::active", lambda r, _p: self.on_other("angle_snapping", r.get_active()))
+                    group.add(snap)
+                if p.angle_tuning is not None:
+                    degrees = list(squire.ANGLE_TUNING_DEGREES)
+                    if p.angle_tuning not in degrees:
+                        degrees.append(p.angle_tuning)          # shown, not offered as a write
+                    tune = Adw.ComboRow(title="Angle tuning", subtitle="Rotates the sensor's axes, in steps of 5°",
+                                        model=Gtk.StringList.new([f"{d}°" for d in degrees]))
+                    tune.set_selected(degrees.index(p.angle_tuning))
+                    tune.connect("notify::selected", lambda r, _p: self.on_other("angle_tuning", degrees[r.get_selected()])
+                                 if degrees[r.get_selected()] in squire.ANGLE_TUNING_DEGREES else None)
+                    group.add(tune)
                 group.add(row("Button response", f"{s.debounce_ms} ms" if s.debounce_ms else f"index {s.debounce_index}"))
             elif zone == "power":
                 b = self.batteries.get("mouse")
                 if b and b.percent is not None:
                     group.add(row("Battery", f"{b.percent} %", "charging" if b.charging else ""))
-                group.add(row("Turn off after", "Never" if s.power_off_minutes is None else f"{s.power_off_minutes} min"))
-                group.add(row("Low-battery warning", f"{s.low_warning} %", "Squire's notification uses this level"))
+                if can_edit_power(s):
+                    power = self.pending.get("power") or current_other(s, "power")
+                    off = Adw.ComboRow(title="Turn off after", model=Gtk.StringList.new(
+                        ["Never" if m is None else f"{m} min" for m in POWER_OFF_CHOICES]))
+                    off.set_selected(POWER_OFF_CHOICES.index(power["power_off_minutes"]))
+                    off.connect("notify::selected", lambda r, _p: self.on_power(power_off_minutes=POWER_OFF_CHOICES[r.get_selected()]))
+                    group.add(off)
+                    levels = list(squire.LOW_WARNING_LEVELS)
+                    warn = Adw.ComboRow(title="Low-battery warning", subtitle="Squire's notification uses this level",
+                                        model=Gtk.StringList.new([f"{w} %" for w in levels]))
+                    warn.set_selected(levels.index(power["low_warning"]))
+                    warn.connect("notify::selected", lambda r, _p: self.on_power(low_warning=levels[r.get_selected()]))
+                    group.add(warn)
+                else:
+                    group.add(row("Turn off after", "Never" if s.power_off_minutes is None else f"{s.power_off_minutes} min"))
+                    group.add(row("Low-battery warning", f"{s.low_warning} %",
+                                  "Not one Squire can write back (10–50 %), so power is shown only"))
             page.add(group)
             info = Adw.PreferencesGroup(title="Device")
             info.add(row("Connection", "Omni receiver" if s.connection == "omni" else "Wired"))
@@ -574,9 +811,72 @@ def run(argv: list[str]) -> int:
             group.add(self.color_row)
             self.editor_zone = zone
 
+        def build_dpi_editor(self, group, s):
+            p = preview_settings(s, self.pending)
+            count = p.dpi_stage_count or len(p.dpi)
+            stages = list(range(1, squire.DPI_STAGES + 1))
+            self.dpi_rows = {}
+            for stage in stages:
+                i = stage - 1
+                if i >= len(p.dpi):
+                    break
+                sub = "active" if p.dpi_stage == stage else "" if stage <= count else "not on the DPI button"
+                if not can_edit_dpi(s, stage):
+                    xy = s.dpi_xy[i] if i < len(s.dpi_xy) else None
+                    if xy:
+                        sub = (sub + " · " if sub else "") + f"X {xy[0]} / Y {xy[1]}, shown only"
+                    color = s.dpi_colors[i] if i < len(s.dpi_colors) else "none"
+                    group.add(row(f"Stage {stage}", f"{p.dpi[i]} DPI", sub, suffix=swatch(color)))
+                    continue
+                spin = Adw.SpinRow(title=f"Stage {stage}", subtitle=sub, digits=0, snap_to_ticks=True,
+                                   adjustment=Gtk.Adjustment(value=p.dpi[i], lower=squire.DPI_MIN,
+                                                             upper=squire.DPI_MAX, step_increment=squire.DPI_STEP,
+                                                             page_increment=squire.DPI_STEP * 10))
+                button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER,
+                                               tooltip_text="Stage colour")
+                rgba = Gdk.RGBA()
+                rgba.parse(p.dpi_colors[i])
+                button.set_rgba(rgba)
+
+                def on_dpi(_w, _p, stage=stage, spin=spin, button=button):
+                    c = button.get_rgba()
+                    value = int(round(spin.get_value() / squire.DPI_STEP)) * squire.DPI_STEP
+                    color = "#%02x%02x%02x" % (round(c.red * 255), round(c.green * 255), round(c.blue * 255))
+                    self.on_other(f"dpi_{stage}", {"dpi": value, "color": color})
+                spin.connect("notify::value", on_dpi)
+                button.connect("notify::rgba", on_dpi)
+                spin.add_suffix(button)
+                group.add(spin)
+            active = Adw.ComboRow(title="Active stage", subtitle="The stage in use now",
+                                  model=Gtk.StringList.new([f"Stage {n}" for n in stages]))
+            active.set_selected((p.dpi_stage or 1) - 1)
+            active.connect("notify::selected", lambda r, _p: self.on_dpi_stages(active=r.get_selected() + 1))
+            group.add(active)
+            number = Adw.ComboRow(title="Stages on the DPI button", subtitle="The button cycles through these",
+                                  model=Gtk.StringList.new([str(n) for n in stages]))
+            number.set_selected(count - 1)
+            number.connect("notify::selected", lambda r, _p: self.on_dpi_stages(count=r.get_selected() + 1))
+            group.add(number)
+
+        def on_dpi_stages(self, active=None, count=None):
+            before = preview_settings(self.settings, self.pending)
+            if (active or before.dpi_stage) == before.dpi_stage and (count or before.dpi_stage_count) == before.dpi_stage_count:
+                return      # the combo was set by render(), not by the user
+            self.pending = edit_dpi_stages(self.settings, self.pending, active=active, count=count)
+            self.render()   # the other combo and the stage notes may follow
+
         def on_edit(self, zone, **changes):
             self.pending = edit_pending(self.settings, self.pending, zone, linked=self.link_zones, **changes)
             self.update_preview()
+
+        def on_other(self, key, value):
+            self.pending = edit_other(self.settings, self.pending, key, value)
+            self.update_preview()
+
+        def on_power(self, **change):
+            power = dict(self.pending.get("power") or current_other(self.settings, "power"))
+            power.update(change)
+            self.on_other("power", power)
 
         def on_link(self, zone, on):
             self.link_zones = on
@@ -621,7 +921,7 @@ def run(argv: list[str]) -> int:
                 self.brightness_row.set_visible(mode != "off")
                 self.color_row.set_visible(shows_color(mode))
             if getattr(self, "apply_label", None) is not None:
-                dirty = bool(changed_zones(s, self.pending))
+                dirty = bool(changes(s, self.pending))
                 self.apply_label.set_label("Applying…" if self.applying else apply_status(s, self.pending))
                 self.apply_button.set_sensitive(dirty and not self.applying)
                 self.revert_button.set_sensitive(dirty and not self.applying)
@@ -634,53 +934,68 @@ def run(argv: list[str]) -> int:
             self.render()
 
         def apply_changes(self):
-            if self.applying or not changed_zones(self.settings, self.pending):
+            keys = changes(self.settings, self.pending) if self.settings else []
+            if self.applying or not keys:
                 return
             self.applying = True
             self.refresh_button.set_sensitive(False)
             self.update_preview()
-            work = {zone: dict(self.pending[zone]) for zone in changed_zones(self.settings, self.pending)}
+            work = {key: self.pending[key] for key in keys}
 
             def worker():
-                # write every zone, save once with the last one, and only if all earlier ones matched
-                results, zones = {}, list(work)
-                for i, zone in enumerate(zones):
-                    led = work[zone]
+                # write every change, save once with the last one, and only if all earlier ones matched
+                results = {}
+                for i, key in enumerate(keys):
                     if DEMO:   # demo: nothing is sent
-                        results[zone] = squire.WriteResult("ok", after=led, saved=True, message="demo")
+                        results[key] = squire.WriteResult("ok", saved=True, message="demo")
                         continue
                     try:
-                        last = i == len(zones) - 1
-                        results[zone] = squire.set_led(zone, led["mode"], led["brightness"], led["color"], save=last)
+                        results[key] = write_change(key, work[key], save=i == len(keys) - 1)
                     except Exception as error:  # keep the window alive
-                        results[zone] = squire.WriteResult("error", message=str(error))
-                    if results[zone].status != "ok":
+                        results[key] = squire.WriteResult("error", message=str(error))
+                    if results[key].status != "ok":
                         break   # stop: nothing more is written and nothing is saved
-                saved = bool(results) and all(r.status == "ok" for r in results.values()) and len(results) == len(zones) \
-                    and results[zones[-1]].saved
+                saved = len(results) == len(keys) and all(r.status == "ok" for r in results.values()) \
+                    and results[keys[-1]].saved
                 for r in results.values():
                     r.saved = saved
-                GLib.idle_add(self.apply_done, results)
+                GLib.idle_add(self.apply_done, results, work)
 
             threading.Thread(target=worker, name="squire-write", daemon=True).start()
 
-        def apply_done(self, results):
+        def apply_done(self, results, work):
             self.applying = False
             self.refresh_button.set_sensitive(True)
             failed = []
-            for zone, result in results.items():
-                if result.status == "ok" and result.saved and result.after:
-                    self.settings.leds[zone] = result.after
-                    self.pending.pop(zone, None)
+            for key, result in results.items():
+                if result.status == "ok" and result.saved:
+                    value = work[key]
+                    if key in squire.LED_ZONES:
+                        self.settings.leds[key] = result.after or value
+                    elif key == "power":
+                        self.settings.power_off_minutes = value["power_off_minutes"]
+                        self.settings.low_warning = value["low_warning"]
+                    elif key in DPI_KEYS:
+                        i = int(key[4:]) - 1
+                        self.settings.dpi[i], self.settings.dpi_xy[i] = value["dpi"], [value["dpi"]] * 2
+                        self.settings.dpi_colors[i] = value["color"]
+                    else:
+                        setattr(self.settings, key, value)
+                    if key == "surface_id":
+                        self.settings.surface_params = squire.SURFACE_PARAMS.get(value)
+                    elif key == "polling_hz" and self.settings.polling_raw is not None:
+                        self.settings.polling_raw = (self.settings.polling_raw & 0xF8) | squire.POLLING_WRITE_HZ[value]
+                    self.pending.pop(key, None)
                 else:
-                    failed.append((zone, result))
+                    failed.append((key, result))
             if failed:
                 texts = {"asleep": "The mouse is asleep. Move it and click Apply again.",
-                         "ok": "Written, but not saved because another change failed.",
+                         "ok": "Written to the mouse's memory but not saved (lost when it is switched off).",
                          "mismatch": "The mouse did not take the new value (read back differs). Nothing was saved.",
                          "no-response": "The mouse did not answer. Move it and click Apply again."}
-                body = "\n".join(f"{ZONE_TITLES[z]}: {texts.get(r.status, r.status + ' ' + r.message)}"
-                                  for z, r in failed)
+                body = "\n".join(f"{change_title(k)}: {texts.get(r.status, r.status + ' ' + r.message)}"
+                                  + (f" ({r.message})" if r.status == "ok" and r.message else "")
+                                  for k, r in failed)
                 dialog = Adw.AlertDialog(heading="Not applied", body=body)
                 dialog.add_response("ok", "OK")
                 dialog.present(self)

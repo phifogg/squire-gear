@@ -44,6 +44,43 @@ public enum SettingsZone: String, CaseIterable, Sendable, Identifiable {
     public static let chips: [SettingsZone] = [.dpi, .sensor, .power]
 }
 
+/// Pending edits besides the lights: power (51 37), the sensor's angle settings (51 31 06 / 0b) and lift-off (51 35).
+public struct OtherEdits: Equatable, Sendable {
+    public var power: PowerSetting?
+    public var angleSnapping: Bool?
+    public var angleTuning: Int?
+    public var liftoff: String?
+    public var surface: UInt8?
+    public var polling: Int?
+    public var dpi: [Int: DPIStage] = [:]   // 1-based stage
+    public var activeStage: Int?
+    public var stageCount: Int?
+    public init(power: PowerSetting? = nil, angleSnapping: Bool? = nil, angleTuning: Int? = nil, liftoff: String? = nil,
+                surface: UInt8? = nil, polling: Int? = nil) {
+        self.power = power
+        self.angleSnapping = angleSnapping
+        self.angleTuning = angleTuning
+        self.liftoff = liftoff
+        self.surface = surface
+        self.polling = polling
+    }
+    public var isEmpty: Bool {
+        power == nil && angleSnapping == nil && angleTuning == nil && liftoff == nil && surface == nil && polling == nil
+            && dpi.isEmpty && activeStage == nil && stageCount == nil
+    }
+
+    /// Fixed order, as in the Linux window: DPI stages, active stage and count, then the rest. The active stage goes
+    /// after the count only when it is beyond the count the mouse has, so it stays on the button at every step.
+    /// Surface before lift-off: the surface write keeps the lift-off the mouse has, then lift-off keeps the new one.
+    func changes(_ s: MouseSettings) -> [SettingChange] {
+        var stages: [SettingChange?] = [activeStage.map { .activeStage($0) }, stageCount.map { .stageCount($0) }]
+        if let active = activeStage, active > (s.dpiStageCount ?? 0) { stages.reverse() }
+        return (dpi.keys.sorted().map { SettingChange.dpi(stage: $0, dpi[$0]!) } + stages.compactMap { $0 }
+                + [power.map { .power($0) }, angleSnapping.map { .angleSnapping($0) }, angleTuning.map { .angleTuning($0) },
+                   polling.map { .polling($0) }, surface.map { .surface($0) }, liftoff.map { .liftoff($0) }].compactMap { $0 })
+    }
+}
+
 public enum SettingsEditing {
     /// Short value under a callout or chip.
     public static func summary(_ s: MouseSettings, _ zone: SettingsZone) -> String {
@@ -66,11 +103,89 @@ public enum SettingsEditing {
         }
     }
 
-    /// The settings as they will be after Apply (for the drawing and the callouts).
-    public static func preview(_ s: MouseSettings, pending: [LEDZone: LEDState]) -> MouseSettings {
+    /// The settings as they will be after Apply (for the drawing, the callouts and the chips).
+    public static func preview(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> MouseSettings {
         var p = s
         p.leds.merge(pending) { _, new in new }
+        if let power = other.power {
+            p.powerOffMinutes = power.offMinutes
+            p.lowWarning = power.lowWarning
+        }
+        if let on = other.angleSnapping { p.angleSnapping = on }
+        if let degrees = other.angleTuning { p.angleTuning = degrees }
+        if let value = other.liftoff { p.liftoff = value }
+        if let hz = other.polling { p.pollingHz = hz }
+        for (stage, value) in other.dpi where stage - 1 < p.dpiXY.count && stage - 1 < p.dpiColors.count {
+            p.dpiXY[stage - 1] = [value.dpi, value.dpi]
+            p.dpiColors[stage - 1] = value.color
+            if stage - 1 < p.dpi.count { p.dpi[stage - 1] = value.dpi }
+        }
+        if let stage = other.activeStage { p.dpiStage = stage }
+        if let count = other.stageCount { p.dpiStageCount = count }
+        if let id = other.surface {
+            p.surfaceID = id
+            p.surfaceParams = Command.surfaceParams[id] ?? nil
+        }
         return p
+    }
+
+    /// Everything Apply will write, in a fixed order: changed light zones, then power, angle snapping, angle tuning.
+    public static func changes(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> [SettingChange] {
+        changedZones(s, pending: pending).map { .led($0, pending[$0]!) } + other.changes(s).filter { !$0.matches(s) }
+    }
+
+    /// An edit to power or the sensor: kept pending, or dropped when it is back to what the mouse has.
+    public static func edit(_ other: OtherEdits, _ s: MouseSettings, change: (inout OtherEdits) -> Void) -> OtherEdits {
+        var o = other
+        change(&o)
+        if let power = o.power, SettingChange.power(power).matches(s) { o.power = nil }
+        if let on = o.angleSnapping, SettingChange.angleSnapping(on).matches(s) { o.angleSnapping = nil }
+        if let degrees = o.angleTuning, SettingChange.angleTuning(degrees).matches(s) { o.angleTuning = nil }
+        if let value = o.liftoff, SettingChange.liftoff(value).matches(s) { o.liftoff = nil }
+        if let id = o.surface, SettingChange.surface(id).matches(s) { o.surface = nil }
+        if let hz = o.polling, SettingChange.polling(hz).matches(s) { o.polling = nil }
+        for (stage, value) in o.dpi where SettingChange.dpi(stage: stage, value).matches(s) { o.dpi[stage] = nil }
+        if let stage = o.activeStage, stage == s.dpiStage { o.activeStage = nil }
+        if let count = o.stageCount, count == s.dpiStageCount { o.stageCount = nil }
+        return o
+    }
+
+    /// A stage with separate X/Y values is shown only: the write sets both alike.
+    public static func canEditDPI(_ s: MouseSettings, stage: Int) -> Bool {
+        let i = stage - 1
+        return i < s.dpiXY.count && i < s.dpiColors.count && s.dpiXY[i][0] == s.dpiXY[i][1]
+    }
+
+    /// Active stage or stage count; they stay consistent (a stage beyond the count raises the count, a count below
+    /// the active stage lowers the active stage). Same as editDPIStages in the Linux window.
+    public static func editDPIStages(_ other: OtherEdits, _ s: MouseSettings, active: Int? = nil, count: Int? = nil) -> OtherEdits {
+        let p = preview(s, pending: [:], other: other)
+        var newActive = active ?? p.dpiStage ?? 1
+        var newCount = count ?? p.dpiStageCount ?? Command.dpiStages
+        if active != nil, newActive > newCount { newCount = newActive }
+        if count != nil, newActive > newCount { newActive = newCount }
+        return edit(other, s) { $0.activeStage = newActive; $0.stageCount = newCount }
+    }
+
+    /// Surface can be changed only from one Squire knows (or none): an unknown one may be a calibration.
+    public static func canEditSurface(_ s: MouseSettings) -> Bool {
+        guard let id = s.surfaceID, Command.surfaceParams[id] != nil, let l = s.liftoff else { return false }
+        return Command.liftoffCodes[l] != nil
+    }
+
+    public static func canEditPolling(_ s: MouseSettings) -> Bool {
+        s.pollingHz.map { Command.pollingWriteHz[$0] != nil } ?? false
+    }
+
+    /// Lift-off can be edited only with a surface Squire knows (or none): an unknown one may be a calibration.
+    public static func canEditLiftoff(_ s: MouseSettings) -> Bool {
+        guard let value = s.liftoff, Command.liftoffCodes[value] != nil else { return false }
+        return (try? Command.setLiftoff(value, surfaceID: s.surfaceID, surfaceParams: s.surfaceParams)) != nil
+    }
+
+    /// Power can be edited only when the warning level read from the mouse is one Squire can write back.
+    public static func canEditPower(_ s: MouseSettings) -> Bool {
+        s.lowWarning.map { Command.lowWarningLevels.contains($0) } ?? false
     }
 
     /// Zones whose pending value differs from what the mouse has, in a fixed order.
@@ -108,25 +223,29 @@ public enum SettingsEditing {
         (pending[zone] ?? s.leds[zone]).map { LEDMode.writable.contains($0.mode) } ?? false
     }
 
-    public static func applyStatus(_ s: MouseSettings, pending: [LEDZone: LEDState]) -> String {
-        let zones = changedZones(s, pending: pending)
-        guard !zones.isEmpty else {
+    public static func applyStatus(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> String {
+        let all = changes(s, pending: pending, other: other)
+        guard !all.isEmpty else {
             return "Showing the values read from the mouse. Nothing is sent until you click Apply."
         }
-        let names = zones.compactMap { SettingsZone(rawValue: $0.rawValue)?.title }.joined(separator: ", ")
+        let names = all.map(\.title).joined(separator: ", ")
         return "Not sent yet: \(names). Apply writes it to the mouse, reads it back and saves it."
     }
 
     /// Exactly what Apply will send, for "Show bytes".
-    public static func plannedPackets(_ s: MouseSettings, pending: [LEDZone: LEDState]) -> [String] {
+    public static func plannedPackets(_ s: MouseSettings, pending: [LEDZone: LEDState], other: OtherEdits = .init()) -> [String] {
         let omni = s.connection != .wired
         let reportID: UInt8? = omni ? 0x03 : nil
         let length = omni ? 64 : 65
         var lines: [String] = []
-        for zone in changedZones(s, pending: pending) {
-            guard let command = try? Command.setLED(zone, pending[zone]!),
+        // each write sees the mouse as the earlier ones left it (HIDReader reads it again right before each write):
+        // lift-off keeps a new surface, an active stage may need the new count first
+        var current = s
+        for change in changes(s, pending: pending, other: other) {
+            defer { current = change.applied(to: current) }
+            guard let command = try? change.command(current: current),
                   let bytes = try? Packet.build(reportID: reportID, command: command, length: length) else { continue }
-            lines.append(ReplyParser.hex(Array(bytes.prefix(13))) + " …")
+            lines.append(ReplyParser.hex(Array(bytes.prefix(command.bytes.count + 1))) + " …")
         }
         if !lines.isEmpty, let bytes = try? Packet.build(reportID: reportID, command: .save, length: length) {
             lines.append(ReplyParser.hex(Array(bytes.prefix(3))) + " …  (save)")

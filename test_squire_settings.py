@@ -137,6 +137,110 @@ class EditTests(unittest.TestCase):
         self.assertTrue(ui.can_link(s, {"logo": {"mode": "static", "brightness": 50, "color": "#ff0000"}}, "logo"))
         self.assertTrue(ui.can_link(self.s, {}, "wheel"))
 
+    def test_power_and_sensor_edits_plan_exact_bytes(self):
+        # demo: off after 3 min, warning 20 %, snapping off, tuning 0°
+        pending = ui.edit_other(self.s, {}, "power", {"power_off_minutes": 10, "low_warning": 30})
+        pending = ui.edit_other(self.s, pending, "angle_snapping", True)
+        pending = ui.edit_other(self.s, pending, "angle_tuning", -5)
+        pending = ui.edit_pending(self.s, pending, "logo", mode="static", brightness=100, color="#3d8bff")
+        self.assertEqual(ui.changes(self.s, pending), ["logo", "power", "angle_snapping", "angle_tuning"])
+        self.assertEqual(ui.planned_packets(self.s, pending),
+                         ["03 51 28 00 00 00 64 3d 8b ff 00 00 00 …", "03 51 37 00 00 04 00 1e …",
+                          "03 51 31 06 00 01 …", "03 51 31 0b 00 fb ff …", "03 50 03 …  (save)"])
+        self.assertIn("Power, Angle snapping, Angle tuning", ui.apply_status(self.s, pending))
+        preview = ui.preview_settings(self.s, pending)
+        self.assertEqual((preview.power_off_minutes, preview.low_warning, preview.angle_snapping, preview.angle_tuning),
+                         (10, 30, True, -5))
+        self.assertEqual(ui.zone_summary(preview, "power"), "off after 10 min · warn at 30 %")   # the chip
+        self.assertEqual(self.s.power_off_minutes, 3)       # original untouched
+
+    def test_other_edit_back_to_the_mouse_value_is_dropped(self):
+        pending = ui.edit_other(self.s, {}, "angle_snapping", True)
+        self.assertEqual(ui.edit_other(self.s, pending, "angle_snapping", False), {})
+        pending = ui.edit_other(self.s, {}, "power", {"power_off_minutes": None, "low_warning": 20})
+        self.assertEqual(ui.planned_packets(self.s, pending)[0], "03 51 37 00 00 ff 00 14 …")   # never
+        self.assertEqual(ui.edit_other(self.s, pending, "power", {"power_off_minutes": 3, "low_warning": 20}), {})
+
+    def test_power_is_shown_only_for_a_warning_squire_cannot_write(self):
+        import dataclasses
+        self.assertTrue(ui.can_edit_power(self.s))
+        self.assertFalse(ui.can_edit_power(dataclasses.replace(self.s, low_warning=15)))
+        self.assertFalse(ui.can_edit_power(dataclasses.replace(self.s, low_warning=None)))
+
+    def test_liftoff_edit_keeps_the_surface(self):
+        import dataclasses
+        # demo capture: no surface (ff), lift-off low
+        self.assertEqual((self.s.surface_id, self.s.liftoff), (0xFF, "low"))
+        pending = ui.edit_other(self.s, {}, "liftoff", "high")
+        self.assertEqual(ui.planned_packets(self.s, pending), ["03 51 35 ff 00 ff 01 …", "03 50 03 …  (save)"])
+        self.assertEqual(ui.zone_summary(ui.preview_settings(self.s, pending), "sensor"), "1000 Hz · lift-off high")
+        self.assertIn("Lift-off distance", ui.apply_status(self.s, pending))
+        sheath = dataclasses.replace(self.s, surface_id=0x01, surface_params="1c 34 16")
+        self.assertEqual(ui.planned_packets(sheath, pending)[0], "03 51 35 00 00 01 01 00 1c 34 16 …")
+        self.assertEqual(ui.edit_other(self.s, pending, "liftoff", "low"), {})
+
+    def test_liftoff_is_shown_only_for_a_surface_squire_does_not_know(self):
+        import dataclasses
+        self.assertTrue(ui.can_edit_liftoff(self.s))
+        self.assertFalse(ui.can_edit_liftoff(dataclasses.replace(self.s, surface_id=0x02, surface_params="1c 34 16")))
+        self.assertFalse(ui.can_edit_liftoff(dataclasses.replace(self.s, surface_id=None)))
+
+    def test_polling_and_surface_plan_exact_bytes(self):
+        import dataclasses
+        sheath = dataclasses.replace(self.s, surface_id=0x01, surface_params="1c 34 16")
+        pending = ui.edit_other(sheath, {}, "polling_hz", 500)
+        pending = ui.edit_other(sheath, pending, "surface_id", 0x0B)
+        pending = ui.edit_other(sheath, pending, "liftoff", "high")
+        self.assertEqual(ui.changes(sheath, pending), ["polling_hz", "surface_id", "liftoff"])
+        # surface first with the lift-off the mouse has, then lift-off with the new surface
+        self.assertEqual(ui.planned_packets(sheath, pending),
+                         ["03 51 31 04 00 02 …", "03 51 35 00 00 0b 00 00 1a 32 20 …",
+                          "03 51 35 00 00 0b 01 00 1a 32 20 …", "03 50 03 …  (save)"])
+        preview = ui.preview_settings(sheath, pending)
+        self.assertEqual((preview.polling_hz, preview.surface_id, preview.surface_params), (500, 0x0B, "1a 32 20"))
+        self.assertEqual(ui.edit_other(sheath, {}, "surface_id", 0x01), {})
+        self.assertEqual(ui.planned_packets(sheath, {"surface_id": 0xFF})[0], "03 51 35 ff 00 ff 00 …")
+
+    def test_surface_choices(self):
+        import dataclasses
+        self.assertEqual(ui.SURFACE_CHOICES[0], 0xFF)
+        self.assertEqual(set(ui.SURFACE_CHOICES), set(squire.SURFACE_PARAMS))
+        self.assertTrue(ui.can_edit_surface(self.s))
+        self.assertFalse(ui.can_edit_surface(dataclasses.replace(self.s, surface_id=0x02)))
+
+    def test_dpi_edits_plan_exact_bytes(self):
+        # demo: 400 / 800 / 650 / 3200, colours #ff0000 #c100ff #000000 #31ff00, active stage 4 of 4
+        pending = ui.edit_other(self.s, {}, "dpi_3", {"dpi": 700, "color": "#000000"})
+        pending = ui.edit_other(self.s, pending, "dpi_1", {"dpi": 400, "color": "#3d8bff"})    # colour only
+        pending = ui.edit_dpi_stages(self.s, pending, active=3)
+        self.assertEqual(ui.changes(self.s, pending), ["dpi_1", "dpi_3", "dpi_stage"])
+        self.assertEqual(ui.planned_packets(self.s, pending),
+                         ["03 51 31 00 00 07 00 3d 8b ff …", "03 51 31 02 00 0d 00 00 00 00 …",
+                          "03 51 31 09 00 03 …", "03 50 03 …  (save)"])
+        preview = ui.preview_settings(self.s, pending)
+        self.assertEqual((preview.dpi, preview.dpi_stage, preview.dpi_colors[0]), ([400, 800, 700, 3200], 3, "#3d8bff"))
+        self.assertEqual(ui.zone_summary(preview, "dpi"), "400 / 800 / 700 / 3200 DPI")
+        self.assertEqual(self.s.dpi[2], 650)                                    # original untouched
+        self.assertEqual(ui.edit_other(self.s, {}, "dpi_2", {"dpi": 800, "color": "#c100ff"}), {})
+
+    def test_active_stage_and_count_stay_consistent(self):
+        # fewer stages than the active one: the active stage follows, and is written first
+        pending = ui.edit_dpi_stages(self.s, {}, count=2)
+        self.assertEqual((pending["dpi_stage"], pending["dpi_stage_count"]), (2, 2))
+        self.assertEqual(ui.planned_packets(self.s, pending)[:2], ["03 51 31 09 00 02 …", "03 51 31 0a 00 02 …"])
+        # from 2 stages, choosing stage 4 raises the count, which is written first
+        import dataclasses
+        two = dataclasses.replace(self.s, dpi_stage=2, dpi_stage_count=2)
+        pending = ui.edit_dpi_stages(two, {}, active=4)
+        self.assertEqual(ui.planned_packets(two, pending)[:2], ["03 51 31 0a 00 04 …", "03 51 31 09 00 04 …"])
+        self.assertEqual(ui.edit_dpi_stages(two, pending, active=2, count=2), {})
+
+    def test_stage_with_separate_x_y_is_shown_only(self):
+        import dataclasses
+        self.assertTrue(all(ui.can_edit_dpi(self.s, n) for n in range(1, 5)))
+        odd = dataclasses.replace(self.s, dpi_xy=[[400, 400], [800, 1200], [650, 650], [3200, 3200]])
+        self.assertFalse(ui.can_edit_dpi(odd, 2))
+
     def test_wired_mouse_plans_unnumbered_packets(self):
         import dataclasses
         wired = dataclasses.replace(self.s, connection="wired")

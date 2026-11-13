@@ -16,8 +16,8 @@ description: |
   Battery level of ASUS ROG keyboard and mouse in the top bar
   Squire shows battery level and charging state of the ASUS ROG Falchion RX Low Profile
   keyboard and the ASUS ROG Keris II Origin mouse, through the ROG Omni receiver or the
-  USB cable. The battery display only reads; the settings window changes the mouse lights
-  only when you click Apply. Not affiliated with ASUS.
+  USB cable. The battery display only reads; the settings window changes the mouse's lights,
+  DPI, sensor and power settings only when you click Apply. Not affiliated with ASUS.
 
 overrides:
   deb:

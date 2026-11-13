@@ -27,6 +27,13 @@ struct SquireApp: App {
                     if let zone = store.selected.ledZone {
                         if args.contains("linked") { store.setLinkZones(true, from: zone) }
                         store.edit(zone) { $0 = LEDState(mode: .static, brightness: 100, color: RGB(0x3D, 0x8B, 0xFF)) }
+                    } else if store.selected == .power {   // sample: off after 10 min, warn at 30 %
+                        store.editOther { $0.power = PowerSetting(offMinutes: 10, lowWarning: 30) }
+                    } else if store.selected == .dpi {     // sample: stage 3 700 DPI in blue, active
+                        store.editOther { $0.dpi[3] = DPIStage(dpi: 700, color: RGB(0x00, 0x3D, 0xFF)) }
+                        store.editDPIStages(active: 3)
+                    } else if store.selected == .sensor {  // sample: snapping on, tuning -5°, lift-off high
+                        store.editOther { $0.angleSnapping = true; $0.angleTuning = -5; $0.liftoff = "high" }
                     }
                     store.showBytes = true
                 }

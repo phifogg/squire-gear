@@ -16,14 +16,17 @@ final class SettingsStore: ObservableObject {
     @Published var device: Battery.Device? = .mouse
     @Published var selected: SettingsZone = .logo
     @Published private(set) var pending: [LEDZone: LEDState] = [:]
+    /// Pending power and sensor edits.
+    @Published private(set) var other = OtherEdits()
     @Published private(set) var loading = false
     @Published private(set) var applying = false
     @Published var toast: String?
     @Published var failure: String?
     @Published var showBytes = false
 
-    var preview: MouseSettings? { settings.map { SettingsEditing.preview($0, pending: pending) } }
-    var isDirty: Bool { settings.map { !SettingsEditing.changedZones($0, pending: pending).isEmpty } ?? false }
+    var preview: MouseSettings? { settings.map { SettingsEditing.preview($0, pending: pending, other: other) } }
+    var changes: [SettingChange] { settings.map { SettingsEditing.changes($0, pending: pending, other: other) } ?? [] }
+    var isDirty: Bool { !changes.isEmpty }
 
     func refresh() {
         guard !loading, !applying else { return }
@@ -47,6 +50,7 @@ final class SettingsStore: ObservableObject {
                 self.settings = settings
                 // keep pending edits only for zones the mouse still reports
                 self.pending = self.pending.filter { settings.leds[$0.key] != nil }
+                self.other = SettingsEditing.edit(self.other, settings) { _ in }   // drop what now matches
             }
         }
     }
@@ -79,36 +83,55 @@ final class SettingsStore: ObservableObject {
         if on { edit(zone) { _ in } }
     }
 
+    /// Power or sensor edit.
+    func editOther(_ change: (inout OtherEdits) -> Void) {
+        guard let settings else { return }
+        other = SettingsEditing.edit(other, settings, change: change)
+    }
+
+    /// Active stage or stage count (they stay consistent).
+    func editDPIStages(active: Int? = nil, count: Int? = nil) {
+        guard let settings else { return }
+        other = SettingsEditing.editDPIStages(other, settings, active: active, count: count)
+    }
+
+    /// Power as it will be after Apply (pending edit, else what the mouse has).
+    var power: PowerSetting? {
+        if let power = other.power { return power }
+        guard let s = settings, let warning = s.lowWarning else { return nil }
+        return PowerSetting(offMinutes: s.powerOffMinutes, lowWarning: warning)
+    }
+
     func revert() {
         pending.removeAll()
+        other = OtherEdits()
         linkZones = false
     }
 
     var applyStatus: String {
         guard let settings else { return "" }
-        return applying ? "Applying…" : SettingsEditing.applyStatus(settings, pending: pending)
+        return applying ? "Applying…" : SettingsEditing.applyStatus(settings, pending: pending, other: other)
     }
 
     var plannedPackets: [String] {
-        settings.map { SettingsEditing.plannedPackets($0, pending: pending) } ?? []
+        settings.map { SettingsEditing.plannedPackets($0, pending: pending, other: other) } ?? []
     }
 
-    /// Writes every changed zone, reads each one back, and saves (50 03) once with the last one, only if all
-    /// earlier ones matched. Stops at the first failure: nothing more is written and nothing is saved.
+    /// Writes every change, reads each one back, and saves (50 03) once with the last one, only if all earlier
+    /// ones matched. Stops at the first failure: nothing more is written and nothing is saved.
     func apply() {
-        guard let settings, !applying else { return }
-        let zones = SettingsEditing.changedZones(settings, pending: pending)
-        guard !zones.isEmpty else { return }
+        guard !applying else { return }
+        let work = changes
+        guard !work.isEmpty else { return }
         applying = true
-        let work = zones.map { ($0, pending[$0]!) }
         let demo = demo
         DispatchQueue.global(qos: .userInitiated).async {
-            var results: [(LEDZone, WriteResult)] = []
-            for (i, (zone, led)) in work.enumerated() {
+            var results: [(SettingChange, WriteResult)] = []
+            for (i, change) in work.enumerated() {
                 let result = demo
-                    ? WriteResult(status: .ok, after: led, saved: true, message: "demo")   // nothing is sent
-                    : HIDReader().setLED(zone, led, save: i == work.count - 1).result
-                results.append((zone, result))
+                    ? Self.demoResult(change)   // nothing is sent
+                    : HIDReader().write(change, save: i == work.count - 1).result
+                results.append((change, result))
                 if result.status != .ok { break }
             }
             let saved = results.count == work.count && results.allSatisfy { $0.1.status == .ok }
@@ -118,15 +141,39 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    private func applyDone(_ results: [(LEDZone, WriteResult)]) {
+    private nonisolated static func demoResult(_ change: SettingChange) -> WriteResult {
+        var r = WriteResult(status: .ok, saved: true, message: "demo")
+        if case .led(_, let led) = change { r.after = led }
+        r.readBack = change.applied(to: MouseSettings())
+        return r
+    }
+
+    private func applyDone(_ results: [(SettingChange, WriteResult)]) {
         applying = false
-        var failed: [(LEDZone, WriteResult)] = []
-        for (zone, result) in results {
-            if result.status == .ok, result.saved, let after = result.after {
-                settings?.leds[zone] = after
+        var failed: [(SettingChange, WriteResult)] = []
+        for (change, result) in results {
+            guard result.status == .ok, result.saved else { failed.append((change, result)); continue }
+            settings = settings.map { change.applied(to: $0) }
+            switch change {
+            case .led(let zone, let led):
+                settings?.leds[zone] = result.after ?? led
                 pending[zone] = nil
-            } else {
-                failed.append((zone, result))
+            case .power: other.power = nil
+            case .angleSnapping: other.angleSnapping = nil
+            case .angleTuning: other.angleTuning = nil
+            case .liftoff:
+                if let back = result.readBack, back.surfaceID != nil {   // the surface as read back with it
+                    settings?.surfaceID = back.surfaceID
+                    settings?.surfaceParams = back.surfaceParams
+                }
+                other.liftoff = nil
+            case .surface: other.surface = nil
+            case .polling(let hz):
+                if let raw = settings?.pollingRaw, let index = Command.pollingWriteHz[hz] { settings?.pollingRaw = raw & 0xF8 | index }
+                other.polling = nil
+            case .dpi(let stage, _): other.dpi[stage] = nil
+            case .activeStage: other.activeStage = nil
+            case .stageCount: other.stageCount = nil
             }
         }
         if failed.isEmpty {
@@ -139,9 +186,8 @@ final class SettingsStore: ObservableObject {
             .mismatch: "The mouse did not take the new value (read back differs). Nothing was saved.",
             .noResponse: "The mouse did not answer. Move it and click Apply again.",
         ]
-        failure = failed.map { zone, result in
-            let title = SettingsZone(rawValue: zone.rawValue)?.title ?? zone.rawValue
-            return "\(title): " + (texts[result.status] ?? "\(result.status.rawValue) \(result.message)")
+        failure = failed.map { change, result in
+            "\(change.title): " + (texts[result.status] ?? "\(result.status.rawValue) \(result.message)")
         }.joined(separator: "\n")
     }
 

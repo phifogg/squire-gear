@@ -38,6 +38,8 @@ private func json() throws -> [String: Any] {
                 case "dpi": #expect(s.dpi == (value as! [Int]).map { Optional($0) })
                 case "dpi_colors": #expect(s.dpiColors.map(\.hex) == value as! [String])
                 case "liftoff": #expect(s.liftoff == value as? String)
+                case "surface_id": #expect(s.surfaceID.map(Int.init) == value as? Int)
+                case "surface_params": #expect(s.surfaceParams.map(ReplyParser.hex) == value as? String)
                 case "logo", "wheel", "side":
                     let led = value as! [String: Any]
                     let state = s.leds[LEDZone(rawValue: key)!]
@@ -103,6 +105,195 @@ private func json() throws -> [String: Any] {
         }
         let save = (writes["save"] as! [String: Any])["packet"] as! String
         #expect(Array(try Packet.build(reportID: 0x03, command: .save, length: 64).prefix(3)) == bytes(save))
+    }
+
+    /// protocol.json mouse_writes.settings_writes: same vectors as the Python tests.
+    @Test func powerAndSensorWritesMatchTheConfirmedPackets() throws {
+        let section = (try json()["mouse_writes"] as! [String: Any])["settings_writes"] as! [String: Any]
+        for write in section["writes"] as! [[String: Any]] {
+            let args = write["args"] as! [Any]
+            let command: Command
+            switch write["function"] as! String {
+            case "power_command":
+                command = try .setPower(PowerSetting(offMinutes: args[0] as? Int, lowWarning: args[1] as! Int))
+            case "angle_snapping_command": command = try .setAngleSnapping(args[0] as! Bool)
+            case "angle_tuning_command": command = try .setAngleTuning(args[0] as! Int)
+            case "polling_command": command = try .setPolling(args[0] as! Int)
+            case "dpi_command":
+                command = try .setDPI(stage: args[0] as! Int, DPIStage(dpi: args[1] as! Int, color: RGB(hex: args[2] as! String)!))
+            case "active_stage_command": command = try .setActiveStage(args[0] as! Int)
+            case "stage_count_command": command = try .setStageCount(args[0] as! Int)
+            case "surface_command": command = try .setSurface(UInt8(args[0] as! Int), liftoff: args[1] as! String)
+            case "liftoff_command":
+                command = try .setLiftoff(args[0] as! String, surfaceID: UInt8(args[1] as! Int),
+                                          surfaceParams: bytes(args[2] as! String))
+            default: Issue.record("unknown function \(write["function"]!)"); continue
+            }
+            let head = bytes(write["packet"] as! String)
+            let packet = try Packet.build(reportID: 0x03, command: command, length: 64)
+            #expect(Array(packet.prefix(head.count)) == head, "\(write["name"]!)")
+            #expect(packet.dropFirst(head.count).allSatisfy { $0 == 0 })
+        }
+    }
+
+    @Test func powerAndSensorExactBytes() throws {
+        #expect(try Command.setPower(PowerSetting(offMinutes: nil, lowWarning: 50)).bytes == [0x51, 0x37, 0, 0, 0xFF, 0, 0x32])
+        #expect(try Command.setPower(PowerSetting(offMinutes: 1, lowWarning: 10)).bytes == [0x51, 0x37, 0, 0, 0x00, 0, 0x0A])
+        #expect(try Command.setAngleSnapping(false).bytes == [0x51, 0x31, 0x06, 0x00, 0x00])
+        #expect(try Command.setAngleTuning(-20).bytes == [0x51, 0x31, 0x0B, 0x00, 0xEC, 0xFF])
+        #expect(try Command.setAngleTuning(15).bytes == [0x51, 0x31, 0x0B, 0x00, 0x0F, 0x00])
+    }
+
+    @Test func invalidPowerAndSensorValuesAreRefused() {
+        #expect(throws: CommandError.self) { try Command.setPower(PowerSetting(offMinutes: 4, lowWarning: 20)) }
+        #expect(throws: CommandError.self) { try Command.setPower(PowerSetting(offMinutes: 5, lowWarning: 25)) }
+        #expect(throws: CommandError.self) { try Command.setPower(PowerSetting(offMinutes: 5, lowWarning: 60)) }
+        #expect(throws: CommandError.self) { try Command.setAngleTuning(7) }
+        #expect(throws: CommandError.self) { try Command.setAngleTuning(25) }
+    }
+
+    @Test(arguments: ["51 31 00 00 07 00", "51 31 04 00 04", "51 31 04 00 63", "51 31 05 00 02", "51 31 09 00 05", "51 31 0a 00 00",
+                      "51 31 00 00 48 03 ff 00 00", "51 31 00 00 00 00 ff 00 00", "51 31 04 00 07 00 ff 00 00",
+                      "51 35 ff 00 ff 02", "51 35 00 00 02 00 00 1c 34 16", "51 35 00 00 01 00 00 1c 34",
+                      "51 35 00 00 01 00 01 1c 34 16", "51 31 06 00 02", "51 31 0b 00 07 00", "51 37 00 00 05 00 14",
+                      "51 37 00 01 03 00 14", "50 02 01"])
+    func everythingElseStaysRefused(hex: String) {
+        #expect(!Allowlist.isAllowedWrite(bytes(hex)))
+        #expect(throws: CommandError.self) {
+            try Packet.build(reportID: 0x03, command: Command(bytes(hex), isWrite: true), length: 64)
+        }
+    }
+
+    /// Same as test_squire.py LiftoffWriteTests: the surface read from 12 06 is written back unchanged.
+    @Test func liftoffKeepsTheSurface() throws {
+        #expect(try Command.setLiftoff("high", surfaceID: 0x01, surfaceParams: [0x1C, 0x34, 0x16]).bytes
+                == bytes("51 35 00 00 01 01 00 1c 34 16"))
+        #expect(try Command.setLiftoff("low", surfaceID: 0x0B, surfaceParams: [0x1A, 0x32, 0x20]).bytes
+                == bytes("51 35 00 00 0b 00 00 1a 32 20"))
+        #expect(try Command.setLiftoff("high", surfaceID: 0xFF, surfaceParams: nil).bytes == bytes("51 35 ff 00 ff 01"))
+        #expect(throws: CommandError.self) { try Command.setLiftoff("high", surfaceID: 0x02, surfaceParams: [1, 2, 3]) }
+        #expect(throws: CommandError.self) { try Command.setLiftoff("high", surfaceID: nil, surfaceParams: nil) }
+        #expect(throws: CommandError.self) { try Command.setLiftoff("medium", surfaceID: 0xFF, surfaceParams: nil) }
+        #expect(throws: CommandError.self) { try SettingChange.liftoff("high").command() }   // no read: nothing to keep
+        #expect(SettingChange.liftoff("high").needsCurrent && SettingChange.liftoff("high").readBack == .liftoff)
+    }
+
+    /// protocol.json mouse_writes.armoury_crate: Squire builds the same packets Armoury Crate sent, and parses its reads.
+    @Test func liftoffMatchesTheArmouryCrateCaptures() throws {
+        let section = (try json()["mouse_writes"] as! [String: Any])["armoury_crate"] as! [String: Any]
+        let captures = section["captures"] as! [[String: Any]]
+        let sheath = captures.first { $0["name"] as? String == "lift-off low -> high (surface ROG Sheath)" }!
+        let command = try Command.setLiftoff("high", surfaceID: 0x01, surfaceParams: [0x1C, 0x34, 0x16])
+        #expect(Array(try Packet.build(reportID: 0x03, command: command, length: 64).prefix(11))
+                == bytes((sheath["packets"] as! [String])[0]))
+        var s = MouseSettings()
+        let read = bytes(sheath["read_after"] as! String)
+        s.apply(.liftoff, Array((read + [UInt8](repeating: 0, count: 64 - read.count)).dropFirst()))
+        #expect(s.liftoff == "high" && s.surfaceID == 0x01 && s.surfaceParams == [0x1C, 0x34, 0x16])
+        let presets = captures.compactMap { $0["surfaces"] as? [[String: Any]] }.first!
+        for preset in presets {
+            let id = UInt8(preset["id"] as! String, radix: 16)!
+            let params = (preset["params"] as? String).map(bytes)
+            let name = (preset["name"] as! String).replacingOccurrences(of: " (second tile, same name)", with: " (2)")
+            #expect(Command.surfaceName(id) == (id == 0xFF ? "None (no calibration)" : name))
+            let c = try Command.setLiftoff("low", surfaceID: id, surfaceParams: params)
+            let expected = preset["packet"] as? String ?? "03 51 35 00 00 \(preset["id"]!) 00 00 \(preset["params"]!)"
+            #expect(Array(try Packet.build(reportID: 0x03, command: c, length: 64).prefix(c.bytes.count + 1)) == bytes(expected))
+        }
+        #expect(Command.surfaces.count == presets.count - 1)
+    }
+
+    /// Same as test_squire.py test_polling_write / test_surface_keeps_the_liftoff.
+    @Test func pollingAndSurfaceExactBytes() throws {
+        #expect(try Command.setPolling(1000).bytes == bytes("51 31 04 00 03"))
+        #expect(try Command.setPolling(125).bytes == bytes("51 31 04 00 00"))
+        #expect(throws: CommandError.self) { try Command.setPolling(2000) }
+        #expect(try Command.setSurface(0x0B, liftoff: "high").bytes == bytes("51 35 00 00 0b 01 00 1a 32 20"))
+        #expect(try Command.setSurface(0xFF, liftoff: "low").bytes == bytes("51 35 ff 00 ff 00"))
+        #expect(throws: CommandError.self) { try Command.setSurface(0x02, liftoff: "low") }
+        var unknown = MouseSettings()
+        unknown.liftoff = "low"; unknown.surfaceID = 0x02; unknown.surfaceParams = [1, 2, 3]
+        #expect(throws: CommandError.self) { try SettingChange.surface(0x01).command(current: unknown) }   // a calibration?
+        #expect(Command.surfaceChoices.first == 0xFF && Set(Command.surfaceChoices) == Set(Command.surfaceParams.keys))
+    }
+
+    @Test func surfaceParamsMatchTheCapturedPresets() throws {
+        let section = (try json()["mouse_writes"] as! [String: Any])["armoury_crate"] as! [String: Any]
+        let presets = (section["captures"] as! [[String: Any]]).compactMap { $0["surfaces"] as? [[String: Any]] }.first!
+        #expect(presets.count == Command.surfaceParams.count)
+        for preset in presets {
+            let id = UInt8(preset["id"] as! String, radix: 16)!
+            #expect(Command.surfaceParams[id] == .some((preset["params"] as? String).map(bytes)), "\(preset["name"]!)")
+        }
+    }
+
+    /// Same as test_squire.py DpiWriteTests.
+    @Test func dpiExactBytes() throws {
+        #expect(try Command.setDPI(stage: 3, DPIStage(dpi: 700, color: RGB(0x00, 0x3D, 0xFF))).bytes
+                == bytes("51 31 02 00 0d 00 00 3d ff"))
+        #expect(try Command.setDPI(stage: 1, DPIStage(dpi: 42000, color: RGB(0xFF, 0, 0))).bytes
+                == bytes("51 31 00 00 47 03 ff 00 00"))
+        #expect(try Command.setDPI(stage: 1, DPIStage(dpi: 100, color: RGB(0xFF, 0, 0))).bytes
+                == bytes("51 31 00 00 01 00 ff 00 00"))
+        #expect(try Command.setActiveStage(3).bytes == bytes("51 31 09 00 03"))
+        #expect(try Command.setStageCount(4).bytes == bytes("51 31 0a 00 04"))
+        for (stage, dpi) in [(0, 800), (5, 800), (1, 825), (1, 50), (1, 42050)] {
+            #expect(throws: CommandError.self) { try Command.setDPI(stage: stage, DPIStage(dpi: dpi, color: RGB(0, 0, 0))) }
+        }
+        #expect(throws: CommandError.self) { try Command.setActiveStage(5) }
+        #expect(throws: CommandError.self) { try Command.setStageCount(0) }
+    }
+
+    @Test func dpiMatchesTheArmouryCrateCapture() throws {
+        let section = (try json()["mouse_writes"] as! [String: Any])["armoury_crate"] as! [String: Any]
+        let capture = (section["captures"] as! [[String: Any]]).first { ($0["name"] as! String).hasPrefix("DPI stage 3") }!
+        let after = capture["after"] as! [String: Any]
+        let dpi = after["dpi"] as! [Int], colors = after["dpi_colors"] as! [String]
+        var commands = try (0..<4).map { try Command.setDPI(stage: $0 + 1, DPIStage(dpi: dpi[$0], color: RGB(hex: colors[$0])!)) }
+        commands += [try Command.setStageCount(4), try Command.setActiveStage(after["dpi_stage"] as! Int)]
+        let packets = Set(capture["packets"] as! [String])
+        for c in commands {
+            let head = Array(try Packet.build(reportID: 0x03, command: c, length: 64).prefix(c.bytes.count + 1))
+            #expect(packets.contains(ReplyParser.hex(head)), "\(ReplyParser.hex(head))")
+        }
+    }
+
+    @Test func dpiChecksAgainstTheMouseAsRead() throws {
+        var s = MouseSettings()
+        s.dpiXY = [[400, 400], [800, 1200], [650, 650], [3200, 3200]]
+        s.dpiColors = Array(repeating: RGB(0, 0, 0), count: 4)
+        s.dpiStage = 2; s.dpiStageCount = 3
+        let blue = DPIStage(dpi: 900, color: RGB(0, 0, 0xFF))
+        #expect(throws: CommandError.self) { try SettingChange.dpi(stage: 2, blue).command(current: s) }   // X != Y
+        #expect(try SettingChange.dpi(stage: 3, blue).command(current: s).bytes == bytes("51 31 02 00 11 00 00 00 ff"))
+        #expect(throws: CommandError.self) { try SettingChange.activeStage(4).command(current: s) }   // beyond the count
+        #expect(throws: CommandError.self) { try SettingChange.stageCount(1).command(current: s) }    // below the active
+        #expect(try SettingChange.stageCount(2).command(current: s).bytes == bytes("51 31 0a 00 02"))
+        #expect(SettingChange.dpi(stage: 1, blue).reads == [.dpiXY, .dpiColors])
+        var after = s
+        after.dpiXY[2] = [900, 900]; after.dpiColors[2] = RGB(0, 0, 0xFF)
+        #expect(SettingChange.dpi(stage: 3, blue).matches(after) && !SettingChange.dpi(stage: 3, blue).matches(s))
+    }
+
+    @Test func liftoffReadBackMustKeepTheSurface() {
+        var before = MouseSettings()
+        before.liftoff = "low"; before.surfaceID = 0x01; before.surfaceParams = [0x1C, 0x34, 0x16]
+        var after = before
+        after.liftoff = "high"
+        #expect(SettingChange.liftoff("high").matches(after, before: before))
+        after.surfaceID = 0xFF; after.surfaceParams = nil      // surface lost, like G-Helper's packet
+        #expect(!SettingChange.liftoff("high").matches(after, before: before))
+    }
+
+    @Test func settingChangeReadBackAndMatch() {
+        var s = MouseSettings()
+        s.powerOffMinutes = nil; s.lowWarning = 20; s.angleSnapping = false; s.angleTuning = -5
+        #expect(SettingChange.power(PowerSetting(offMinutes: nil, lowWarning: 20)).matches(s))
+        #expect(!SettingChange.power(PowerSetting(offMinutes: 3, lowWarning: 20)).matches(s))
+        #expect(SettingChange.angleSnapping(false).matches(s) && !SettingChange.angleSnapping(true).matches(s))
+        #expect(SettingChange.angleTuning(-5).matches(s))
+        #expect(SettingChange.power(PowerSetting(offMinutes: 3, lowWarning: 20)).readBack == nil)   // 12 07
+        #expect(SettingChange.angleTuning(0).readBack == .settings)
     }
 
     @Test func wiredWriteIsUnnumbered65Bytes() throws {
@@ -203,6 +394,95 @@ private func json() throws -> [String: Any] {
         let s = try settings()
         let pending = SettingsEditing.edit([:], zone: .wheel, current: s.leds[.wheel]!) { $0.color = RGB(1, 2, 3) }
         #expect(SettingsEditing.changedZones(s, pending: pending).isEmpty)
+    }
+
+    /// Same plan as test_squire_settings.py test_power_and_sensor_edits_plan_exact_bytes.
+    @Test func powerAndSensorEditsPlanExactBytes() throws {
+        let s = try settings()   // off after 3 min, warning 20 %, snapping off, tuning 0°
+        var other = SettingsEditing.edit(OtherEdits(), s) {
+            $0.power = PowerSetting(offMinutes: 10, lowWarning: 30)
+            $0.angleSnapping = true
+            $0.angleTuning = -5
+        }
+        let blue = LEDState(mode: .static, brightness: 100, color: RGB(0x3D, 0x8B, 0xFF))
+        #expect(SettingsEditing.plannedPackets(s, pending: [.logo: blue], other: other)
+                == ["03 51 28 00 00 00 64 3d 8b ff 00 00 00 …", "03 51 37 00 00 04 00 1e …",
+                    "03 51 31 06 00 01 …", "03 51 31 0b 00 fb ff …", "03 50 03 …  (save)"])
+        #expect(SettingsEditing.applyStatus(s, pending: [:], other: other).contains("Power, Angle snapping, Angle tuning"))
+        let preview = SettingsEditing.preview(s, pending: [:], other: other)
+        #expect(SettingsEditing.summary(preview, .power) == "off after 10 min · warn at 30 %")
+        // back to the mouse's values: dropped
+        other = SettingsEditing.edit(other, s) {
+            $0.power = PowerSetting(offMinutes: 3, lowWarning: 20)
+            $0.angleSnapping = false
+            $0.angleTuning = 0
+        }
+        #expect(other.isEmpty)
+        #expect(SettingsEditing.canEditPower(s))
+        var odd = s
+        odd.lowWarning = 15
+        #expect(!SettingsEditing.canEditPower(odd))
+    }
+
+    /// Same plan as test_squire_settings.py test_liftoff_edit_keeps_the_surface.
+    @Test func liftoffEditPlansExactBytes() throws {
+        let s = try settings()   // demo capture: no surface, lift-off low
+        #expect(s.surfaceID == 0xFF && s.liftoff == "low" && SettingsEditing.canEditLiftoff(s))
+        let other = SettingsEditing.edit(OtherEdits(), s) { $0.liftoff = "high" }
+        #expect(SettingsEditing.plannedPackets(s, pending: [:], other: other) == ["03 51 35 ff 00 ff 01 …", "03 50 03 …  (save)"])
+        #expect(SettingsEditing.summary(SettingsEditing.preview(s, pending: [:], other: other), .sensor) == "1000 Hz · lift-off high")
+        var sheath = s
+        sheath.surfaceID = 0x01; sheath.surfaceParams = [0x1C, 0x34, 0x16]
+        #expect(SettingsEditing.plannedPackets(sheath, pending: [:], other: other).first == "03 51 35 00 00 01 01 00 1c 34 16 …")
+        #expect(SettingsEditing.edit(other, s) { $0.liftoff = "low" }.isEmpty)
+        var unknown = s
+        unknown.surfaceID = 0x02; unknown.surfaceParams = [0x1C, 0x34, 0x16]
+        #expect(!SettingsEditing.canEditLiftoff(unknown))
+    }
+
+    /// Same plan as test_squire_settings.py test_polling_and_surface_plan_exact_bytes.
+    @Test func pollingAndSurfacePlanExactBytes() throws {
+        var s = try settings()
+        s.surfaceID = 0x01; s.surfaceParams = [0x1C, 0x34, 0x16]
+        let other = SettingsEditing.edit(OtherEdits(), s) { $0.polling = 500; $0.surface = 0x0B; $0.liftoff = "high" }
+        #expect(SettingsEditing.plannedPackets(s, pending: [:], other: other)
+                == ["03 51 31 04 00 02 …", "03 51 35 00 00 0b 00 00 1a 32 20 …",
+                    "03 51 35 00 00 0b 01 00 1a 32 20 …", "03 50 03 …  (save)"])
+        let preview = SettingsEditing.preview(s, pending: [:], other: other)
+        #expect(preview.pollingHz == 500 && preview.surfaceID == 0x0B && preview.surfaceParams == [0x1A, 0x32, 0x20])
+        #expect(SettingsEditing.edit(OtherEdits(), s) { $0.surface = 0x01 }.isEmpty)
+        #expect(SettingsEditing.canEditSurface(s) && SettingsEditing.canEditPolling(s))
+        #expect(SettingsEditing.plannedPackets(s, pending: [:], other: OtherEdits(surface: 0xFF)).first == "03 51 35 ff 00 ff 00 …")
+    }
+
+    /// Same plan as test_squire_settings.py test_dpi_edits_plan_exact_bytes.
+    @Test func dpiEditsPlanExactBytes() throws {
+        let s = try settings()   // 400 / 800 / 650 / 3200, #ff0000 #c100ff #000000 #31ff00, stage 4 of 4
+        var other = SettingsEditing.edit(OtherEdits(), s) {
+            $0.dpi[3] = DPIStage(dpi: 700, color: RGB(0, 0, 0))
+            $0.dpi[1] = DPIStage(dpi: 400, color: RGB(0x3D, 0x8B, 0xFF))   // colour only
+        }
+        other = SettingsEditing.editDPIStages(other, s, active: 3)
+        #expect(SettingsEditing.plannedPackets(s, pending: [:], other: other)
+                == ["03 51 31 00 00 07 00 3d 8b ff …", "03 51 31 02 00 0d 00 00 00 00 …",
+                    "03 51 31 09 00 03 …", "03 50 03 …  (save)"])
+        let preview = SettingsEditing.preview(s, pending: [:], other: other)
+        #expect(SettingsEditing.summary(preview, .dpi) == "400 / 800 / 700 / 3200 DPI")
+        #expect(SettingsEditing.edit(OtherEdits(), s) { $0.dpi[2] = DPIStage(dpi: 800, color: RGB(0xC1, 0x00, 0xFF)) }.isEmpty)
+    }
+
+    @Test func activeStageAndCountStayConsistent() throws {
+        let s = try settings()
+        let fewer = SettingsEditing.editDPIStages(OtherEdits(), s, count: 2)
+        #expect(fewer.activeStage == 2 && fewer.stageCount == 2)
+        #expect(Array(SettingsEditing.plannedPackets(s, pending: [:], other: fewer).prefix(2))
+                == ["03 51 31 09 00 02 …", "03 51 31 0a 00 02 …"])
+        var two = s
+        two.dpiStage = 2; two.dpiStageCount = 2
+        let more = SettingsEditing.editDPIStages(OtherEdits(), two, active: 4)
+        #expect(Array(SettingsEditing.plannedPackets(two, pending: [:], other: more).prefix(2))
+                == ["03 51 31 0a 00 04 …", "03 51 31 09 00 04 …"])
+        #expect(SettingsEditing.editDPIStages(more, two, active: 2, count: 2).isEmpty)
     }
 
     @Test func linkedEditSetsEveryZone() throws {

@@ -20,7 +20,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.setContentSize(NSSize(width: 1320, height: 800))
             window.contentMinSize = NSSize(width: 1000, height: 640)
+            // Kept after closing on purpose: a window rebuilt on every open drew the switch and slider knobs
+            // only after a focus change (owner, 2026-11-13). The few MB are not worth it.
             window.isReleasedWhenClosed = false
+            // The window is kept after closing; without this it reopens on the Space it was first shown on,
+            // not on the desktop where "Settings…" was clicked.
+            window.collectionBehavior.insert(.moveToActiveSpace)
             window.delegate = self
             window.center()
             window.setFrameAutosaveName("SquireSettings")
@@ -91,7 +96,7 @@ struct SettingsView: View {
                 if store.demo { Text("Demo: protocol.json captures, nothing is sent").font(.caption).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            Text("The lights can be changed; DPI, sensor and power are shown only so far. Nothing is sent until you click Apply.")
+            Text("Lights, DPI, sensor and power settings can be changed. Nothing is sent until you click Apply.")
                 .font(.callout)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6).padding(.horizontal, 12)
@@ -361,24 +366,113 @@ struct InspectorView: View {
     }
 
     @ViewBuilder private var dpiRows: some View {
-        let count = settings.dpiStageCount ?? settings.dpi.count
-        ForEach(0..<min(count, settings.dpi.count), id: \.self) { i in
-            let xy = i < settings.dpiXY.count ? settings.dpiXY[i] : nil
-            let subtitle = [settings.dpiStage == i + 1 ? "active" : nil,
-                            xy.flatMap { $0[0] != $0[1] ? "X \($0[0]) / Y \($0[1])" : nil }]
-                .compactMap { $0 }.joined(separator: " · ")
-            InfoRow("Stage \(i + 1)", settings.dpi[i].map { "\($0) DPI" } ?? "–", subtitle: subtitle,
-                    swatch: i < settings.dpiColors.count ? settings.dpiColors[i] : nil)
+        let preview = store.preview ?? settings
+        let count = preview.dpiStageCount ?? preview.dpi.count
+        ForEach(0..<min(Command.dpiStages, preview.dpi.count), id: \.self) { i in
+            let stage = i + 1
+            let note = preview.dpiStage == stage ? "active" : stage > count ? "not on the DPI button" : ""
+            if SettingsEditing.canEditDPI(settings, stage: stage), i < preview.dpiXY.count, i < preview.dpiColors.count {
+                let value = DPIStage(dpi: preview.dpiXY[i][0], color: preview.dpiColors[i])
+                let set = { (v: DPIStage) in store.editOther { $0.dpi[stage] = v } }
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        TextField("DPI", value: Binding(get: { value.dpi }, set: { set(DPIStage(dpi: Self.snapDPI($0), color: value.color)) }),
+                                  format: .number.grouping(.never))
+                            .labelsHidden()
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 70)
+                        Stepper("DPI", value: Binding(get: { value.dpi }, set: { set(DPIStage(dpi: Self.snapDPI($0), color: value.color)) }),
+                                in: Command.dpiRange, step: Command.dpiStep)
+                            .labelsHidden()
+                        LEDColorWell(color: value.color) { rgb in set(DPIStage(dpi: value.dpi, color: rgb)) }
+                            .frame(width: 44, height: 24)
+                            .help("Stage colour")
+                    }
+                } label: {
+                    Text("Stage \(stage)")
+                    if !note.isEmpty { Text(note) }
+                }
+            } else {
+                let xy = i < settings.dpiXY.count ? settings.dpiXY[i] : nil
+                let subtitle = [note.isEmpty ? nil : note, xy.map { "X \($0[0]) / Y \($0[1]), shown only" }]
+                    .compactMap { $0 }.joined(separator: " · ")
+                InfoRow("Stage \(stage)", settings.dpi[i].map { "\($0) DPI" } ?? "–", subtitle: subtitle,
+                        swatch: i < settings.dpiColors.count ? settings.dpiColors[i] : nil)
+            }
         }
-        InfoRow("Stages on the DPI button", "\(count)")
+        Picker(selection: Binding(get: { preview.dpiStage ?? 1 }, set: { store.editDPIStages(active: $0) })) {
+            ForEach(1...Command.dpiStages, id: \.self) { Text("Stage \($0)").tag($0) }
+        } label: {
+            Text("Active stage")
+            Text("The stage in use now")
+        }
+        Picker(selection: Binding(get: { count }, set: { store.editDPIStages(count: $0) })) {
+            ForEach(1...Command.dpiStages, id: \.self) { Text("\($0)").tag($0) }
+        } label: {
+            Text("Stages on the DPI button")
+            Text("The button cycles through these")
+        }
+    }
+
+    /// Nearest allowed value: 100...42000 in steps of 50.
+    static func snapDPI(_ value: Int) -> Int {
+        min(max(Int((Double(value) / Double(Command.dpiStep)).rounded()) * Command.dpiStep, Command.dpiRange.lowerBound),
+            Command.dpiRange.upperBound)
     }
 
     @ViewBuilder private var sensorRows: some View {
-        InfoRow("Polling rate", settings.pollingHz.map { "\($0) Hz" } ?? "–",
-                subtitle: "raw 0x\(ReplyParser.hex([settings.pollingRaw ?? 0])); 8000 Hz mode not confirmed yet")
-        InfoRow("Lift-off distance", settings.liftoff.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "–")
-        InfoRow("Angle snapping", settings.angleSnapping == true ? "On" : "Off")
-        InfoRow("Angle tuning", "\(settings.angleTuning ?? 0)°")
+        let preview = store.preview ?? settings
+        if SettingsEditing.canEditPolling(settings), let hz = preview.pollingHz {
+            Picker(selection: Binding(get: { hz }, set: { value in store.editOther { $0.polling = value } })) {
+                ForEach(Command.pollingWriteHz.keys.sorted(), id: \.self) { Text("\($0) Hz").tag($0) }
+            } label: {
+                Text("Polling rate")
+                Text("How often the mouse reports its position")
+            }
+        } else {
+            InfoRow("Polling rate", settings.pollingHz.map { "\($0) Hz" } ?? "–",
+                    subtitle: "raw 0x\(ReplyParser.hex([settings.pollingRaw ?? 0]))")
+        }
+        if SettingsEditing.canEditLiftoff(settings), let liftoff = preview.liftoff {
+            Picker(selection: Binding(get: { liftoff }, set: { value in store.editOther { $0.liftoff = value } })) {
+                Text("Low").tag("low")
+                Text("High").tag("high")
+            } label: {
+                Text("Lift-off distance")
+                Text("The surface setting stays as it is")
+            }
+        } else {
+            InfoRow("Lift-off distance", settings.liftoff.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "–",
+                    subtitle: "Shown only: the surface is not one Squire knows, so it is left alone")
+        }
+        if SettingsEditing.canEditSurface(settings), let surface = preview.surfaceID {
+            Picker(selection: Binding(get: { surface }, set: { id in store.editOther { $0.surface = id } })) {
+                ForEach(Command.surfaceChoices, id: \.self) { Text(Command.surfaceName($0) ?? "").tag($0) }
+            } label: {
+                Text("Surface")
+                Text("Mouse pad preset; the lift-off stays as it is")
+            }
+        } else {
+            InfoRow("Surface", Command.surfaceName(settings.surfaceID) ?? "–",
+                    subtitle: "Not a preset Squire knows (a calibration?), so it is left alone")
+        }
+        if let snapping = preview.angleSnapping {
+            Toggle(isOn: Binding(get: { snapping }, set: { on in store.editOther { $0.angleSnapping = on } })) {
+                Text("Angle snapping")
+                Text("Straightens nearly horizontal and vertical movements")
+            }
+        }
+        if let tuning = preview.angleTuning {
+            Picker(selection: Binding(get: { tuning }, set: { degrees in store.editOther { $0.angleTuning = degrees } })) {
+                ForEach(Command.angleTuningDegrees + (Command.angleTuningDegrees.contains(tuning) ? [] : [tuning]),
+                        id: \.self) { degrees in
+                    Text(Command.angleTuningDegrees.contains(degrees) ? "\(degrees)°" : "\(degrees)° (read only)").tag(degrees)
+                }
+            } label: {
+                Text("Angle tuning")
+                Text("Rotates the sensor's axes, in steps of 5°")
+            }
+        }
         InfoRow("Button response", settings.debounceMs.map { "\($0) ms" } ?? "index \(settings.debounceIndex ?? 0)")
     }
 
@@ -386,9 +480,26 @@ struct InspectorView: View {
         if let b = store.batteries[.mouse], let percent = b.percent {
             InfoRow("Battery", "\(percent) %", subtitle: b.charging ? "charging" : "")
         }
-        InfoRow("Turn off after", settings.powerOffMinutes.map { "\($0) min" } ?? "Never")
-        InfoRow("Low-battery warning", settings.lowWarning.map { "\($0) %" } ?? "–",
-                subtitle: "Squire's notification uses this level")
+        if SettingsEditing.canEditPower(settings), let power = store.power {
+            Picker("Turn off after", selection: Binding(get: { power.offMinutes ?? 0 }, set: { minutes in
+                store.editOther { $0.power = PowerSetting(offMinutes: minutes == 0 ? nil : minutes, lowWarning: power.lowWarning) }
+            })) {
+                ForEach([1, 2, 3, 5, 10], id: \.self) { Text("\($0) min").tag($0) }
+                Text("Never").tag(0)
+            }
+            Picker(selection: Binding(get: { power.lowWarning }, set: { warning in
+                store.editOther { $0.power = PowerSetting(offMinutes: power.offMinutes, lowWarning: warning) }
+            })) {
+                ForEach(Command.lowWarningLevels, id: \.self) { Text("\($0) %").tag($0) }
+            } label: {
+                Text("Low-battery warning")
+                Text("Squire's notification uses this level")
+            }
+        } else {
+            InfoRow("Turn off after", settings.powerOffMinutes.map { "\($0) min" } ?? "Never")
+            InfoRow("Low-battery warning", settings.lowWarning.map { "\($0) %" } ?? "–",
+                    subtitle: "Not one Squire can write back (10–50 %), so power is shown only")
+        }
     }
 }
 
