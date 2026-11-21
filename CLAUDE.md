@@ -208,13 +208,17 @@ Keyboard settings reads (Falchion RX LP, report ID 02 on the Omni; G-Helper Asus
 `keyboard_settings`, 2026-11-13): `12 00` [4..6] receiver firmware, [9] current lighting effect (G-Helper ids: 0 static,
 1 breathing, 2 cycle, 3 reactive, 4 rainbow (G-Helper: wave), 5 ripple, 6 starry night, 7 quicksand, 8 current, 9 raindrop, f1 host-driven;
 all ten confirmed against Armoury Crate on Windows, 2026-11-21; Squire names 04 rainbow like AC, DE Regenbogen; 08 is "Fliessen" in AC), [10] active profile 1-based (profiles 1, 2
-and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply), [11..13] keyboard firmware via the Omni (05.00.13 = AC, 2026-11-21; offset over the cable not captured).
+and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply), [11..13] keyboard firmware via the Omni, [4..6] over the cable (05.00.13 = AC, 2026-11-21; wired replies in
+`keyboard_settings.captures_wired`, Windows).
 `12 12` [5] factory layout id (25 = CH-DE confirmed, ISO). `12 01` [6] sleep timeout, mouse power-off coding 00..04 = 1/2/3/5/10 min, ff never (AC offers exactly these; 1, 3 and never confirmed on Windows, 2026-11-21, protocol.json `keyboard_settings.sleep_captures`).
 No source reads the keyboard's LED colour/brightness; G-Helper keeps them in its own config. `12 03 00` (the mouse's LED read)
 was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (not
-approved, not sent): lighting `51 2c`, save `50 55`, `51 37` warning, `51 38` sleep. AC capture (2026-11-21):
-`51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>`, then `50 55`; first reply ff aa. Speed 0f fast, 1e normal,
-2a slow (AC offers only these), ff for static. Rainbow (04) is a gradient in 3 chunks ([3] = 02, 01, 00): [7] direction
+approved, not sent): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
+`51 37` is wrong for the Falchion). AC captures (2026-11-21, protocol.json `keyboard_writes`):
+`51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>`, then `50 55`; first reply ff aa. Speed: 3 steps per effect, own
+values each (breathing 0f/1e/2a, raindrop 0e/14/1b fast/normal/slow), ff for static. Colour cycle has no colour. Starry
+night, current, raindrop also have background colour and single/double/random (not captured yet). Ripple = gradient
+like rainbow, quicksand = 6 RGB triples in 2 chunks (random, up/down not captured). Rainbow (04) is a gradient in 3 chunks ([3] = 02, 01, 00): [7] direction
 (00 left->right, 04 right->left; AC has 9, rest unknown), [9] stop count, then position % + RGB per stop (AC: 7 presets + manual).
 Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
 ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).

@@ -38,6 +38,24 @@ private func bytes(_ hex: String) -> [UInt8] { hex.split(separator: " ").compact
         }
     }
 
+    /// protocol.json `keyboard_settings.captures_wired`: over the cable, no report ID, firmware at [4..6].
+    @Test func wiredCapturesMatch() throws {
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: protocolURL())) as! [String: Any]
+        let captures = (json["keyboard_settings"] as! [String: Any])["captures_wired"] as! [[String: Any]]
+        var k = KeyboardSettings(connection: .wired)
+        for capture in captures {
+            let query = try #require(KeyboardQuery(rawValue: capture["command"] as! String))
+            let reply = bytes(capture["reply"] as! String)
+            #expect(ReplyParser.echoIndex(in: reply, query: query.command.bytes) == 0)
+            k.apply(query, reply)
+        }
+        #expect(k.firmware == "05.00.13")
+        #expect(k.receiverFirmware == nil)
+        #expect(k.lightMode == "raindrop")
+        #expect(k.profile == 1)
+        #expect(k.layoutText == "CH-DE · ISO")
+    }
+
     /// protocol.json `keyboard_settings.sleep_captures`: 12 01 [6] set in Armoury Crate (1 min, 3 min, never).
     @Test func sleepCapturesMatchArmouryCrate() throws {
         let json = try JSONSerialization.jsonObject(with: Data(contentsOf: protocolURL())) as! [String: Any]

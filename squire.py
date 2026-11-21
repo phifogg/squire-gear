@@ -799,7 +799,7 @@ class KeyboardSettings:
     iso: Optional[bool] = None
     sleep_minutes: Optional[int] = None         # 12 01 [6], mouse power-off coding (AC, 2026-11-21)
     low_warning: Optional[int] = None
-    firmware: Optional[str] = None              # the keyboard's, 12 00 [11..13] via the Omni (AC, 2026-11-21)
+    firmware: Optional[str] = None              # the keyboard's: 12 00 [11..13] via the Omni, [4..6] wired
     receiver_firmware: Optional[str] = None     # the Omni receiver's (Omni only)
     raw: dict = field(default_factory=dict)     # command name -> reply hex (for captures)
 
@@ -816,8 +816,9 @@ def parse_keyboard_settings(s: KeyboardSettings, name: str, p: bytes) -> None:
         s.profile = p[10] if 1 <= p[10] <= 5 else None
         if s.connection == "omni" and any(p[4:7]):
             s.receiver_firmware = f"{p[6]:02X}.{p[5]:02X}.{p[4]:02X}"
-        if s.connection == "omni" and any(p[11:14]):    # over the cable: offset not captured yet
-            s.firmware = f"{p[13]:02X}.{p[12]:02X}.{p[11]:02X}"
+        fw = p[11:14] if s.connection == "omni" else p[4:7]   # cable: [4..6] (Windows, 2026-11-21)
+        if any(fw):
+            s.firmware = f"{fw[2]:02X}.{fw[1]:02X}.{fw[0]:02X}"
     elif name == "layout":
         s.layout_id = p[5]
         s.layout = KEYBOARD_LAYOUTS.get(p[5])

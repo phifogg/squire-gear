@@ -2,7 +2,7 @@
 // echoed command (no report ID). Source, facts only: G-Helper app/Peripherals/Keyboard/AsusKeyboard.cs (GPL-3.0).
 // Confirmed with the captures in protocol.json `keyboard_settings` (owner, 2026-11-13).
 //
-//   12 00  [4..6] receiver firmware, [11..13] keyboard firmware (both Omni only; AC, 2026-11-21), [9] current lighting effect, [10] active profile (1-based, 1...5)
+//   12 00  [4..6] receiver firmware, [11..13] keyboard firmware (both Omni; wired: firmware at [4..6], 2026-11-21), [9] current lighting effect, [10] active profile (1-based, 1...5)
 //   12 12  [5] factory layout id (25 = CH-DE, ISO)
 //   12 01  [6] sleep timeout (mouse power-off coding, confirmed with Armoury Crate 2026-11-21), [9] low-battery warning %
 //
@@ -35,7 +35,7 @@ public struct KeyboardSettings: Equatable, Sendable {
     public var iso: Bool?
     public var sleepMinutes: Int?       // nil with status ok = never
     public var lowWarning: Int?
-    public var firmware: String?        // the keyboard's, 12 00 [11..13] via the Omni
+    public var firmware: String?        // the keyboard's, 12 00 [11..13] via the Omni, [4..6] wired
     public var receiverFirmware: String?
     /// query name -> reply hex (or status), for the debug view and new captures
     public var raw: [String: String] = [:]
@@ -75,8 +75,9 @@ public struct KeyboardSettings: Equatable, Sendable {
             if connection != .wired, p[4..<7].contains(where: { $0 != 0 }) {
                 receiverFirmware = [p[6], p[5], p[4]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
             }
-            if connection != .wired, p[11..<14].contains(where: { $0 != 0 }) {   // cable offset not captured yet
-                firmware = [p[13], p[12], p[11]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
+            let fw = connection == .wired ? Array(p[4..<7]) : Array(p[11..<14])   // cable: [4..6] (2026-11-21)
+            if fw.contains(where: { $0 != 0 }) {
+                firmware = [fw[2], fw[1], fw[0]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
             }
         case .layout:
             layoutID = Int(p[5])

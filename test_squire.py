@@ -410,6 +410,18 @@ class RealKeyboardSettingsCaptureTests(unittest.TestCase):
         rb.parse_keyboard_settings(s, "battery", bytes.fromhex(kb["reply"])[1:])
         self.assertEqual(s.low_warning, 20)
 
+    def test_wired_captures(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["keyboard_settings"]
+        s = rb.KeyboardSettings("k", "wired")
+        for capture in data["captures_wired"]:
+            reply = bytes.fromhex(capture["reply"])
+            self.assertEqual(rb.find_echo(reply, rb.KEYBOARD_SETTINGS_QUERIES[capture["command"]]), 0)
+            rb.parse_keyboard_settings(s, capture["command"], reply)
+            for key, value in capture["expect"].items():
+                with self.subTest(command=capture["command"], key=key):
+                    self.assertEqual(getattr(s, key), value)
+        self.assertIsNone(s.receiver_firmware)
+
     def test_sleep_captures(self):
         data = json.loads((Path(__file__).parent / "protocol.json").read_text())["keyboard_settings"]
         self.assertGreaterEqual(len(data["sleep_captures"]), 3)
