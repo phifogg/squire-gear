@@ -314,6 +314,11 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       12 01 [6] (2026-11-21), [x] keyboard firmware ([11..13] of 12 00 = 05.00.13, 2026-11-21), [x] a capture of how AC reads the LED colour
       (2026-11-21, protocol.json `keyboard_writes`: AC reads no colour on open, it caches it like G-Helper; so the
       keyboard colour stays unreadable; a Squire editor would have to remember what it last wrote).
+      Windows session done (2026-11-21): three AC captures (`keyboard_writes`), wired reads (firmware at [4..6]).
+      AC re-flashed the keyboard firmware the same day (failed once, worked after a reboot): versions unchanged
+      (05.00.13 / receiver 07.00.08, mouse 01.00.10), replies unchanged.
+      Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
+      51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects
