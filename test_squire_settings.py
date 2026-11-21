@@ -272,12 +272,14 @@ class KeyboardPageTests(unittest.TestCase):
         self.assertEqual(v["Effect"], "Reactive")
         self.assertEqual(v["Layout"], "CH-DE · ISO")
         self.assertEqual(v["Low-battery warning"], "20 %")
+        self.assertEqual(v["Firmware"], "05.00.13")
         self.assertEqual(v["Receiver firmware"], "07.00.08")
 
     def test_effect_names(self):
         self.assertEqual(ui.keyboard_effect_name("starry-night"), "Starry night")
         self.assertEqual(ui.keyboard_effect_name("host-driven"), "Controlled by an app")
         self.assertEqual(ui.keyboard_effect_name("current"), "Current")
+        self.assertEqual(ui.keyboard_effect_name("rainbow"), "Rainbow")
         self.assertEqual(ui.keyboard_effect_name(None), "–")
 
     def test_unknown_layout_and_missing_values(self):
@@ -287,6 +289,7 @@ class KeyboardPageTests(unittest.TestCase):
         self.assertEqual(v["Active profile"], "–")
         self.assertEqual(v["Connection"], "USB cable")
         self.assertNotIn("Receiver firmware", v)
+        self.assertNotIn("Firmware", v)
 
     def test_every_zone_has_a_group_and_a_summary(self):
         k = ui.demo_keyboard()

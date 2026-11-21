@@ -172,6 +172,8 @@ def keyboard_groups(k: "squire.KeyboardSettings") -> list[tuple[str, list[tuple[
         layout += " · ISO" if k.iso else " · ANSI"
     sleep = "Never" if k.sleep_minutes is None else f"After {k.sleep_minutes} min"
     device = [("Connection", {"omni": "Omni receiver", "wired": "USB cable"}.get(k.connection, k.connection), "")]
+    if k.firmware:
+        device.append(("Firmware", k.firmware, ""))
     if k.receiver_firmware:
         device.append(("Receiver firmware", k.receiver_firmware, ""))
     return [
@@ -185,7 +187,7 @@ def keyboard_groups(k: "squire.KeyboardSettings") -> list[tuple[str, list[tuple[
             ("Layout", layout, "Set at the factory"),
         ]),
         ("Power", [
-            ("Sleep", sleep, "Not confirmed yet"),
+            ("Sleep", sleep, ""),
             ("Low-battery warning", f"{k.low_warning} %" if k.low_warning else "–", ""),
         ]),
         ("Device", device),

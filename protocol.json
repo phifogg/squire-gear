@@ -464,10 +464,11 @@
         "reply": "02 12 00 00 00 08 00 07 00 06 03 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
         "expect": {
           "receiver_firmware": "07.00.08",
+          "firmware": "05.00.13",
           "light_mode": "reactive",
           "profile": 1
         },
-        "notes": "[4..6]=08 00 07 receiver firmware 07.00.08 (same receiver and value as the mouse's 12 00 the same day). [9]=03 current lighting effect reactive (G-Helper ids; f1 = host-driven), confirmed by the owner: reactive in red. [10]=01 active profile, 1-based: the owner's keyboard is on profile 1 of 5 (confirmed with profiles 2 and 5 below). [11..13]=13 00 05 maybe keyboard firmware 05.00.13 (unconfirmed). [8]=06 unknown. The colour is not in the reply."
+        "notes": "[4..6]=08 00 07 receiver firmware 07.00.08 (same receiver and value as the mouse's 12 00 the same day). [9]=03 current lighting effect reactive (G-Helper ids; f1 = host-driven), confirmed by the owner: reactive in red. [10]=01 active profile, 1-based: the owner's keyboard is on profile 1 of 5 (confirmed with profiles 2 and 5 below). [11..13]=13 00 05 keyboard firmware 05.00.13 (build/minor/major), confirmed: Armoury Crate shows 5.00.13 (owner, Windows, 2026-11-21). [8]=06 unknown. The colour is not in the reply."
       },
       {
         "command": "profile",
@@ -497,6 +498,132 @@
           "iso": true
         },
         "notes": "[5] factory layout id (G-Helper: 3 DE, 4 UK, 5 FR, 17 US); 0x19 = 25 = CH-DE, confirmed by the owner (2026-11-13), on G-Helper's ISO list. [4]=02 unknown."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 00 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "static",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Statisch' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=00 = G-Helper's static."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 01 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "breathing",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Pulsierend' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=01 = G-Helper's breathing."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 02 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "color-cycle",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Farbwechsel' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=02 = G-Helper's color-cycle."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 03 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "reactive",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Reagierend' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=03 = G-Helper's reactive."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 04 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "rainbow",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Regenbogen' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=04 = G-Helper's 'wave' (Squire: rainbow). AC calls it Regenbogen (rainbow), G-Helper 'wave'. The first read after the click still showed 02: AC had not sent it yet; a second click applied it."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 05 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "ripple",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Kräuselung' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=05 = G-Helper's ripple."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 06 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "starry-night",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Sternennacht' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=06 = G-Helper's starry-night."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 07 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "quicksand",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Treibsand' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=07 = G-Helper's quicksand."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 08 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "current",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Fließen' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=08 = G-Helper's current."
+      },
+      {
+        "command": "profile",
+        "reply": "02 12 00 00 00 08 00 07 00 06 09 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "receiver_firmware": "07.00.08",
+          "light_mode": "raindrop",
+          "profile": 1
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: the owner picked 'Regentropfen' under 'Grundeffekte' in Armoury Crate (German UI), then Squire read 12 00: [9]=09 = G-Helper's raindrop. All ten AC basic effects map 1:1 to G-Helper ids 00..09."
+      }
+    ],
+    "sleep_captures": [
+      {
+        "reply": "02 12 01 00 00 00 47 02 01 00 14 47 9d 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "sleep_minutes": 3,
+          "low_warning": 20
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: Armoury Crate sleep timeout set to 3 min (as found), then Squire read 12 01: [6]=02. AC offers 1, 2, 3, 5, 10 min and never: the mouse's power-off coding (00..04, ff never)."
+      },
+      {
+        "reply": "02 12 01 00 00 00 47 00 01 00 14 47 92 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "sleep_minutes": 1,
+          "low_warning": 20
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: Armoury Crate sleep timeout set to 1 min, then Squire read 12 01: [6]=00. AC offers 1, 2, 3, 5, 10 min and never: the mouse's power-off coding (00..04, ff never)."
+      },
+      {
+        "reply": "02 12 01 00 00 00 47 ff 01 00 14 47 84 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "sleep_minutes": null,
+          "low_warning": 20
+        },
+        "notes": "Windows (hidapi via Omni), 2026-11-21: Armoury Crate sleep timeout set to never (niemals), then Squire read 12 01: [6]=ff. AC offers 1, 2, 3, 5, 10 min and never: the mouse's power-off coding (00..04, ff never)."
       }
     ],
     "probes": [
@@ -506,5 +633,143 @@
         "notes": "One-off probe with the mouse's LED read, sent once with the owner's explicit go (2026-11-13), not on the allowlist. The keyboard echoes it but the reply holds no colour: it was lit reactive red (ff 00 00), the reply is only [4]=01. So 12 03 is not the keyboard's LED read; find it with an Armoury Crate capture on Windows."
       }
     ]
+  },
+  "keyboard_writes": {
+    "_comment": "Armoury Crate on Windows talking to the ROG Falchion RX Low Profile via the ROG Omni receiver (report ID 02, interrupt OUT ep 03 / IN ep 83), USBPcap, 2026-11-21. The owner closed AC, started the capture, opened AC's keyboard lighting page, then set the reactive effect's colour to blue and the brightness to 100 %. Only the vendor endpoints were extracted; the .pcapng stays out of the repo. Captured facts only: none of these commands is approved or sent by Squire.",
+    "open_reads": [
+      {
+        "packet": "02 12 03 00",
+        "reply": "02 12 03 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Sent twice. Same as the 2026-11-13 probe: [4]=01, no colour."
+      },
+      {
+        "packet": "02 12 00",
+        "reply": "02 12 00 00 00 08 00 07 00 06 03 01 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Firmware, effect (03 reactive), profile 1: what Squire already reads."
+      },
+      {
+        "packet": "02 12 01",
+        "reply": "02 12 01 00 00 00 47 02 01 00 14 47 94 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Battery 71 %, sleep 02 = 3 min, warning 20 %."
+      },
+      {
+        "packet": "02 22 01",
+        "reply": "02 22 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Unknown; echo without data."
+      },
+      {
+        "packet": "02 12 12",
+        "reply": "02 12 12 00 00 02 19 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Layout CH-DE."
+      },
+      {
+        "packet": "02 7d 20 02",
+        "reply": "02 7d 20 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Unknown; echo without data."
+      },
+      {
+        "packet": "02 12 08",
+        "reply": "02 12 08 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Unknown; [4]=01."
+      },
+      {
+        "packet": "02 12 16",
+        "reply": "02 12 16 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Unknown; echo without data (reply after ~200 ms)."
+      }
+    ],
+    "open_reads_notes": "This is everything AC sends when it opens: no read returns the LED colour or brightness. AC shows its own cached values (like G-Helper), so the keyboard's colour is not readable with any known command.",
+    "writes": [
+      {
+        "name": "reactive, blue, 50 %",
+        "packet": "02 51 2c 03 00 0f 32 00 ff ff 00 02 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Indices relative to 51: [2]=03 effect (reactive, same ids as 12 00 [9]), [3]=00, [4]=0f speed fast (see capture_2), [5]=0x32 = 50 % brightness, [6]=00, [7..8]=ff ff (constant for single-colour effects), [9..11]=00 02 ff = RGB from AC's colour picker (blue). The first reply was ff aa (provisional), then the echo. AC sent the same packet again 1.6 s later, then 50 55."
+      },
+      {
+        "name": "reactive, blue, 100 %",
+        "packet": "02 51 2c 03 00 0f 64 00 ff ff 00 02 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "notes": "Only [5] changed: 0x64 = 100 %. Again ff aa first, then the echo."
+      }
+    ],
+    "save": {
+      "packet": "02 50 55 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "notes": "Sent by AC after each 51 2c (the keyboard's save; the mouse uses 50 03). Echoed two or three times. Matches G-Helper's keyboard save."
+    },
+    "after": "Squire read 12 00 afterwards: effect still 03 reactive; the keyboard showed blue at 100 % (owner).",
+    "capture_2":{
+      "_comment": "Second Armoury Crate capture, Windows, USBPcap, 2026-11-21: static red/green and brightness, breathing speeds, rainbow direction and gradient, then back to reactive blue 100 %. Each 51 2c was followed by 50 55. Facts only, nothing approved or sent by Squire. Single-colour layout (indices from 51): 51 2c <effect> 00 <speed: 0f fast, 1e normal, 2a slow, ff none> <brightness %> 00 ff ff <R G B>.",
+      "writes": [
+        {
+          "name": "static, AC default white 50 %",
+          "packet": "02 51 2c 00 00 ff 32 00 ff ff ff ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "notes": "Static picked. [4]=ff = no speed for static."
+        },
+        {
+          "name": "static red 50 %",
+          "packet": "02 51 2c 00 00 ff 32 00 ff ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "notes": "Colour #ff0000 from AC: [9..11] = R G B in this order."
+        },
+        {
+          "name": "static red 100 %",
+          "packet": "02 51 2c 00 00 ff 64 00 ff ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "notes": "Only [5] changed: 0x64 = 100 %."
+        },
+        {
+          "name": "static green 100 %",
+          "packet": "02 51 2c 00 00 ff 64 00 ff ff 00 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "notes": "#00ff00: [9..11] = 00 ff 00."
+        },
+        {
+          "name": "breathing, normal speed",
+          "packet": "02 51 2c 01 00 1e 32 00 ff ff ff ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "notes": "Breathing picked (AC's own cached colour white, 50 %): [4]=1e = AC speed 'normal'."
+        },
+        {
+          "name": "breathing, slow",
+          "packet": "02 51 2c 01 00 2a 32 00 ff ff ff ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "notes": "AC speed 'slow': [4]=2a. Larger = slower."
+        },
+        {
+          "name": "breathing, fast",
+          "packet": "02 51 2c 01 00 0f 32 00 ff ff ff ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "notes": "AC speed 'fast': [4]=0f (also what AC sent for reactive). AC offers only these three speeds."
+        },
+        {
+          "name": "reactive blue 100 % (restore)",
+          "packet": "02 51 2c 03 00 0f 64 00 ff ff 00 02 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "notes": "Same packet as the first capture."
+        }
+      ],
+      "gradient_writes": [
+        {
+          "name": "rainbow, left to right, AC default gradient",
+          "packets": [
+            "02 51 2c 04 02 3e 32 00 00 02 07 0e f5 00 ff 1d 00 06 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+            "02 51 2c 04 01 2b 00 fa ff 39 01 ff 00 48 ff f6 00 56 ff 78 07 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+            "02 51 2c 04 00 64 ff 00 0d 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+          ],
+          "notes": "Three packets, [3] counts down 02, 01, 00 (chunk index). First chunk: [4]=3e speed?, [5]=32 = 50 %, [6]=00, [7]=00 direction left to right, [8]=02 unknown, [9]=07 number of gradient stops. Then 4 bytes per stop: position % + R G B: 0e f5 00 ff, 1d 00 06 ff | 2b 00 fa ff, 39 01 ff 00, 48 ff f6 00, 56 ff 78 07 | 64 ff 00 0d (14..100 %, purple, blue, cyan, green, yellow, orange, red). 2 + 4 + 1 stops over the chunks."
+        },
+        {
+          "name": "rainbow, right to left",
+          "packets": [
+            "02 51 2c 04 02 3e 32 00 04 02 07 0e f5 00 ff 1d 00 06 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+            "02 51 2c 04 01 2b 00 fa ff 39 01 ff 00 48 ff f6 00 56 ff 78 07 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+            "02 51 2c 04 00 64 ff 00 0d 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+          ],
+          "notes": "Only [7] changed: 00 -> 04 = right to left. AC offers 9 directions (up, down, left, right, 4 diagonals, from the centre outwards); the other ids are not captured."
+        },
+        {
+          "name": "rainbow, right to left, other AC gradient preset",
+          "packets": [
+            "02 51 2c 04 02 3e 32 00 04 02 03 0e fe be 3f 39 fe 3f 7d 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+            "02 51 2c 04 01 64 f9 1d 1d 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+            "02 51 2c 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+          ],
+          "notes": "Owner changed the gradient (AC: 7 presets + manual). [9]=03 stops: 0e fe be 3f, 39 fe 3f 7d, 64 f9 1d 1d. The last chunk (00) is sent even when empty."
+        }
+      ],
+      "other": "Between the rainbow steps AC also read the mouse (report ID 03): 03 12 00 02 -> [4]=01, and 03 12 07."
+    }
   }
 }

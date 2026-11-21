@@ -410,6 +410,18 @@ class RealKeyboardSettingsCaptureTests(unittest.TestCase):
         rb.parse_keyboard_settings(s, "battery", bytes.fromhex(kb["reply"])[1:])
         self.assertEqual(s.low_warning, 20)
 
+    def test_sleep_captures(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["keyboard_settings"]
+        self.assertGreaterEqual(len(data["sleep_captures"]), 3)
+        for capture in data["sleep_captures"]:
+            reply = bytes.fromhex(capture["reply"])
+            self.assertEqual(rb.find_echo(reply, rb.KEYBOARD_QUERY), 1)
+            s = rb.KeyboardSettings("k", "omni")
+            rb.parse_keyboard_settings(s, "battery", reply[1:])
+            for key, value in capture["expect"].items():
+                with self.subTest(reply=capture["reply"][:30], key=key):
+                    self.assertEqual(getattr(s, key), value)
+
     def test_unknown_layout_and_effect_are_kept_raw(self):
         s = rb.KeyboardSettings("k", "omni")
         rb.parse_keyboard_settings(s, "layout", bytes([0x12, 0x12, 0, 0, 0x02, 0x63] + [0] * 58))

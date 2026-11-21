@@ -468,6 +468,7 @@ struct KeyboardInspectorView: View {
             }
             Section("Device") {
                 InfoRow("Connection", settings.connection == .wired ? "Wired" : "Omni receiver")
+                if let firmware = settings.firmware { InfoRow("Firmware", firmware) }
                 if let receiver = settings.receiverFirmware { InfoRow("Receiver firmware", receiver) }
             }
         }

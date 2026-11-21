@@ -2,9 +2,9 @@
 // echoed command (no report ID). Source, facts only: G-Helper app/Peripherals/Keyboard/AsusKeyboard.cs (GPL-3.0).
 // Confirmed with the captures in protocol.json `keyboard_settings` (owner, 2026-11-13).
 //
-//   12 00  [4..6] receiver firmware (Omni), [9] current lighting effect, [10] active profile (1-based, 1...5)
+//   12 00  [4..6] receiver firmware, [11..13] keyboard firmware (both Omni only; AC, 2026-11-21), [9] current lighting effect, [10] active profile (1-based, 1...5)
 //   12 12  [5] factory layout id (25 = CH-DE, ISO)
-//   12 01  [6] sleep timeout (mouse coding assumed, not confirmed), [9] low-battery warning %
+//   12 01  [6] sleep timeout (mouse power-off coding, confirmed with Armoury Crate 2026-11-21), [9] low-battery warning %
 //
 // The LED colour cannot be read: no source knows a command for it, and 12 03 (the mouse's LED read) answers
 // without a colour (protocol.json keyboard_settings.probes).
@@ -33,8 +33,9 @@ public struct KeyboardSettings: Equatable, Sendable {
     public var layoutID: Int?
     public var layout: String?          // e.g. CH-DE; nil for an id Squire does not know
     public var iso: Bool?
-    public var sleepMinutes: Int?       // nil with status ok = never; coding not confirmed
+    public var sleepMinutes: Int?       // nil with status ok = never
     public var lowWarning: Int?
+    public var firmware: String?        // the keyboard's, 12 00 [11..13] via the Omni
     public var receiverFirmware: String?
     /// query name -> reply hex (or status), for the debug view and new captures
     public var raw: [String: String] = [:]
@@ -49,7 +50,7 @@ public struct KeyboardSettings: Equatable, Sendable {
 
     /// Effect ids in 12 00 [9] (G-Helper KeyboardLightingMode); 0xf1 = the host drives the LEDs directly.
     public static let lightModes: [UInt8: String] = [
-        0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "reactive", 0x04: "wave", 0x05: "ripple",
+        0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "reactive", 0x04: "rainbow", 0x05: "ripple",
         0x06: "starry-night", 0x07: "quicksand", 0x08: "current", 0x09: "raindrop", 0xF1: "host-driven",
     ]
     /// Factory layout ids in 12 12 [5]: 3/4/5/17 from G-Helper, 25 = CH-DE confirmed by the owner.
@@ -73,6 +74,9 @@ public struct KeyboardSettings: Equatable, Sendable {
             profile = (1...Self.profileCount).contains(Int(p[10])) ? Int(p[10]) : nil
             if connection != .wired, p[4..<7].contains(where: { $0 != 0 }) {
                 receiverFirmware = [p[6], p[5], p[4]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
+            }
+            if connection != .wired, p[11..<14].contains(where: { $0 != 0 }) {   // cable offset not captured yet
+                firmware = [p[13], p[12], p[11]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
             }
         case .layout:
             layoutID = Int(p[5])
@@ -137,7 +141,7 @@ public enum KeyboardZone: String, CaseIterable, Sendable, Identifiable {
                      "Switch profiles on the keyboard")]
         case .layout: return [("Layout", k.layoutText, "Set at the factory")]
         case .power:
-            return [("Sleep", k.sleepMinutes.map { "After \($0) min" } ?? "Never", "Not confirmed yet"),
+            return [("Sleep", k.sleepMinutes.map { "After \($0) min" } ?? "Never", ""),
                     ("Low-battery warning", k.lowWarning.map { "\($0) %" } ?? "–", "")]
         }
     }

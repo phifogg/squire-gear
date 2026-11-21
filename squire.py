@@ -778,7 +778,7 @@ def _read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
 
 # --- Keyboard settings (Falchion RX Low Profile), read-only ---
 # Lighting effect ids in 12 00 [9] (G-Helper KeyboardLightingMode); 0xf1 = the host drives the LEDs directly.
-KEYBOARD_LIGHT_MODES = {0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "reactive", 0x04: "wave",
+KEYBOARD_LIGHT_MODES = {0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "reactive", 0x04: "rainbow",
                         0x05: "ripple", 0x06: "starry-night", 0x07: "quicksand", 0x08: "current", 0x09: "raindrop",
                         0xF1: "host-driven"}
 # Factory layout ids in 12 12 [5]: 3/4/5/17 from G-Helper, 25 = CH-DE confirmed by the owner (2026-11-13).
@@ -797,8 +797,9 @@ class KeyboardSettings:
     layout_id: Optional[int] = None
     layout: Optional[str] = None                # e.g. CH-DE; None for an id Squire does not know
     iso: Optional[bool] = None
-    sleep_minutes: Optional[int] = None         # 12 01 [6], mouse coding assumed (G-Helper); not confirmed
+    sleep_minutes: Optional[int] = None         # 12 01 [6], mouse power-off coding (AC, 2026-11-21)
     low_warning: Optional[int] = None
+    firmware: Optional[str] = None              # the keyboard's, 12 00 [11..13] via the Omni (AC, 2026-11-21)
     receiver_firmware: Optional[str] = None     # the Omni receiver's (Omni only)
     raw: dict = field(default_factory=dict)     # command name -> reply hex (for captures)
 
@@ -815,6 +816,8 @@ def parse_keyboard_settings(s: KeyboardSettings, name: str, p: bytes) -> None:
         s.profile = p[10] if 1 <= p[10] <= 5 else None
         if s.connection == "omni" and any(p[4:7]):
             s.receiver_firmware = f"{p[6]:02X}.{p[5]:02X}.{p[4]:02X}"
+        if s.connection == "omni" and any(p[11:14]):    # over the cable: offset not captured yet
+            s.firmware = f"{p[13]:02X}.{p[12]:02X}.{p[11]:02X}"
     elif name == "layout":
         s.layout_id = p[5]
         s.layout = KEYBOARD_LAYOUTS.get(p[5])
@@ -862,13 +865,14 @@ def print_keyboard_settings(s: KeyboardSettings) -> None:
     if s.status != "ok":
         print(f"{s.name}: {s.status}")
         return
+    firmware = f", firmware {s.firmware}" if s.firmware else ""
     receiver = f", receiver {s.receiver_firmware}" if s.receiver_firmware else ""
-    print(f"{s.name} ({s.connection}){receiver}, profile {s.profile}")
+    print(f"{s.name} ({s.connection}){firmware}{receiver}, profile {s.profile}")
     layout = s.layout or f"unknown id {s.layout_id}"
     print(f"  Layout:       {layout}{' (ISO)' if s.iso else ''}")
     print(f"  Lighting:     {s.light_mode} (the colour cannot be read)")
-    sleep = "never" if s.sleep_minutes is None else f"{s.sleep_minutes} min"
-    print(f"  Power:        sleep after {sleep} (not confirmed), low-battery warning {s.low_warning} %")
+    sleep = "never sleeps" if s.sleep_minutes is None else f"sleep after {s.sleep_minutes} min"
+    print(f"  Power:        {sleep}, low-battery warning {s.low_warning} %")
 
 
 @dataclass

@@ -206,13 +206,16 @@ debounce (n*4+4 ms), [16] angle snapping, [18..19] angle tuning (signed LE16). `
 [6..8] RGB. `12 06` [6] surface id (ff = none selected), [7] lift-off (0 low, 1 high), [8..10] surface parameters. `12 07` also: [5] power-off (0..4 = 1/2/3/5/10 min, ff never).
 Keyboard settings reads (Falchion RX LP, report ID 02 on the Omni; G-Helper AsusKeyboard.cs, captures in protocol.json
 `keyboard_settings`, 2026-11-13): `12 00` [4..6] receiver firmware, [9] current lighting effect (G-Helper ids: 0 static,
-1 breathing, 2 cycle, 3 reactive, 4 wave, 5 ripple, 6 starry night, 7 quicksand, 8 current, 9 raindrop, f1 host-driven;
-reactive, starry night and current confirmed; AC names to check), [10] active profile 1-based (profiles 1, 2
-and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply), [11..13] maybe keyboard firmware (unconfirmed).
-`12 12` [5] factory layout id (25 = CH-DE confirmed, ISO). `12 01` [6] sleep timeout (mouse coding assumed, unconfirmed).
+1 breathing, 2 cycle, 3 reactive, 4 rainbow (G-Helper: wave), 5 ripple, 6 starry night, 7 quicksand, 8 current, 9 raindrop, f1 host-driven;
+all ten confirmed against Armoury Crate on Windows, 2026-11-21; Squire names 04 rainbow like AC, DE Regenbogen; 08 is "Fliessen" in AC), [10] active profile 1-based (profiles 1, 2
+and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply), [11..13] keyboard firmware via the Omni (05.00.13 = AC, 2026-11-21; offset over the cable not captured).
+`12 12` [5] factory layout id (25 = CH-DE confirmed, ISO). `12 01` [6] sleep timeout, mouse power-off coding 00..04 = 1/2/3/5/10 min, ff never (AC offers exactly these; 1, 3 and never confirmed on Windows, 2026-11-21, protocol.json `keyboard_settings.sleep_captures`).
 No source reads the keyboard's LED colour/brightness; G-Helper keeps them in its own config. `12 03 00` (the mouse's LED read)
 was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (not
-approved, not sent): lighting `51 2c`, save `50 55`, `51 37` warning, `51 38` sleep.
+approved, not sent): lighting `51 2c`, save `50 55`, `51 37` warning, `51 38` sleep. AC capture (2026-11-21):
+`51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>`, then `50 55`; first reply ff aa. Speed 0f fast, 1e normal,
+2a slow (AC offers only these), ff for static. Rainbow (04) is a gradient in 3 chunks ([3] = 02, 01, 00): [7] direction
+(00 left->right, 04 right->left; AC has 9, rest unknown), [9] stop count, then position % + RGB per stop (AC: 7 presets + manual).
 Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
 ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).
 Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.cs`,
@@ -303,8 +306,10 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       probe and squire.py read the same values, `--repeat 30` no crash, keyboard page and a mouse LED Apply confirmed
       by the owner in the window. `--screenshot PATH keyboard` selects the keyboard page on macOS too.
       Next: find how to read the LED colour. Windows TODO with Armoury Crate:
-      effect names (G-Helper's "current" = a random key, then the 3 keys to its right), sleep timeout values for
-      12 01 [6], keyboard firmware ([11..13] of 12 00 = 05.00.13?), and a capture of how AC reads the LED colour.
+      [x] effect names (2026-11-21: all ten AC basic effects = G-Helper ids 00..09), [x] sleep timeout values for
+      12 01 [6] (2026-11-21), [x] keyboard firmware ([11..13] of 12 00 = 05.00.13, 2026-11-21), [x] a capture of how AC reads the LED colour
+      (2026-11-21, protocol.json `keyboard_writes`: AC reads no colour on open, it caches it like G-Helper; so the
+      keyboard colour stays unreadable; a Squire editor would have to remember what it last wrote).
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects

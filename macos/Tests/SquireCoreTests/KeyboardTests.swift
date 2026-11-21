@@ -28,12 +28,27 @@ private func bytes(_ hex: String) -> [UInt8] { hex.split(separator: " ").compact
                 case "profile": #expect(k.profile == value as? Int)
                 case "light_mode": #expect(k.lightMode == value as? String)
                 case "receiver_firmware": #expect(k.receiverFirmware == value as? String)
+                case "firmware": #expect(k.firmware == value as? String)
                 case "layout_id": #expect(k.layoutID == value as? Int)
                 case "layout": #expect(k.layout == value as? String)
                 case "iso": #expect(k.iso == value as? Bool)
                 default: Issue.record("expect key \(key) not checked")
                 }
             }
+        }
+    }
+
+    /// protocol.json `keyboard_settings.sleep_captures`: 12 01 [6] set in Armoury Crate (1 min, 3 min, never).
+    @Test func sleepCapturesMatchArmouryCrate() throws {
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: protocolURL())) as! [String: Any]
+        let captures = (json["keyboard_settings"] as! [String: Any])["sleep_captures"] as! [[String: Any]]
+        #expect(captures.count >= 3)
+        for capture in captures {
+            var k = KeyboardSettings(connection: .omni)
+            k.applyBattery(Array(bytes(capture["reply"] as! String).dropFirst()))   // drop report ID 02
+            let expect = capture["expect"] as! [String: Any]
+            #expect(k.sleepMinutes == expect["sleep_minutes"] as? Int)
+            #expect(k.lowWarning == expect["low_warning"] as? Int)
         }
     }
 
