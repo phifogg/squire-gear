@@ -316,42 +316,41 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       stage/count, polling + surface + lift-off in one Apply, power-off, "same effect on all zones" (2026-11-13).
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
-- [ ] Keyboard (Falchion RX LP), branch `keyboard-read`: `--keyboard-settings` reads profile, layout, lighting effect,
-      sleep, warning (2026-11-13). Linux window: read-only keyboard page with a drawing (own
-      65 % artwork, ISO/ANSI from 12 12, CH-DE legends; keys = lighting zone, chips profile/layout/power; neutral glow
-      until the colour can be read) (2026-11-13). macOS window: same keyboard page (KeyboardSettings.swift, KeyboardDrawing),
-      squire-probe --keyboard-settings; written on Linux. On the Mac via Omni (2026-11-13): builds, swift test passes,
-      probe and squire.py read the same values, `--repeat 30` no crash, keyboard page and a mouse LED Apply confirmed
-      by the owner in the window. `--screenshot PATH keyboard` selects the keyboard page on macOS too.
-      Next: find how to read the LED colour. Windows TODO with Armoury Crate:
-      [x] effect names (2026-11-21: all ten AC basic effects = G-Helper ids 00..09), [x] sleep timeout values for
-      12 01 [6] (2026-11-21), [x] keyboard firmware ([11..13] of 12 00 = 05.00.13, 2026-11-21), [x] a capture of how AC reads the LED colour
-      (2026-11-21, protocol.json `keyboard_writes`: AC reads no colour on open, it caches it like G-Helper; so the
-      keyboard colour stays unreadable; a Squire editor would have to remember what it last wrote).
-      Windows session done (2026-11-21): three AC captures (`keyboard_writes`), wired reads (firmware at [4..6]).
-      AC re-flashed the keyboard firmware the same day (failed once, worked after a reboot): versions unchanged
-      (05.00.13 / receiver 07.00.08, mouse 01.00.10), replies unchanged.
-      Branch `keyboard-writes` (2026-11-22): allowlist per device (Python + Swift); squire.py `--set-kb-light EFFECT
-      [--brightness --color --speed]` (static, breathing, color-cycle, reactive; only AC's speed values),
-      `--set-kb-sleep MIN|never`, `--set-kb-warning 10..50` (10/20 confirmed, 30..50 assumed like the mouse, check AC), `--save` = 50 55; read back effect (12 00 [9]) / 12 01 [6], [9].
-      Dry runs match the AC captures byte for byte (tests). Confirmed on the device via Omni (unsaved, restored):
-      sleep 3->5->3 min, warning 20->10->20 % (2026-11-22, keyboard_writes.squire_writes), lighting static red 50 %
-      (owner saw it on all keys; unsaved, so raindrop came back after off/on: RAM only, like the mouse);
-      save 50 55 with sleep 5 min: echoed, survived off/on, lighting unchanged; restored to 3 min + save.
-      Linux window (2026-11-22): keyboard page edits lighting (effect, brightness, colour, speed), sleep and warning,
-      Apply = writes in the order sleep, warning, lighting, one 50 55 with the last. The colour is remembered per profile
-      in state_dir()/keyboard-lighting.json when saved (CLI too) and shown only while 12 00 [9] still has that effect.
-      `--screenshot PATH keyboard edit` / `kb_power`. Confirmed by the owner on the device via Omni (2026-11-22): changes
-      applied and saved (profile 4 now reactive 75 %, remembered). Note: run from the repo only with the installed
-      window closed (same app id: a second start just raises the open window).
-      More effects (2026-11-22, commit 520d69c): starry night, current, raindrop (single colour, AC default form),
-      rainbow + ripple (3 chunks, AC gradients 'spectrum'/'sunset', rainbow left/right), quicksand (2 chunks, AC scale).
-      All sent unsaved via Omni and confirmed by the owner (each chunk echoed; raindrop slow vs fast visibly differs;
-      quicksand starts top centre, spreads out, one colour per row). protocol.json keyboard_writes.squire_writes.
-      Next: Swift core + macOS keyboard page; captures for background / second colour / random, the other 7
-      rainbow directions, custom gradients, quicksand up/down (Windows: also AC's warning levels).
-      Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
-      51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
+- [x] Keyboard reads (Falchion RX LP), branch `keyboard-read`, PR #7 merged 2026-11-22: `--keyboard-settings` reads
+      profile, layout, lighting effect, sleep, warning, firmware; read-only keyboard page with an own 65 % drawing in
+      both windows (macOS confirmed on the Mac 2026-11-13). Windows session 2026-11-21: effect names (= G-Helper ids
+      00..09), sleep coding, keyboard firmware, three AC write captures (`keyboard_writes`); AC reads no LED colour (it
+      caches it), so the keyboard's colour stays unreadable. AC re-flashed the keyboard firmware that day (failed once,
+      worked after a reboot): versions and replies unchanged (05.00.13 / receiver 07.00.08, mouse 01.00.10).
+- [x] Keyboard writes on Linux, branch `keyboard-writes` (2026-11-22, all confirmed on the device via Omni, see Rules):
+      allowlist per device (Python + Swift); CLI `--set-kb-light EFFECT [--brightness --color --speed --gradient
+      --direction]` (all ten effects), `--set-kb-sleep MIN|never`, `--set-kb-warning 10..50`, `--save` = 50 55; reads
+      back the effect (12 00 [9]) or 12 01 [6] / [9]. Unsaved changes are lost at off/on; 50 55 survives it.
+      Linux window: keyboard page edits lighting (effect, brightness, colour, speed, gradient, direction), sleep and
+      warning; Apply writes sleep, warning, lighting in that order and saves once with the last. The colour is
+      remembered per profile in state_dir()/keyboard-lighting.json when saved (CLI too) and shown only while 12 00 [9]
+      still has that effect. Owner applied and saved in the window (profile 4: reactive 75 % #f6f5f4). Run the window
+      from the repo only with the installed one closed (same app id: a second start just raises the open window).
+      Each new effect was sent unsaved and seen by the owner: starry night (single keys flash, no background),
+      current (key + short tail to the right), raindrop (slow vs fast clearly differ), rainbow (spectrum l->r,
+      sunset r->l), ripple, quicksand (starts top centre, spreads out, one colour per row).
+      Not done yet: Apply of the new effects in the window (owner may try it; Apply saves), macOS (Swift core has the
+      per-device allowlist but no keyboard writes; page is read-only).
+- [ ] Next Windows session (owner, planned 2026-11-22): USBPcap of Armoury Crate via the Omni, keyboard page, one
+      change at a time, then back to the owner's settings; extract only the vendor endpoint (OUT 03 / IN 83) into
+      protocol.json `keyboard_writes` (`.pcapng` stays out of the repo). Wanted:
+      - Low-battery warning: which levels AC offers (Squire assumes 10..50 step 10; 10/20 confirmed)
+      - Starry night, current, raindrop: background colour on/off + a colour, second colour ("double"), "random";
+        which bytes change ([7..8] ff ff? beyond [11]?)
+      - Speeds: reactive, starry night, current, colour cycle, rainbow, ripple, quicksand: fast/normal/slow values
+        (only one each so far; reactive's 0f may be "normal")
+      - Rainbow: the other 7 directions ([7]; 00 l->r, 04 r->l known), byte [8] (02); custom gradient (stop count,
+        positions), the other 5 AC gradient presets (+ their names)
+      - Ripple with another gradient; quicksand "random" pattern and up/down ([7] 02, [8] ff); breathing/static with
+        brightness steps AC offers
+      - Optional: how AC turns the lighting off (effect? brightness 0?), any per-key / per-zone mode
+- [ ] Keyboard on macOS: port keyboard_light_commands / sleep / warning / 50 55 + allowlist to SquireCore, then the
+      editable keyboard page (same as Linux); owner builds and tests on the Mac.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects
