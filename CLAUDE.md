@@ -337,8 +337,10 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       Linux window (2026-11-22): keyboard page edits lighting (effect, brightness, colour, speed), sleep and warning,
       Apply = writes in the order sleep, warning, lighting, one 50 55 with the last. The colour is remembered per profile
       in state_dir()/keyboard-lighting.json when saved (CLI too) and shown only while 12 00 [9] still has that effect.
-      `--screenshot PATH keyboard edit` / `kb_power`. Not yet tried on the device by the owner.
-      Next: owner tests the Linux window; then Swift core + macOS page; more effects need captures.
+      `--screenshot PATH keyboard edit` / `kb_power`. Confirmed by the owner on the device via Omni (2026-11-22): changes
+      applied and saved (profile 4 now reactive 75 %, remembered). Note: run from the repo only with the installed
+      window closed (same app id: a second start just raises the open window).
+      Next: Swift core + macOS keyboard page; more effects need captures (Windows: also AC's warning levels).
       Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
       51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
