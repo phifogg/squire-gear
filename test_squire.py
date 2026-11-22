@@ -1485,7 +1485,7 @@ class KeyboardWriteTests(unittest.TestCase):
             with self.subTest(name=w["name"]):
                 if w["function"] == "keyboard_light_commands":
                     built = [rb.packet(0x02, c, 64, write=True, device="keyboard")
-                             for c in rb.keyboard_light_commands(*w["args"])]
+                             for c in rb.keyboard_light_commands(*w["args"], **w.get("kwargs", {}))]
                     heads = [bytes.fromhex(p) for p in w["packets"]]
                     self.assertEqual([p[:len(h)] for p, h in zip(built, heads)], heads)
                     self.assertTrue(all(set(p[len(h):]) <= {0} for p, h in zip(built, heads)))

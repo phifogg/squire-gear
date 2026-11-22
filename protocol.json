@@ -1228,6 +1228,193 @@
           ],
           "effect_after": "quicksand",
           "notes": "Both echoed. Owner: starts at the top in the middle and runs off in every direction; each row has its own colour. [7] 02 / [8] ff still unknown."
+        },
+        {
+          "name": "warning 20 % -> never",
+          "function": "keyboard_warning_command",
+          "args": [
+            0
+          ],
+          "packet": "02 51 3a 00 00 00",
+          "read_back": "02 12 01 00 00 00 45 02 01 00 00 45 82 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "expect": {
+            "sleep_minutes": 3,
+            "low_warning": 0
+          },
+          "notes": "2026-11-22, after capture_4. Echoed at once, 12 01 [9] = 00. Restored to 20 % (51 3a 00 00 14, read back 20). Not saved."
+        },
+        {
+          "name": "lighting off (AC's black static 4 %)",
+          "function": "keyboard_light_commands",
+          "args": [
+            "off",
+            100
+          ],
+          "packets": [
+            "02 51 2c 00 00 ff 04 00 ff ff 00 00 00"
+          ],
+          "notes": "Read back 00 static. Owner: no light at all. Not saved."
+        },
+        {
+          "name": "raindrop double blue + magenta, green background, fast",
+          "function": "keyboard_light_commands",
+          "args": [
+            "raindrop",
+            100,
+            "#3d8bff",
+            "fast"
+          ],
+          "kwargs": {
+            "mode": "double",
+            "color2": "#ff00ff",
+            "background": "#1bff00"
+          },
+          "packets": [
+            "02 51 2c 09 00 0e 64 10 ff ff 3d 8b ff ff 00 ff 1b ff 00"
+          ],
+          "notes": "Owner: green background, blue and pink drops, fast. Not saved."
+        },
+        {
+          "name": "starry night random",
+          "function": "keyboard_light_commands",
+          "args": [
+            "starry-night",
+            100
+          ],
+          "kwargs": {
+            "mode": "random"
+          },
+          "packets": [
+            "02 51 2c 06 00 0f 64 01 ff ff ff ff ff ff 00 ff 00 00 00"
+          ],
+          "notes": "Owner: colourful stars, dark background. Not saved."
+        },
+        {
+          "name": "rainbow pink-purple, up, thickness low, slow",
+          "function": "keyboard_light_commands",
+          "args": [
+            "rainbow",
+            100,
+            "#ffffff",
+            "slow",
+            "pink-purple",
+            "up"
+          ],
+          "kwargs": {
+            "thickness": "low"
+          },
+          "packets": [
+            "02 51 2c 04 02 55 64 00 06 00 06 0e ff 00 91 20 8c 00 ff",
+            "02 51 2c 04 01 31 4b 00 d9 42 4b 00 d9 53 8c 00 ff 64 ff 00 91",
+            "02 51 2c 04 00"
+          ],
+          "notes": "Owner: pink-purple moves slowly from bottom to top. Not saved."
+        },
+        {
+          "name": "rainbow direction 01",
+          "function": "keyboard_light_commands",
+          "args": [
+            "rainbow",
+            100,
+            "#ffffff",
+            null,
+            "spectrum",
+            "down-right"
+          ],
+          "packets": [
+            "02 51 2c 04 02 3e 64 00 01 02 07 0e f5 00 ff 1d 00 06 ff",
+            "02 51 2c 04 01 2b 00 fa ff 39 01 ff 00 48 ff f6 00 56 ff 78 07",
+            "02 51 2c 04 00 64 ff 00 0d"
+          ],
+          "notes": "Owner: colours move from top left to bottom right (diagonal confirmed). Not saved."
+        },
+        {
+          "name": "rainbow direction 03",
+          "function": "keyboard_light_commands",
+          "args": [
+            "rainbow",
+            100,
+            "#ffffff",
+            null,
+            "spectrum",
+            "down-left"
+          ],
+          "packets": [
+            "02 51 2c 04 02 3e 64 00 03 02 07 0e f5 00 ff 1d 00 06 ff",
+            "02 51 2c 04 01 2b 00 fa ff 39 01 ff 00 48 ff f6 00 56 ff 78 07",
+            "02 51 2c 04 00 64 ff 00 0d"
+          ],
+          "notes": "Owner: colours move from top right to bottom left (diagonal confirmed). Not saved."
+        },
+        {
+          "name": "rainbow direction 05",
+          "function": "keyboard_light_commands",
+          "args": [
+            "rainbow",
+            100,
+            "#ffffff",
+            null,
+            "spectrum",
+            "up-left"
+          ],
+          "packets": [
+            "02 51 2c 04 02 3e 64 00 05 02 07 0e f5 00 ff 1d 00 06 ff",
+            "02 51 2c 04 01 2b 00 fa ff 39 01 ff 00 48 ff f6 00 56 ff 78 07",
+            "02 51 2c 04 00 64 ff 00 0d"
+          ],
+          "notes": "Owner: colours move from bottom right to top left (diagonal confirmed). Not saved."
+        },
+        {
+          "name": "rainbow direction 07",
+          "function": "keyboard_light_commands",
+          "args": [
+            "rainbow",
+            100,
+            "#ffffff",
+            null,
+            "spectrum",
+            "up-right"
+          ],
+          "packets": [
+            "02 51 2c 04 02 3e 64 00 07 02 07 0e f5 00 ff 1d 00 06 ff",
+            "02 51 2c 04 01 2b 00 fa ff 39 01 ff 00 48 ff f6 00 56 ff 78 07",
+            "02 51 2c 04 00 64 ff 00 0d"
+          ],
+          "notes": "Owner: colours move from bottom left to top right (diagonal confirmed). Not saved."
+        },
+        {
+          "name": "quicksand random, up",
+          "function": "keyboard_light_commands",
+          "args": [
+            "quicksand",
+            100,
+            null,
+            null,
+            null,
+            "up"
+          ],
+          "kwargs": {
+            "mode": "random"
+          },
+          "packets": [
+            "02 51 2c 07 01 0f 64 01 06 ff ff f6 00 01 ff 00 00 fa ff",
+            "02 51 2c 07 00 00 06 ff f5 00 ff ff 00 0d"
+          ],
+          "notes": "Owner: starts at the bottom, spreads upwards, random colours. Not saved."
+        },
+        {
+          "name": "reactive slow #f6f5f4 75 %",
+          "function": "keyboard_light_commands",
+          "args": [
+            "reactive",
+            75,
+            "#f6f5f4",
+            "slow"
+          ],
+          "packets": [
+            "02 51 2c 03 00 16 4b 00 ff ff f6 f5 f4"
+          ],
+          "notes": "Owner: keys may glow a little longer than at normal. Then restored and saved: reactive normal #f6f5f4 75 % (0f, then 50 55, echoed)."
         }
       ]
     }

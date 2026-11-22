@@ -165,6 +165,12 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   <n> <stops>`, `51 2c <id> 01 <stops>`, `51 2c <id> 00 <stops>` (stop = pos % + RGB; only AC's two gradients;
   rainbow dir 00/04, ripple ff), quicksand 07 as `51 2c 07 01 0f <brightness> 00 02 ff <3 RGB>` + `51 2c 07 00 <3 RGB>`
   (AC's scale). Each chunk must be echoed before the next.
+  Also approved and confirmed 2026-11-22 (capture_4 values, owner watched each unsaved send; protocol.json
+  `keyboard_writes.squire_writes`): warning never `51 3a 00 00 00` (reads back 00), fast/normal/slow speeds of every
+  effect, colour mode [6] 00/10/01 + second colour [12..14] + background [15..17] for starry night / current /
+  raindrop, gradient direction 00..08 (all four diagonals seen: 01 down-right, 03 down-left, 05 up-left, 07
+  up-right) + thickness [8] 00/01/02 + AC's 7 presets + custom stops (2..7, positions 1..100 ascending), quicksand
+  [6] 00/01 + [7] 02/06, off = `51 2c 00 00 ff 04 00 ff ff 00 00 00` (AC's mouse `51 36` is never sent).
   Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
@@ -350,7 +356,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       thickness + presets, quicksand random + up/down, brightness slider, lighting off. AC has no per-key mode.
       Restored afterwards: reactive 75 %, normal, sleep 3 min, warning 20 % (colour AC's blue 00 02 ff, not #f6f5f4).
       Capture setup on the owner's PC: Omni = \\.\USBPcap2, device 8; USBPcapCMD started via Start-Process (hidden).
-- [ ] Use the session in Squire (Linux first, 2026-11-22, branch `keyboard-writes`): in squire.py, CLI and the Linux
+- [x] Use the session in Squire (Linux first, 2026-11-22, branch `keyboard-writes`): in squire.py, CLI and the Linux
       window, every capture_4 packet rebuilt byte for byte in the tests. Warning never (0 = 00; Squire's notification
       stays quiet too), fast/normal/slow for every effect (reactive 0f is "normal" now; keyboard-lighting.json v2
       migrates the old "fast"), rainbow direction (9, compass names right/down/.../outwards; old left-to-right /
@@ -360,8 +366,11 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       `--color2`, `--background`, quicksand `--color-mode scale|random` + `--direction down|up`, `--set-kb-light off`
       (static 4 % black; reads back static; AC's mouse 51 36 is not sent). One normalised value
       (squire.KEYBOARD_LIGHT_FIELDS) drives packets, memory and the window.
-      OPEN: owner's approval of the new byte values, then send each unsaved and look at the keyboard (diagonal
-      directions 01/03/05/07 are assumed), then Apply in the window. Swift still reads keyboard warning 00 as "none".
+      Confirmed on the device via Omni (owner approved, each sent unsaved and seen): warning never, off (no light),
+      raindrop double + background fast, starry night random, rainbow pink-purple up low slow, all four diagonals,
+      quicksand random up, reactive slow. Restored and saved: reactive normal #f6f5f4 75 % (remembered for profile 4).
+      Open: Apply of the new options in the Linux window (Apply saves); thickness not judged by eye; Swift still
+      reads keyboard warning 00 as "none".
 - [ ] Keyboard on macOS: port keyboard_light_commands / sleep / warning / 50 55 + allowlist to SquireCore, then the
       editable keyboard page (same as Linux); owner builds and tests on the Mac.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
