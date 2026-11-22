@@ -1339,6 +1339,11 @@ class KeyboardWriteTests(unittest.TestCase):
         data = self.captures()["squire_writes"]["writes"]
         for w in data:
             with self.subTest(name=w["name"]):
+                if w["function"] == "keyboard_light_commands":
+                    built = rb.keyboard_light_commands(*w["args"])
+                    self.assertEqual([rb.packet(0x02, c, 64, write=True, device="keyboard")[:len(c) + 1].hex(" ")
+                                      for c in built], w["packets"])
+                    continue
                 command = getattr(rb, w["function"])(*w["args"])
                 head = bytes.fromhex(w["packet"])
                 packet = rb.packet(0x02, command, 64, write=True, device="keyboard")

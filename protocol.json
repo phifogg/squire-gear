@@ -979,6 +979,119 @@
             "low_warning": 20
           },
           "notes": "Read back 3 min, 50 55 echoed. The keyboard is as before the tests."
+        },
+        {
+          "name": "starry night blue 100 %",
+          "function": "keyboard_light_commands",
+          "args": [
+            "starry-night",
+            100,
+            "#3d8bff"
+          ],
+          "packets": [
+            "02 51 2c 06 00 0f 64 00 ff ff 3d 8b ff"
+          ],
+          "effect_after": "starry-night",
+          "notes": "Echoed. Owner: single keys flash blue, no background (AC's default form)."
+        },
+        {
+          "name": "current blue 100 %",
+          "function": "keyboard_light_commands",
+          "args": [
+            "current",
+            100,
+            "#3d8bff"
+          ],
+          "packets": [
+            "02 51 2c 08 00 0a 64 00 ff ff 3d 8b ff"
+          ],
+          "effect_after": "current",
+          "notes": "Echoed. Owner: single keys light up with a short tail to the right."
+        },
+        {
+          "name": "raindrop blue slow, then fast",
+          "function": "keyboard_light_commands",
+          "args": [
+            "raindrop",
+            100,
+            "#3d8bff",
+            "slow"
+          ],
+          "packets": [
+            "02 51 2c 09 00 1b 64 00 ff ff 3d 8b ff"
+          ],
+          "effect_after": "raindrop",
+          "notes": "Echoed. Owner: raindrops, 'slow' not very slow; then fast (0e) was clearly faster: the speed byte works."
+        },
+        {
+          "name": "rainbow spectrum left to right",
+          "function": "keyboard_light_commands",
+          "args": [
+            "rainbow",
+            100,
+            "#ffffff",
+            null,
+            "spectrum",
+            "left-to-right"
+          ],
+          "packets": [
+            "02 51 2c 04 02 3e 64 00 00 02 07 0e f5 00 ff 1d 00 06 ff",
+            "02 51 2c 04 01 2b 00 fa ff 39 01 ff 00 48 ff f6 00 56 ff 78 07",
+            "02 51 2c 04 00 64 ff 00 0d"
+          ],
+          "effect_after": "rainbow",
+          "notes": "Each chunk echoed in full, no ff aa. Owner: the rainbow runs."
+        },
+        {
+          "name": "rainbow sunset right to left",
+          "function": "keyboard_light_commands",
+          "args": [
+            "rainbow",
+            100,
+            "#ffffff",
+            null,
+            "sunset",
+            "right-to-left"
+          ],
+          "packets": [
+            "02 51 2c 04 02 3e 64 00 04 02 03 0e fe be 3f 39 fe 3f 7d",
+            "02 51 2c 04 01 64 f9 1d 1d",
+            "02 51 2c 04 00"
+          ],
+          "effect_after": "rainbow",
+          "notes": "All three echoed (the empty last one too). Owner: orange, pink, red, the other direction."
+        },
+        {
+          "name": "ripple spectrum",
+          "function": "keyboard_light_commands",
+          "args": [
+            "ripple",
+            100,
+            "#ffffff",
+            null,
+            "spectrum"
+          ],
+          "packets": [
+            "02 51 2c 05 02 64 64 00 ff 02 07 0e f5 00 ff 1d 00 06 ff",
+            "02 51 2c 05 01 2b 00 fa ff 39 01 ff 00 48 ff f6 00 56 ff 78 07",
+            "02 51 2c 05 00 64 ff 00 0d"
+          ],
+          "effect_after": "ripple",
+          "notes": "All echoed. Owner: ripple runs."
+        },
+        {
+          "name": "quicksand default scale",
+          "function": "keyboard_light_commands",
+          "args": [
+            "quicksand",
+            100
+          ],
+          "packets": [
+            "02 51 2c 07 01 0f 64 00 02 ff ff f6 00 01 ff 00 00 fa ff",
+            "02 51 2c 07 00 00 06 ff f5 00 ff ff 00 0d"
+          ],
+          "effect_after": "quicksand",
+          "notes": "Both echoed. Owner: starts at the top in the middle and runs off in every direction; each row has its own colour. [7] 02 / [8] ff still unknown."
         }
       ]
     }

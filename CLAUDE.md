@@ -160,7 +160,11 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   `51 3a 00 00 <%>` (12 01 [9]; 10/20 confirmed, 30..50 assumed), lighting `51 2c <effect> 00 <speed> <brightness>
   00 ff ff <r g b>` for static/breathing/color-cycle/reactive with AC's speed values only (read back: effect only,
   12 00 [9]; colour not readable), save `50 55` (only with --save / Apply, counts only when echoed). Unsaved changes
-  are lost at off/on. Not approved: starry night, current, raindrop, gradients (rainbow, ripple, quicksand).
+  are lost at off/on. Also approved and confirmed 2026-11-22: starry night 06, current 08, raindrop 09 (same single-
+  colour layout, AC's speeds), rainbow 04 / ripple 05 as three chunks `51 2c <id> 02 <speed> <brightness> 00 <dir> 02
+  <n> <stops>`, `51 2c <id> 01 <stops>`, `51 2c <id> 00 <stops>` (stop = pos % + RGB; only AC's two gradients;
+  rainbow dir 00/04, ripple ff), quicksand 07 as `51 2c 07 01 0f <brightness> 00 02 ff <3 RGB>` + `51 2c 07 00 <3 RGB>`
+  (AC's scale). Each chunk must be echoed before the next.
   Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
@@ -340,7 +344,12 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       `--screenshot PATH keyboard edit` / `kb_power`. Confirmed by the owner on the device via Omni (2026-11-22): changes
       applied and saved (profile 4 now reactive 75 %, remembered). Note: run from the repo only with the installed
       window closed (same app id: a second start just raises the open window).
-      Next: Swift core + macOS keyboard page; more effects need captures (Windows: also AC's warning levels).
+      More effects (2026-11-22, commit 520d69c): starry night, current, raindrop (single colour, AC default form),
+      rainbow + ripple (3 chunks, AC gradients 'spectrum'/'sunset', rainbow left/right), quicksand (2 chunks, AC scale).
+      All sent unsaved via Omni and confirmed by the owner (each chunk echoed; raindrop slow vs fast visibly differs;
+      quicksand starts top centre, spreads out, one colour per row). protocol.json keyboard_writes.squire_writes.
+      Next: Swift core + macOS keyboard page; captures for background / second colour / random, the other 7
+      rainbow directions, custom gradients, quicksand up/down (Windows: also AC's warning levels).
       Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
       51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
