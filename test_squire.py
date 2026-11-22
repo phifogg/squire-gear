@@ -1273,20 +1273,55 @@ class KeyboardWriteTests(unittest.TestCase):
     def test_armoury_crate_single_colour_packets(self):
         data = self.captures()
         writes = data["writes"] + data["capture_2"]["writes"] + data["capture_3"]["effect_writes"]
-        speeds = {v: k for e in rb.KEYBOARD_LIGHT_SPEEDS.values() for k, v in e.items()}
         checked = 0
         for w in writes:
             if "packet" not in w:
                 continue
             raw = bytes.fromhex(w["packet"])
             effect = rb.KEYBOARD_LIGHT_MODES[raw[3]]
-            if effect not in rb.KEYBOARD_LIGHT_SPEEDS:
-                continue        # starry night, current, raindrop: not written by Squire yet
+            speeds = {v: k for k, v in rb.KEYBOARD_LIGHT_SPEEDS[effect].items()}
             with self.subTest(name=w["name"]):
                 command = rb.keyboard_light_command(effect, raw[6], "#" + raw[10:13].hex(), speeds[raw[5]])
                 self.assertEqual(rb.packet(0x02, command, 64, write=True, device="keyboard"), raw)
                 checked += 1
-        self.assertGreaterEqual(checked, 10)
+        self.assertGreaterEqual(checked, 17)     # every single-colour packet AC sent, starry night etc. included
+
+    def test_armoury_crate_gradient_and_quicksand_packets(self):
+        data = self.captures()
+        cases = {"rainbow, left to right, AC default gradient": ("rainbow", "spectrum", "left-to-right"),
+                 "rainbow, right to left": ("rainbow", "spectrum", "right-to-left"),
+                 "rainbow, right to left, other AC gradient preset": ("rainbow", "sunset", "right-to-left"),
+                 "ripple, default gradient": ("ripple", "spectrum", None),
+                 "quicksand, default 6-colour scale": ("quicksand", None, None)}
+        writes = data["capture_2"]["gradient_writes"] + [w for w in data["capture_3"]["effect_writes"] if "packets" in w]
+        self.assertEqual({w["name"] for w in writes}, set(cases))
+        for w in writes:
+            effect, gradient, direction = cases[w["name"]]
+            with self.subTest(name=w["name"]):
+                commands = rb.keyboard_light_commands(effect, 50, gradient=gradient, direction=direction)
+                built = [rb.packet(0x02, c, 64, write=True, device="keyboard") for c in commands]
+                self.assertEqual(built, [bytes.fromhex(p) for p in w["packets"]])
+
+    def test_gradient_chunks_are_checked_one_by_one(self):
+        first, middle, last = rb.keyboard_light_commands("rainbow", 50)
+        for bad in (first[:9] + b"\x08" + first[10:],             # 8 stops: more than AC ever sent
+                    first[:7] + b"\x02" + first[8:],              # direction 02: not captured
+                    first[:4] + b"\x10" + first[5:],              # speed AC did not send
+                    first[:10] + b"\x00" + first[11:],            # stop at 0 %
+                    first[:-1],                                   # cut short
+                    middle + b"\x64\x00\x00\x00",                 # 5 stops in one chunk
+                    last[:3] + b"\x03" + last[4:],                # chunk index 03
+                    bytes.fromhex("51 2c 07 01 0f 32 00 01 ff ff f6 00 01 ff 00 00 fa ff")):   # quicksand [7] 01
+            with self.subTest(command=bad.hex(" ")):
+                self.assertFalse(rb.is_allowed_write(bad, "keyboard"))
+                self.assertFalse(rb.is_allowed_write(bad, "mouse"))
+        self.assertTrue(all(rb.is_allowed_write(c, "keyboard") for c in (first, middle, last)))
+        with self.assertRaises(ValueError):
+            rb.keyboard_light_commands("rainbow", 50, gradient="aurora")
+        with self.assertRaises(ValueError):
+            rb.keyboard_light_commands("ripple", 50, direction="left-to-right")   # ripple has no direction
+        with self.assertRaises(ValueError):
+            rb.keyboard_light_commands("host-driven", 50)
 
     def test_armoury_crate_power_packets(self):
         for w in self.captures()["capture_3"]["power_writes"]:
@@ -1337,7 +1372,8 @@ class KeyboardWriteTests(unittest.TestCase):
 
     def test_invalid_values_are_refused(self):
         for call in (lambda: rb.keyboard_light_command("rainbow", 50),          # gradient: not yet
-                     lambda: rb.keyboard_light_command("raindrop", 50),         # background unknown
+                     lambda: rb.keyboard_light_command("host-driven", 50),      # not an effect Squire writes
+                     lambda: rb.keyboard_light_command("ripple", 50),           # a gradient: keyboard_light_commands
                      lambda: rb.keyboard_light_command("reactive", 50, speed="slow"),
                      lambda: rb.keyboard_light_command("static", 101),
                      lambda: rb.keyboard_light_command("static", 50, "#12345"),
@@ -1358,7 +1394,7 @@ class KeyboardWriteTests(unittest.TestCase):
             with self.subTest(command=hex_):
                 self.assertFalse(rb.is_allowed_write(bytes.fromhex(hex_), "keyboard"))
 
-    def make(self, awake=True, keep=True, save_echo=True):
+    def make(self, awake=True, keep=True, save_echo=True, chunk_echo=True):
         """Fake Falchion on the Omni: keeps effect, sleep and warning like the real one; never reports a colour."""
         state = {"effect": 0x03, "sleep": 0x02, "warn": 20}
         sent = []
@@ -1383,8 +1419,11 @@ class KeyboardWriteTests(unittest.TestCase):
                             state["sleep"] = cmd[4]
                         else:
                             state["warn"] = cmd[4]
-                    # the receiver answers ff aa first (provisional), then the echo
-                    self.replies = [[0x02, 0xFF, 0xAA] + [0] * 61, settings_reply(cmd[:2], {}, rid=0x02)]
+                    # the receiver answers ff aa first (provisional), then the echo (chunk writes: up to [3])
+                    echo = settings_reply(cmd[:4], {}, rid=0x02)
+                    if cmd[:2] == b"\x51\x2c" and cmd[3] != 0 and not chunk_echo:
+                        echo = [0x02, 0xFF, 0xAA] + [0] * 61
+                    self.replies = [[0x02, 0xFF, 0xAA] + [0] * 61, echo]
                 elif cmd[:2] == b"\x50\x55":
                     self.replies = [settings_reply(cmd[:2], {}, rid=0x02)] if save_echo else []
                 return len(data)
@@ -1429,7 +1468,8 @@ class KeyboardWriteTests(unittest.TestCase):
         self.assertIsNone(rb.remembered_keyboard_light(1, "static"))
         result = rb.set_keyboard_light("breathing", 60, "#00FF00", speed="slow", save=True, hid=backend)
         self.assertTrue(result.saved)
-        value = {"effect": "breathing", "brightness": 60, "color": "#00ff00", "speed": "slow"}
+        value = {"effect": "breathing", "brightness": 60, "color": "#00ff00", "speed": "slow", "gradient": None,
+                 "direction": None}
         self.assertEqual(rb.remembered_keyboard_light(1, "breathing"), value)
         self.assertIsNone(rb.remembered_keyboard_light(1, "raindrop"))       # changed elsewhere: stale
         self.assertIsNone(rb.remembered_keyboard_light(2, "breathing"))      # other profile
@@ -1439,6 +1479,27 @@ class KeyboardWriteTests(unittest.TestCase):
         self.assertIsNone(rb.remembered_keyboard_light(1, "breathing"))
         rb.remember_keyboard_light(3, value)                                  # a broken file is replaced
         self.assertEqual(rb.remembered_keyboard_light(3, "breathing"), value)
+
+    def test_gradient_is_sent_in_three_chunks_then_read_back_once(self):
+        backend, sent, state = self.make()
+        result = rb.set_keyboard_light("rainbow", 50, gradient="sunset", direction="right-to-left", save=True, hid=backend)
+        self.assertEqual((result.status, result.saved, state["effect"]), ("ok", True, 0x04))
+        self.assertEqual([p[1:5].hex(" ") for p in sent],
+                         ["12 01 00 00", "12 00 00 00", "51 2c 04 02", "51 2c 04 01", "51 2c 04 00", "12 00 00 00",
+                          "50 55 00 00"])
+        self.assertEqual(rb.remembered_keyboard_light(1, "rainbow"),
+                         {"effect": "rainbow", "brightness": 50, "color": "#000000", "speed": "normal",
+                          "gradient": "sunset", "direction": "right-to-left"})
+
+    def test_a_missing_chunk_echo_stops_before_the_rest(self):
+        backend, sent, state = self.make(chunk_echo=False)
+        result = rb.set_keyboard_light("ripple", 50, save=True, hid=backend)
+        self.assertEqual((result.status, result.saved), ("error", False))
+        self.assertEqual([p[1:5].hex(" ") for p in sent], ["12 01 00 00", "12 00 00 00", "51 2c 05 02"])
+
+    def test_old_remembered_values_without_gradient_keys_still_load(self):
+        rb.remember_keyboard_light(4, {"effect": "reactive", "brightness": 75, "color": "#F6F5F4", "speed": "fast"})
+        self.assertEqual(rb.remembered_keyboard_light(4, "reactive")["color"], "#f6f5f4")
 
     def test_mismatch_is_never_saved(self):
         backend, sent, _ = self.make(keep=False)

@@ -270,9 +270,10 @@ class KeyboardEditTests(unittest.TestCase):
         return k
 
     def test_unwritable_effect_starts_from_static_and_any_edit_is_pending(self):
-        k = self.kb("raindrop")
+        k = self.kb("host-driven")
         self.assertEqual(ui.kb_light_start(k, None),
-                         {"effect": "static", "brightness": 100, "color": "#ffffff", "speed": "none"})
+                         {"effect": "static", "brightness": 100, "color": "#ffffff", "speed": "none",
+                          "gradient": None, "direction": None})
         pending = ui.kb_edit_light(k, {}, None, effect="breathing")
         self.assertEqual(pending["kb_light"]["speed"], "normal")             # a new effect: its default speed
         self.assertEqual(ui.kb_planned_packets(k, pending),
@@ -325,6 +326,25 @@ class KeyboardEditTests(unittest.TestCase):
         self.assertEqual(ui.keyboard_glow(k, {**light, "brightness": 0}), ("none", 0.0))
         self.assertEqual(ui.keyboard_glow(self.kb("color-cycle"), {**light, "effect": "color-cycle"})[0], "url(#kb-cycle)")
         ET.fromstring(ui.keyboard_svg(k, light))
+
+    def test_gradient_edits(self):
+        k = self.kb("static")
+        pending = ui.kb_edit_light(k, {}, None, color="#3d8bff")
+        pending = ui.kb_edit_light(k, pending, None, effect="rainbow")
+        light = pending["kb_light"]
+        self.assertEqual((light["gradient"], light["direction"], light["speed"], light["color"]),
+                         ("spectrum", "left-to-right", "normal", "#3d8bff"))      # the colour is kept for later
+        pending = ui.kb_edit_light(k, pending, None, gradient="sunset", direction="right-to-left")
+        self.assertEqual([line[:20] for line in ui.kb_planned_packets(k, pending)],
+                         ["02 51 2c 04 02 3e 64", "02 51 2c 04 01 64 f9", "02 51 2c 04 00 …", "02 50 55 …  (save)"])
+        pending = ui.kb_edit_light(k, pending, None, effect="ripple")           # ripple has no direction
+        self.assertEqual((pending["kb_light"]["direction"], pending["kb_light"]["gradient"]), ("none", "sunset"))
+        stops = ui.keyboard_gradient_stops({"effect": "rainbow", "gradient": "sunset", "direction": "right-to-left"})
+        self.assertEqual(stops, [(0.0, "#f91d1d"), (0.43, "#fe3f7d"), (0.86, "#febe3f")])
+        self.assertEqual(len(ui.keyboard_gradient_stops({"effect": "quicksand"})), 6)
+        p, light = ui.kb_preview(k, pending, None)
+        self.assertEqual(ui.keyboard_glow(p, light)[0], "url(#kb-cycle)")
+        ET.fromstring(ui.keyboard_svg(p, light))
 
     def test_power_is_editable_only_with_values_squire_can_write_back(self):
         self.assertTrue(ui.can_edit_kb_sleep(self.kb(sleep_code=0xFF)))      # never

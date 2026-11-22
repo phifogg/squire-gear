@@ -232,8 +232,24 @@ def keyboard_glow(k: "squire.KeyboardSettings", light: Optional[dict] = None) ->
         if light["brightness"] == 0:
             return "none", 0.0
         opacity = round(0.2 + light["brightness"] / 100 * 0.4, 2)
-        return ("url(#kb-cycle)" if light["effect"] == "color-cycle" else light["color"]), opacity
+        if light["effect"] in squire.KEYBOARD_COLOURLESS:
+            return "url(#kb-cycle)", opacity
+        return light["color"], opacity
     return "#cfd6e0", 0.22
+
+
+def keyboard_gradient_stops(light: Optional[dict]) -> list[tuple[float, str]]:
+    """Colour stops for the glow of an effect without one colour: the gradient sent (rainbow, ripple), quicksand's
+    scale, or a plain spectrum (colour cycle). Right to left mirrors the gradient."""
+    if light and light["effect"] in squire.KEYBOARD_GRADIENT_EFFECTS:
+        stops = [(pos / 100, "#" + rgb) for pos, rgb in squire.KEYBOARD_GRADIENTS[light.get("gradient") or "spectrum"]]
+        if light.get("direction") == "right-to-left":
+            stops = [(round(1 - pos, 2), color) for pos, color in reversed(stops)]
+        return stops
+    if light and light["effect"] == "quicksand":
+        scale = squire.KEYBOARD_QUICKSAND_SCALE
+        return [(round(i / (len(scale) - 1), 2), "#" + rgb) for i, rgb in enumerate(scale)]
+    return [(0, "#ff5a5a"), (0.5, "#3ccf7a"), (1, "#3d8bff")]
 
 
 def keyboard_svg(k: "squire.KeyboardSettings", light: Optional[dict] = None) -> str:
@@ -241,6 +257,7 @@ def keyboard_svg(k: "squire.KeyboardSettings", light: Optional[dict] = None) -> 
     from xml.sax.saxutils import escape
     rows = KEYBOARD_ROWS["ansi" if k.iso is False else "iso"]
     fill, opacity = keyboard_glow(k, light)
+    stops = "".join(f'<stop offset="{pos}" stop-color="{color}"/>' for pos, color in keyboard_gradient_stops(light))
     u, g, pad = KB_UNIT, KB_GAP, KB_PAD
     keys = []
     for r, row in enumerate(rows):
@@ -267,7 +284,7 @@ def keyboard_svg(k: "squire.KeyboardSettings", light: Optional[dict] = None) -> 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{KB_W}" height="{KB_H}" viewBox="0 0 {KB_W} {KB_H}">
 <defs>
 <filter id="kb-glow" x="-10%" y="-20%" width="120%" height="140%"><feGaussianBlur stdDeviation="7"/></filter>
-<linearGradient id="kb-cycle" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff5a5a"/><stop offset="0.5" stop-color="#3ccf7a"/><stop offset="1" stop-color="#3d8bff"/></linearGradient>
+<linearGradient id="kb-cycle" x1="0" y1="0" x2="1" y2="0">{stops}</linearGradient>
 <linearGradient id="kb-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2f37"/><stop offset="1" stop-color="#1c2026"/></linearGradient>
 <style>
 .key {{ fill: #14171b; stroke: #3a404a; stroke-width: 1; }}
@@ -306,7 +323,9 @@ def keyboard_zone_summary(k: "squire.KeyboardSettings", zone: str, light: Option
 # `kb_pending` holds "kb_sleep" (minutes, None = never), "kb_warning" (%) and "kb_light"
 # ({"effect", "brightness", "color", "speed"}). The keyboard reports only the effect, never its colour or brightness:
 # `known` is what Squire last saved to the active profile (squire.remembered_keyboard_light), or None.
-KB_EFFECTS = list(squire.KEYBOARD_LIGHT_SPEEDS)            # static, breathing, color-cycle, reactive
+KB_EFFECTS = list(squire.KEYBOARD_LIGHT_SPEEDS)            # every effect Squire writes, in the keyboard's id order
+KB_GRADIENT_NAMES = {"spectrum": "Spectrum", "sunset": "Sunset"}
+KB_DIRECTION_NAMES = {"left-to-right": "Left to right", "right-to-left": "Right to left", "none": "None"}
 KB_SPEED_NAMES = {"fast": "Fast", "normal": "Normal", "slow": "Slow", "none": "None"}
 KB_KEYS = ("kb_sleep", "kb_warning", "kb_light")           # Apply order; the light last (it is the one saved)
 KB_CHANGE_TITLES = {"kb_sleep": "Sleep", "kb_warning": "Low-battery warning", "kb_light": "Lighting"}
@@ -321,8 +340,9 @@ def kb_light_start(k: "squire.KeyboardSettings", known: Optional[dict]) -> dict:
 
 
 def kb_light_sent(light: dict) -> dict:
-    """The lighting as it is sent (colour cycle carries no colour)."""
-    return squire.keyboard_light_value(light["effect"], light["brightness"], light["color"], light["speed"])
+    """The lighting as it is sent (an effect without a colour of its own carries none)."""
+    return squire.keyboard_light_value(light["effect"], light["brightness"], light["color"], light["speed"],
+                                       light.get("gradient"), light.get("direction"))
 
 
 def kb_current(k: "squire.KeyboardSettings", key: str, known: Optional[dict]):
@@ -344,9 +364,12 @@ def kb_edit_light(k: "squire.KeyboardSettings", pending: dict, known: Optional[d
     Squire knows the keyboard has; without that knowledge every edit stays pending (the keyboard cannot be asked)."""
     light = dict(pending.get("kb_light") or kb_light_start(k, known))
     if changes.get("effect", light["effect"]) != light["effect"]:
-        light["speed"] = None
+        light["speed"] = light["direction"] = None        # the new effect's defaults
     light.update(changes)
-    light = {**light, "speed": kb_light_sent(light)["speed"]}   # validates; the colour stays for a later effect
+    sent = kb_light_sent(light)                           # validates
+    # colour and gradient stay as chosen, for a later effect that uses them
+    light = {**light, "speed": sent["speed"], "direction": sent["direction"],
+             "gradient": sent["gradient"] or light.get("gradient")}
     pending = dict(pending)
     if known and kb_light_sent(light) == kb_light_sent(known) and k.light_mode == light["effect"]:
         pending.pop("kb_light", None)
@@ -364,7 +387,15 @@ def kb_command(key: str, value) -> bytes:
         return squire.keyboard_sleep_command(value)
     if key == "kb_warning":
         return squire.keyboard_warning_command(value)
-    return squire.keyboard_light_command(value["effect"], value["brightness"], value["color"], value["speed"])
+    raise ValueError("lighting: use kb_commands")
+
+
+def kb_commands(key: str, value) -> list:
+    """Every packet one change sends (a gradient is three, quicksand two)."""
+    if key == "kb_light":
+        return squire.keyboard_light_commands(value["effect"], value["brightness"], value["color"], value["speed"],
+                                              value.get("gradient"), value.get("direction"))
+    return [kb_command(key, value)]
 
 
 def kb_write(key: str, value, save: bool) -> "squire.WriteResult":
@@ -372,7 +403,8 @@ def kb_write(key: str, value, save: bool) -> "squire.WriteResult":
         return squire.set_keyboard_sleep(value, save=save)
     if key == "kb_warning":
         return squire.set_keyboard_warning(value, save=save)
-    return squire.set_keyboard_light(value["effect"], value["brightness"], value["color"], value["speed"], save=save)
+    return squire.set_keyboard_light(value["effect"], value["brightness"], value["color"], value["speed"],
+                                     value.get("gradient"), value.get("direction"), save=save)
 
 
 def kb_planned_packets(k: "squire.KeyboardSettings", pending: dict) -> list[str]:
@@ -381,9 +413,9 @@ def kb_planned_packets(k: "squire.KeyboardSettings", pending: dict) -> list[str]
     length = 64 if k.connection == "omni" else 65
     lines = []
     for key in kb_changes(pending):
-        command = kb_command(key, pending[key])
-        lines.append(squire.packet(report_id, command, length, write=True, device="keyboard")[:len(command) + 1].hex(" ")
-                     + " …")
+        for command in kb_commands(key, pending[key]):
+            lines.append(squire.packet(report_id, command, length, write=True,
+                                       device="keyboard")[:len(command) + 1].hex(" ") + " …")
     if lines:
         lines.append(squire.packet(report_id, squire.KEYBOARD_SAVE_COMMAND, length, write=True,
                                    device="keyboard")[:3].hex(" ") + " …  (save)")
@@ -846,7 +878,10 @@ def run(argv: list[str]) -> int:
                 return False
             if zone == "keyboard" and "edit" in SCREENSHOT[2:] and "kb_light" not in self.kb_pending:
                 self.kb_selected = "kb_light"
-                self.on_kb_light(effect="static", brightness=80, color="#3d8bff")   # sample edit, not sent
+                if "rainbow" in SCREENSHOT[2:]:
+                    self.on_kb_light(effect="rainbow", gradient="sunset", direction="right-to-left")   # not sent
+                else:
+                    self.on_kb_light(effect="static", brightness=80, color="#3d8bff")   # sample edit, not sent
                 self.render()
                 self.bytes_toggle.set_active(True)
                 GLib.timeout_add(600, self.capture)
@@ -1081,6 +1116,23 @@ def run(argv: list[str]) -> int:
                     button.connect("notify::rgba", on_color)
                     color.add_suffix(button)
                     group.add(color)
+                if light["effect"] in squire.KEYBOARD_GRADIENT_EFFECTS:
+                    names = list(squire.KEYBOARD_GRADIENTS)
+                    grad = Adw.ComboRow(title="Colors", subtitle="Gradients from Armoury Crate",
+                                        model=Gtk.StringList.new([KB_GRADIENT_NAMES[n] for n in names]))
+                    grad.set_selected(names.index(light.get("gradient") or "spectrum"))
+                    grad.connect("notify::selected", lambda r, _p: self.on_kb_light(gradient=names[r.get_selected()]))
+                    group.add(grad)
+                    directions = list(squire.KEYBOARD_DIRECTIONS[light["effect"]])
+                    if len(directions) > 1:
+                        way = Adw.ComboRow(title="Direction",
+                                           model=Gtk.StringList.new([KB_DIRECTION_NAMES[d] for d in directions]))
+                        way.set_selected(directions.index(light.get("direction") or directions[0]))
+                        way.connect("notify::selected",
+                                    lambda r, _p: self.on_kb_light(direction=directions[r.get_selected()]))
+                        group.add(way)
+                elif light["effect"] == "quicksand":
+                    group.add(row("Colors", "Six-color scale", "The one Armoury Crate uses by default"))
                 speeds = list(squire.KEYBOARD_LIGHT_SPEEDS[light["effect"]])
                 if len(speeds) > 1:
                     speed = Adw.ComboRow(title="Speed", model=Gtk.StringList.new([KB_SPEED_NAMES[n] for n in speeds]))
@@ -1652,7 +1704,7 @@ def main() -> int:
     args = sys.argv[1:]
     if "--screenshot" in args:
         i = args.index("--screenshot")
-        SCREENSHOT.extend(a for a in args[i + 1:i + 4] if not a.startswith("-"))
+        SCREENSHOT.extend(a for a in args[i + 1:i + 5] if not a.startswith("-"))
         del args[i:i + 1 + len(SCREENSHOT)]
     global DEMO
     DEMO = "--demo" in args
