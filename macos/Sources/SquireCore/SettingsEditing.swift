@@ -244,10 +244,10 @@ public enum SettingsEditing {
         for change in changes(s, pending: pending, other: other) {
             defer { current = change.applied(to: current) }
             guard let command = try? change.command(current: current),
-                  let bytes = try? Packet.build(reportID: reportID, command: command, length: length) else { continue }
+                  let bytes = try? Packet.build(device: .mouse, reportID: reportID, command: command, length: length) else { continue }
             lines.append(ReplyParser.hex(Array(bytes.prefix(command.bytes.count + 1))) + " …")
         }
-        if !lines.isEmpty, let bytes = try? Packet.build(reportID: reportID, command: .save, length: length) {
+        if !lines.isEmpty, let bytes = try? Packet.build(device: .mouse, reportID: reportID, command: .save, length: length) {
             lines.append(ReplyParser.hex(Array(bytes.prefix(3))) + " …  (save)")
         }
         return lines

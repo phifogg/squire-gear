@@ -24,8 +24,14 @@ Like a squire looking after a knight's blades, it keeps an eye on your Falchion 
   stages (value, colour, active stage, number of stages), polling rate, surface (mouse pad
   preset), lift-off distance, angle snapping and tuning, the auto power-off time and the
   low-battery warning level
+- **Keyboard settings** (Falchion RX Low Profile, not released yet, Linux only so far): all ten
+  lighting effects of Armoury Crate (static, breathing, colour cycle, reactive, rainbow, ripple,
+  starry night, quicksand, current, raindrop) with brightness, speed and the effect's own options
+  (one or two colours or random, background colour, gradient presets, direction, thickness), lighting
+  off, the sleep time and the low-battery warning level (10-50 % or never). The keyboard cannot
+  report its colour or brightness, so the window shows what Squire last saved to the active profile
 - **Careful with your devices:** the battery display only reads. Squire writes only when you
-  click **Apply** in the settings window, only commands on a fixed allowlist (lights, DPI, sensor, power, save), reads every change back and saves it to the mouse only if it matched. It never touches
+  click **Apply** in the settings window, only commands on a fixed allowlist per device (lights, DPI, sensor, power, save), reads every change back and saves it to the device only if it matched. It never touches
   firmware or switches profiles.
 - Opens only vendor-defined HID collections, never the regular keyboard or mouse input
 - macOS: no Python, Homebrew or SwiftBar needed. Linux: only packages that Ubuntu ships by default
@@ -245,7 +251,7 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 ## Roadmap
 
-- Keyboard configuration (Falchion RX Low Profile)
+- Keyboard configuration on macOS; a gradient editor for custom rainbow / ripple colours (CLI only so far)
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode
 - Notarized builds, depending on interest

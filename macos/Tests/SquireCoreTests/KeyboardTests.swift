@@ -96,8 +96,8 @@ private func bytes(_ hex: String) -> [UInt8] { hex.split(separator: " ").compact
         for query in KeyboardQuery.allCases {
             #expect(query.command.bytes[0] == 0x12)
             #expect(!query.command.isWrite)
-            #expect(Allowlist.isAllowed(query.command))
-            _ = try Packet.build(reportID: 0x02, command: query.command, length: 64)
+            #expect(Allowlist.isAllowed(query.command, for: .keyboard))
+            _ = try Packet.build(device: .keyboard, reportID: 0x02, command: query.command, length: 64)
         }
         // the mouse's LED read was probed once; it is not a keyboard read
         #expect(!KeyboardQuery.allCases.map(\.command.bytes).contains([0x12, 0x03, 0x00]))

@@ -27,7 +27,7 @@ install.sh         on Linux hands over to linux/install.sh. macOS: venv + hidapi
                    squire-gear.5m.sh (runs --swiftbar --notify) with xbar metadata
 README.md          English, public
 linux/             squire_settings.py (GTK 4 + libadwaita settings window, own process, opened from the tray's
-                   "Settings…"; read-only so far; --demo shows protocol.json captures, --screenshot PATH [ZONE]
+                   "Settings…"; mouse + keyboard editing with Apply; --demo shows protocol.json captures, --screenshot PATH [ZONE]
                    saves a PNG and quits), squire_tray.py (AppIndicator + GTK 3 top bar app: one indicator, shield icon from
                    linux/icons/ + text label "⌨︎ 78%  🖱︎ 80%" with U+FE0E so no colour emoji; same menu items
                    as the Mac popover; one indicator = one menu, so never split it per device), install.sh (to ~/.local/share/squire-gear, launcher, ~/.local/bin/
@@ -121,7 +121,10 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   `12 00`, `12 04 00`, `12 04 02`, `12 04 03`, `12 03 00..02`, `12 06` (approved by the owner 2026-11-10); keyboard settings reads `12 00` and `12 12` (approved 2026-11-13).
   All are get requests (first byte `12`); writes start with `50`/`51`. Never send `50 02` (switch profile):
   read the active profile only.
-- **Writes** go through `packet(..., write=True)` and must pass `is_allowed_write()`. Approved and confirmed so far
+- **Allowlist per device** (2026-11-22): `packet(..., device=...)` / `Packet.build(device:...)` check the device's own
+  reads (`ALLOWED_READS[device]`) and writes (`is_allowed_write(command, device)`), and the report ID must be the
+  device's (02 keyboard, 03 mouse, or none wired). A mouse command never reaches the keyboard and the other way round.
+- **Writes** go through `packet(..., write=True, device=...)` and must pass `is_allowed_write(command, device)`. Approved and confirmed so far
   (2026-11-10): `51 28 <zone> 00 <mode> <brightness %> <r g b> 00 00 00` (set one LED zone; modes 00 static,
   01 breathing, 02 cycle, 04 react, 06 battery, f0 off), and `50 03` (save to flash, approved 2026-11-10) only
   with an explicit --save / Apply click. set_led() checks the mouse is awake, reads the zone before, writes, reads back, and saves only on a match.
@@ -151,7 +154,24 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   12 00 [11] / [18]; never an active stage beyond the count, never a count below the active stage). Squire writes
   only the changed field, never the whole block like Armoury Crate. Not approved: debounce
   `51 31 05` (G-Helper offers none for the Keris), DPI `51 31 <stage>` (X/Y unclear), stage count `51 31 0a`,
-  active stage `51 31 09`. Any new command, read or write, must be shown to the owner before it is sent,
+  active stage `51 31 09`.
+  Keyboard (Falchion RX LP), approved and confirmed on the device via Omni 2026-11-22 (bytes from the AC captures,
+  protocol.json `keyboard_writes.squire_writes`): sleep `51 38 00 00 <power-off code>` (read back 12 01 [6]), warning
+  `51 3a 00 00 <%>` (12 01 [9]; 10/20 confirmed, 30..50 assumed), lighting `51 2c <effect> 00 <speed> <brightness>
+  00 ff ff <r g b>` for static/breathing/color-cycle/reactive with AC's speed values only (read back: effect only,
+  12 00 [9]; colour not readable), save `50 55` (only with --save / Apply, counts only when echoed). Unsaved changes
+  are lost at off/on. Also approved and confirmed 2026-11-22: starry night 06, current 08, raindrop 09 (same single-
+  colour layout, AC's speeds), rainbow 04 / ripple 05 as three chunks `51 2c <id> 02 <speed> <brightness> 00 <dir> 02
+  <n> <stops>`, `51 2c <id> 01 <stops>`, `51 2c <id> 00 <stops>` (stop = pos % + RGB; only AC's two gradients;
+  rainbow dir 00/04, ripple ff), quicksand 07 as `51 2c 07 01 0f <brightness> 00 02 ff <3 RGB>` + `51 2c 07 00 <3 RGB>`
+  (AC's scale). Each chunk must be echoed before the next.
+  Also approved and confirmed 2026-11-22 (capture_4 values, owner watched each unsaved send; protocol.json
+  `keyboard_writes.squire_writes`): warning never `51 3a 00 00 00` (reads back 00), fast/normal/slow speeds of every
+  effect, colour mode [6] 00/10/01 + second colour [12..14] + background [15..17] for starry night / current /
+  raindrop, gradient direction 00..08 (all four diagonals seen: 01 down-right, 03 down-left, 05 up-left, 07
+  up-right) + thickness [8] 00/01/02 + AC's 7 presets + custom stops (2..7, positions 1..100 ascending), quicksand
+  [6] 00/01 + [7] 02/06, off = `51 2c 00 00 ff 04 00 ff ff 00 00 00` (AC's mouse `51 36` is never sent).
+  Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
@@ -212,14 +232,22 @@ and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply
 `keyboard_settings.captures_wired`, Windows).
 `12 12` [5] factory layout id (25 = CH-DE confirmed, ISO). `12 01` [6] sleep timeout, mouse power-off coding 00..04 = 1/2/3/5/10 min, ff never (AC offers exactly these; 1, 3 and never confirmed on Windows, 2026-11-21, protocol.json `keyboard_settings.sleep_captures`).
 No source reads the keyboard's LED colour/brightness; G-Helper keeps them in its own config. `12 03 00` (the mouse's LED read)
-was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (not
-approved, not sent): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
+was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (in squire.py
+with --dry-run since 2026-11-22, branch `keyboard-writes`; approved + confirmed 2026-11-22, see Rules; Swift allowlist has none yet): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
 `51 37` is wrong for the Falchion). AC captures (2026-11-21, protocol.json `keyboard_writes`):
 `51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>`, then `50 55`; first reply ff aa. Speed: 3 steps per effect, own
-values each (breathing 0f/1e/2a, raindrop 0e/14/1b fast/normal/slow), ff for static. Colour cycle has no colour. Starry
-night, current, raindrop also have background colour and single/double/random (not captured yet). Ripple = gradient
-like rainbow, quicksand = 6 RGB triples in 2 chunks (random, up/down not captured). Rainbow (04) is a gradient in 3 chunks ([3] = 02, 01, 00): [7] direction
-(00 left->right, 04 right->left; AC has 9, rest unknown), [9] stop count, then position % + RGB per stop (AC: 7 presets + manual).
+values each, fast/normal/slow, larger = slower: breathing 0f/1e/2a, raindrop 0e/14/1b, reactive 08/0f/16, starry night
+0a/0f/19, current 07/0a/0c, colour cycle 12/1f/3e, rainbow 23/3e/55, ripple 50/64/78, quicksand 0c/0f/14; ff for static.
+Brightness [5] = % (AC slider 0..100 step 5). Colour cycle has no colour. Starry night, current, raindrop: [6] colour mode
+00 single / 10 double / 01 random, [9..11] colour 1, [12..14] colour 2 (00 00 00 when single), [15..17] background
+(00 00 00 = off). AC's "lighting off" = static, 4 %, black (plus `03 51 36 00 00 01` to the MOUSE, unknown; "on" sends
+nothing to the mouse). Ripple = gradient like rainbow, [7] ff. Quicksand = 6 RGB triples in 2 chunks, [6] 00 scale / 01
+random, [7] direction 02 down / 06 up. Rainbow (04) and ripple (05) are gradients in 3 chunks ([3] = 02, 01, 00): [7]
+direction, compass in 45 degree steps (00 right = l->r, 01 down-right, 02 down, 03 down-left, 04 left, 05 up-left, 06 up,
+07 up-right, 08 centre outwards; AC's button order 06 02 04 00 05 07 03 01 08), [8] thickness (00 low, 01 normal, 02 strong;
+AC default 02), [9] stop count (2..7), then <position %> <r g b> per stop: 2 in chunk 02, 4 in 01, the rest in 00 (unused
+chunks all zero). AC: 7 unnamed presets (2..7 stops, first at 14 %, last at 100 %) + custom; all in protocol.json
+`keyboard_writes.capture_4` (Windows session 2026-11-22).
 Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
 ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).
 Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.cs`,
@@ -302,23 +330,50 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       stage/count, polling + surface + lift-off in one Apply, power-off, "same effect on all zones" (2026-11-13).
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
-- [ ] Keyboard (Falchion RX LP), branch `keyboard-read`: `--keyboard-settings` reads profile, layout, lighting effect,
-      sleep, warning (2026-11-13). Linux window: read-only keyboard page with a drawing (own
-      65 % artwork, ISO/ANSI from 12 12, CH-DE legends; keys = lighting zone, chips profile/layout/power; neutral glow
-      until the colour can be read) (2026-11-13). macOS window: same keyboard page (KeyboardSettings.swift, KeyboardDrawing),
-      squire-probe --keyboard-settings; written on Linux. On the Mac via Omni (2026-11-13): builds, swift test passes,
-      probe and squire.py read the same values, `--repeat 30` no crash, keyboard page and a mouse LED Apply confirmed
-      by the owner in the window. `--screenshot PATH keyboard` selects the keyboard page on macOS too.
-      Next: find how to read the LED colour. Windows TODO with Armoury Crate:
-      [x] effect names (2026-11-21: all ten AC basic effects = G-Helper ids 00..09), [x] sleep timeout values for
-      12 01 [6] (2026-11-21), [x] keyboard firmware ([11..13] of 12 00 = 05.00.13, 2026-11-21), [x] a capture of how AC reads the LED colour
-      (2026-11-21, protocol.json `keyboard_writes`: AC reads no colour on open, it caches it like G-Helper; so the
-      keyboard colour stays unreadable; a Squire editor would have to remember what it last wrote).
-      Windows session done (2026-11-21): three AC captures (`keyboard_writes`), wired reads (firmware at [4..6]).
-      AC re-flashed the keyboard firmware the same day (failed once, worked after a reboot): versions unchanged
-      (05.00.13 / receiver 07.00.08, mouse 01.00.10), replies unchanged.
-      Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
-      51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
+- [x] Keyboard reads (Falchion RX LP), branch `keyboard-read`, PR #7 merged 2026-11-22: `--keyboard-settings` reads
+      profile, layout, lighting effect, sleep, warning, firmware; read-only keyboard page with an own 65 % drawing in
+      both windows (macOS confirmed on the Mac 2026-11-13). Windows session 2026-11-21: effect names (= G-Helper ids
+      00..09), sleep coding, keyboard firmware, three AC write captures (`keyboard_writes`); AC reads no LED colour (it
+      caches it), so the keyboard's colour stays unreadable. AC re-flashed the keyboard firmware that day (failed once,
+      worked after a reboot): versions and replies unchanged (05.00.13 / receiver 07.00.08, mouse 01.00.10).
+- [x] Keyboard writes on Linux, branch `keyboard-writes` (2026-11-22, all confirmed on the device via Omni, see Rules):
+      allowlist per device (Python + Swift); CLI `--set-kb-light EFFECT [--brightness --color --speed --gradient
+      --direction]` (all ten effects), `--set-kb-sleep MIN|never`, `--set-kb-warning 10..50`, `--save` = 50 55; reads
+      back the effect (12 00 [9]) or 12 01 [6] / [9]. Unsaved changes are lost at off/on; 50 55 survives it.
+      Linux window: keyboard page edits lighting (effect, brightness, colour, speed, gradient, direction), sleep and
+      warning; Apply writes sleep, warning, lighting in that order and saves once with the last. The colour is
+      remembered per profile in state_dir()/keyboard-lighting.json when saved (CLI too) and shown only while 12 00 [9]
+      still has that effect. Owner applied and saved in the window (profile 4: reactive 75 % #f6f5f4). Run the window
+      from the repo only with the installed one closed (same app id: a second start just raises the open window).
+      Each new effect was sent unsaved and seen by the owner: starry night (single keys flash, no background),
+      current (key + short tail to the right), raindrop (slow vs fast clearly differ), rainbow (spectrum l->r,
+      sunset r->l), ripple, quicksand (starts top centre, spreads out, one colour per row).
+      Not done yet: Apply of the new effects in the window (owner may try it; Apply saves), macOS (Swift core has the
+      per-device allowlist but no keyboard writes; page is read-only).
+- [x] Windows session 2026-11-22 (USBPcap of AC via the Omni, protocol.json `keyboard_writes.capture_4`, 7 blocks):
+      warning levels (10..50 + never = 00), starry night / current / raindrop options (double, random, background),
+      fast/normal/slow for every effect, rainbow directions (9) + thickness + 7 presets + custom stops, ripple
+      thickness + presets, quicksand random + up/down, brightness slider, lighting off. AC has no per-key mode.
+      Restored afterwards: reactive 75 %, normal, sleep 3 min, warning 20 % (colour AC's blue 00 02 ff, not #f6f5f4).
+      Capture setup on the owner's PC: Omni = \\.\USBPcap2, device 8; USBPcapCMD started via Start-Process (hidden).
+- [x] Use the session in Squire (Linux first, 2026-11-22, branch `keyboard-writes`): in squire.py, CLI and the Linux
+      window, every capture_4 packet rebuilt byte for byte in the tests. Warning never (0 = 00; Squire's notification
+      stays quiet too), fast/normal/slow for every effect (reactive 0f is "normal" now; keyboard-lighting.json v2
+      migrates the old "fast"), rainbow direction (9, compass names right/down/.../outwards; old left-to-right /
+      right-to-left still accepted) + thickness low/normal/strong (rainbow, ripple), AC's 7 gradient presets (names
+      are Squire's: red, blue-red, sunset, lime-cyan, yellow-magenta, pink-purple, spectrum) + custom stops via the CLI
+      (`--gradient 14:ff0000,100:0000ff`), starry night / current / raindrop `--color-mode single|double|random`,
+      `--color2`, `--background`, quicksand `--color-mode scale|random` + `--direction down|up`, `--set-kb-light off`
+      (static 4 % black; reads back static; AC's mouse 51 36 is not sent). One normalised value
+      (squire.KEYBOARD_LIGHT_FIELDS) drives packets, memory and the window.
+      Confirmed on the device via Omni (owner approved, each sent unsaved and seen): warning never, off (no light),
+      raindrop double + background fast, starry night random, rainbow pink-purple up low slow, all four diagonals,
+      quicksand random up, reactive slow. Restored and saved: reactive normal #f6f5f4 75 % (remembered for profile 4).
+      Linux window Apply of the new options confirmed by the owner, no errors (2026-11-22); profile 4 is now
+      reactive normal 75 % #e01b24 (saved from the window). Open: thickness not judged by eye; Swift still reads
+      keyboard warning 00 as "none".
+- [ ] Keyboard on macOS: port keyboard_light_commands / sleep / warning / 50 55 + allowlist to SquireCore, then the
+      editable keyboard page (same as Linux); owner builds and tests on the Mac.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects
