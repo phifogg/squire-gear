@@ -135,7 +135,7 @@ private func decodeSingle(_ raw: [UInt8]) -> KeyboardLight? {
         }
     }
 
-    @Test func everythingElseStaysRefused() {
+    @Test func everythingElseStaysRefused() throws {
         for hex in ["51 2c 00 00 0f 32 00 ff ff ff 00 00",   // static with a speed
                     "51 2c 02 00 1f 32 00 ff ff ff 00 00",   // colour cycle with a colour
                     "51 2c 00 00 ff 65 00 ff ff ff 00 00",   // 101 %
