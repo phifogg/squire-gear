@@ -375,7 +375,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       Linux window Apply of the new options confirmed by the owner, no errors (2026-11-22); profile 4 is now
       reactive normal 75 % #e01b24 (saved from the window). Open: thickness not judged by eye; Swift still reads
       keyboard warning 00 as "none".
-- [ ] Keyboard on macOS, branch `keyboard-macos` (2026-11-22): SquireCore KeyboardWrites.swift (KeyboardLight =
+- [x] Keyboard on macOS, branch `keyboard-macos` (2026-11-22): SquireCore KeyboardWrites.swift (KeyboardLight =
       squire.KEYBOARD_LIGHT_FIELDS, KeyboardLighting.commands, Command.keyboardSleep/Warning/Save, allowlist,
       KeyboardChange, KeyboardLightMemory = the same keyboard-lighting.json as squire.py on the Mac) and
       KeyboardEditing.swift (port of the kb_* window logic); HIDReader.writeKeyboard (chunks echoed on 4 bytes, read
@@ -383,8 +383,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       warning incl. never; Apply/Revert/Show bytes per device; drawing glows in the known colour); warning 00 = never
       in the Swift reads, popover and notification. Tests read the same protocol.json vectors (squire_writes, every
       one-colour AC packet, the 7 presets). Written on Linux without a Swift compiler: CI (`swift test`) checks the
-      core; the app target only builds in Xcode. OPEN: owner builds on the Mac, `--demo --screenshot PATH keyboard
-      edit`, then Apply on the device; squire-probe has no keyboard writes.
+      core; the app target only builds in Xcode. Owner built the app on the Mac and tested it: works (2026-11-22).
+      squire-probe has no keyboard writes.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects

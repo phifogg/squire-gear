@@ -1,7 +1,7 @@
 ## What's new
 - TODO: fill in before publishing.
 
-The battery display only reads. The mouse settings window writes only when you click **Apply**, only commands on a fixed allowlist, reads every change back and saves it only if it matched. Squire never touches firmware or switches profiles.
+The battery display only reads. The settings window (mouse and keyboard) writes only when you click **Apply**, only commands on a fixed allowlist, reads every change back and saves it only if it matched. Squire never touches firmware or switches profiles.
 
 ## Install on macOS
 1. Download `Squire-{{VERSION}}.zip`, unzip it and move `Squire.app` to `/Applications` (or `~/Applications` if you have no admin rights).

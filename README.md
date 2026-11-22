@@ -24,7 +24,7 @@ Like a squire looking after a knight's blades, it keeps an eye on your Falchion 
   stages (value, colour, active stage, number of stages), polling rate, surface (mouse pad
   preset), lift-off distance, angle snapping and tuning, the auto power-off time and the
   low-battery warning level
-- **Keyboard settings** (Falchion RX Low Profile, not released yet, Linux only so far): all ten
+- **Keyboard settings** (Falchion RX Low Profile, new in 0.4, Linux and macOS): all ten
   lighting effects of Armoury Crate (static, breathing, colour cycle, reactive, rainbow, ripple,
   starry night, quicksand, current, raindrop) with brightness, speed and the effect's own options
   (one or two colours or random, background colour, gradient presets, direction, thickness), lighting
@@ -38,7 +38,7 @@ Like a squire looking after a knight's blades, it keeps an eye on your Falchion 
 
 ## Status
 
-Version 0.3.0. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
+Version 0.4.0. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
 Battery percentage and charging state are confirmed for both devices, connected through the
 Omni receiver and over a USB cable.
 
@@ -52,6 +52,10 @@ reply carries no plausible level, 20 % is used.
 The settings window (new in 0.3) is tested with the Keris II Origin on Linux through the Omni
 receiver and on macOS through the Omni receiver and the USB cable. Every setting it offers is
 confirmed on the device: written, read back and saved.
+
+The keyboard page (new in 0.4) is tested with the Falchion RX Low Profile through the Omni
+receiver on Linux and macOS. Every lighting effect and option, the sleep time and the
+low-battery warning are confirmed on the device; the bytes come from Armoury Crate captures.
 
 Not tested yet:
 
@@ -251,7 +255,7 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 ## Roadmap
 
-- Keyboard configuration on macOS; a gradient editor for custom rainbow / ripple colours (CLI only so far)
+- A gradient editor for custom rainbow / ripple colours (CLI only so far)
 - Desktop widget (WidgetKit)
 - Optional icon-only menu bar mode
 - Notarized builds, depending on interest
