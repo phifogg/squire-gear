@@ -154,7 +154,14 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   12 00 [11] / [18]; never an active stage beyond the count, never a count below the active stage). Squire writes
   only the changed field, never the whole block like Armoury Crate. Not approved: debounce
   `51 31 05` (G-Helper offers none for the Keris), DPI `51 31 <stage>` (X/Y unclear), stage count `51 31 0a`,
-  active stage `51 31 09`. Any new command, read or write, must be shown to the owner before it is sent,
+  active stage `51 31 09`.
+  Keyboard (Falchion RX LP), approved and confirmed on the device via Omni 2026-11-22 (bytes from the AC captures,
+  protocol.json `keyboard_writes.squire_writes`): sleep `51 38 00 00 <power-off code>` (read back 12 01 [6]), warning
+  `51 3a 00 00 <%>` (12 01 [9]; 10/20 confirmed, 30..50 assumed), lighting `51 2c <effect> 00 <speed> <brightness>
+  00 ff ff <r g b>` for static/breathing/color-cycle/reactive with AC's speed values only (read back: effect only,
+  12 00 [9]; colour not readable), save `50 55` (only with --save / Apply, counts only when echoed). Unsaved changes
+  are lost at off/on. Not approved: starry night, current, raindrop, gradients (rainbow, ripple, quicksand).
+  Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
@@ -216,7 +223,7 @@ and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply
 `12 12` [5] factory layout id (25 = CH-DE confirmed, ISO). `12 01` [6] sleep timeout, mouse power-off coding 00..04 = 1/2/3/5/10 min, ff never (AC offers exactly these; 1, 3 and never confirmed on Windows, 2026-11-21, protocol.json `keyboard_settings.sleep_captures`).
 No source reads the keyboard's LED colour/brightness; G-Helper keeps them in its own config. `12 03 00` (the mouse's LED read)
 was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (in squire.py
-with --dry-run since 2026-11-22, branch `keyboard-writes`; NOT approved, never sent yet; Swift allowlist has none): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
+with --dry-run since 2026-11-22, branch `keyboard-writes`; approved + confirmed 2026-11-22, see Rules; Swift allowlist has none yet): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
 `51 37` is wrong for the Falchion). AC captures (2026-11-21, protocol.json `keyboard_writes`):
 `51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>`, then `50 55`; first reply ff aa. Speed: 3 steps per effect, own
 values each (breathing 0f/1e/2a, raindrop 0e/14/1b fast/normal/slow), ff for static. Colour cycle has no colour. Starry
@@ -325,7 +332,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       `--set-kb-sleep MIN|never`, `--set-kb-warning 10..50` (10/20 confirmed, 30..50 assumed like the mouse, check AC), `--save` = 50 55; read back effect (12 00 [9]) / 12 01 [6], [9].
       Dry runs match the AC captures byte for byte (tests). Confirmed on the device via Omni (unsaved, restored):
       sleep 3->5->3 min, warning 20->10->20 % (2026-11-22, keyboard_writes.squire_writes), lighting static red 50 %
-      (owner saw it on all keys; unsaved, so raindrop came back after off/on: RAM only, like the mouse). Waiting for the owner's go per command before the first send.
+      (owner saw it on all keys; unsaved, so raindrop came back after off/on: RAM only, like the mouse);
+      save 50 55 with sleep 5 min: echoed, survived off/on, lighting unchanged; restored to 3 min + save.
+      Next: windows (Linux first), more effects (starry night, current, raindrop need background/double/random captures).
       Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
       51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

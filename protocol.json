@@ -946,6 +946,39 @@
           "read_back": "02 12 00 00 00 08 00 07 00 06 00 04 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
           "after_power_cycle": "02 12 00 00 00 08 00 07 00 06 09 04 13 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
           "notes": "Echoed at once. 12 00 [9] 09 -> 00, profile [10] stays 04. The owner saw static red, about half bright, on all keys. Not saved: after the keyboard was switched off and on, 12 00 [9] was 09 raindrop again (the change lives in RAM only, like the mouse without 50 03)."
+        },
+        {
+          "name": "sleep 3 -> 5 min, saved (50 55)",
+          "function": "keyboard_sleep_command",
+          "args": [
+            5
+          ],
+          "save": true,
+          "packet": "02 51 38 00 00 03",
+          "save_packet": "02 50 55",
+          "save_reply": "02 50 55 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "read_back": "02 12 01 00 00 00 46 03 01 00 14 46 8c 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "after_power_cycle": "02 12 01 00 00 00 46 03 01 00 14 46 92 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "expect": {
+            "sleep_minutes": 5,
+            "low_warning": 20
+          },
+          "notes": "50 55 echoed once, at once. After the keyboard was switched off and on: still 5 min, and 12 00 still raindrop on profile 4 (the save kept the saved lighting). So 50 55 persists like the mouse's 50 03."
+        },
+        {
+          "name": "sleep 5 -> 3 min, saved (restore)",
+          "function": "keyboard_sleep_command",
+          "args": [
+            3
+          ],
+          "save": true,
+          "packet": "02 51 38 00 00 02",
+          "save_packet": "02 50 55",
+          "expect": {
+            "sleep_minutes": 3,
+            "low_warning": 20
+          },
+          "notes": "Read back 3 min, 50 55 echoed. The keyboard is as before the tests."
         }
       ]
     }

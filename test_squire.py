@@ -1311,6 +1311,12 @@ class KeyboardWriteTests(unittest.TestCase):
                     s = rb.KeyboardSettings("k", "omni")
                     rb.parse_keyboard_settings(s, "battery", bytes.fromhex(w["read_back"])[1:])
                     self.assertEqual({k: getattr(s, k) for k in w["expect"]}, w["expect"])
+                    if "after_power_cycle" in w:                       # saved: survives off/on
+                        rb.parse_keyboard_settings(s, "battery", bytes.fromhex(w["after_power_cycle"])[1:])
+                        self.assertEqual({k: getattr(s, k) for k in w["expect"]}, w["expect"])
+                if w.get("save"):
+                    self.assertEqual(rb.packet(0x02, rb.KEYBOARD_SAVE_COMMAND, 64, write=True, device="keyboard")[:3].hex(" "),
+                                     w["save_packet"])
 
     def test_defaults_and_wired_framing(self):
         self.assertEqual(rb.keyboard_light_command("breathing", 100, "#3584e4").hex(" "),
