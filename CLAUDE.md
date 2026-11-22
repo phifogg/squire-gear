@@ -369,8 +369,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       Confirmed on the device via Omni (owner approved, each sent unsaved and seen): warning never, off (no light),
       raindrop double + background fast, starry night random, rainbow pink-purple up low slow, all four diagonals,
       quicksand random up, reactive slow. Restored and saved: reactive normal #f6f5f4 75 % (remembered for profile 4).
-      Open: Apply of the new options in the Linux window (Apply saves); thickness not judged by eye; Swift still
-      reads keyboard warning 00 as "none".
+      Linux window Apply of the new options confirmed by the owner, no errors (2026-11-22); profile 4 is now
+      reactive normal 75 % #e01b24 (saved from the window). Open: thickness not judged by eye; Swift still reads
+      keyboard warning 00 as "none".
 - [ ] Keyboard on macOS: port keyboard_light_commands / sleep / warning / 50 55 + allowlist to SquireCore, then the
       editable keyboard page (same as Linux); owner builds and tests on the Mac.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
