@@ -125,7 +125,8 @@ struct DeviceRow: View {
                     ProgressView(value: Double(percent), total: 100).tint(batteryColor(for: battery))
                     Text("\(percent)%\(battery.charging ? " ⚡︎" : "")").monospacedDigit()
                 }
-                Text("\(connection) · warning at \(battery.lowWarning ?? SquireProtocol.defaultLowWarning)%")
+                Text(battery.lowWarning == 0 ? "\(connection) · no low-battery warning"
+                     : "\(connection) · warning at \(battery.lowWarning ?? SquireProtocol.defaultLowWarning)%")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text(statusText).foregroundStyle(.secondary)

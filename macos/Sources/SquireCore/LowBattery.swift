@@ -15,7 +15,7 @@ public enum LowBattery {
             guard let percent = battery.percent else { continue }
             let level = battery.lowWarning ?? SquireProtocol.defaultLowWarning
             let key = battery.device.rawValue
-            if battery.charging || percent > level {
+            if level == 0 || battery.charging || percent > level {   // 0: the device is set to never warn
                 state.notified.remove(key)
             } else if !state.notified.contains(key) {
                 toNotify.append(battery)

@@ -27,9 +27,15 @@ final class SettingsStore: ObservableObject {
     @Published var failure: String?
     @Published var showBytes = false
 
+    /// Keyboard edits not sent yet, and the lighting Squire last saved to the active profile (the keyboard cannot
+    /// report its colour or brightness; KeyboardLightMemory, shared with squire.py).
+    @Published private(set) var keyboardEdits = KeyboardEdits()
+    @Published private(set) var keyboardKnown: KeyboardLight?
+
     var preview: MouseSettings? { settings.map { SettingsEditing.preview($0, pending: pending, other: other) } }
     var changes: [SettingChange] { settings.map { SettingsEditing.changes($0, pending: pending, other: other) } ?? [] }
-    var isDirty: Bool { !changes.isEmpty }
+    /// Apply, Revert and Show bytes act on the device shown.
+    var isDirty: Bool { device == .keyboard ? !keyboardEdits.changes.isEmpty : !changes.isEmpty }
 
     func refresh() {
         guard !loading, !applying else { return }
@@ -55,6 +61,8 @@ final class SettingsStore: ObservableObject {
                 self.batteries = Dictionary(uniqueKeysWithValues: batteries.map { ($0.device, $0) })
                 self.settings = settings
                 self.keyboard = keyboard
+                self.keyboardKnown = demo ? nil
+                    : KeyboardLightMemory.remembered(profile: keyboard.profile, effect: keyboard.lightMode)
                 // keep pending edits only for zones the mouse still reports
                 self.pending = self.pending.filter { settings.leds[$0.key] != nil }
                 self.other = SettingsEditing.edit(self.other, settings) { _ in }   // drop what now matches
@@ -111,24 +119,121 @@ final class SettingsStore: ObservableObject {
     }
 
     func revert() {
+        if device == .keyboard {
+            keyboardEdits = KeyboardEdits()
+            return
+        }
         pending.removeAll()
         other = OtherEdits()
         linkZones = false
     }
 
     var applyStatus: String {
+        if applying { return "Applying…" }
+        if device == .keyboard { return KeyboardEditing.applyStatus(keyboardEdits) }
         guard let settings else { return "" }
-        return applying ? "Applying…" : SettingsEditing.applyStatus(settings, pending: pending, other: other)
+        return SettingsEditing.applyStatus(settings, pending: pending, other: other)
     }
 
     var plannedPackets: [String] {
-        settings.map { SettingsEditing.plannedPackets($0, pending: pending, other: other) } ?? []
+        if device == .keyboard { return keyboard.map { KeyboardEditing.plannedPackets($0, keyboardEdits) } ?? [] }
+        return settings.map { SettingsEditing.plannedPackets($0, pending: pending, other: other) } ?? []
+    }
+
+    // MARK: keyboard editing
+
+    /// The lighting as the editor shows it: the pending edit, else what Squire saved, else the effect read.
+    var keyboardLight: KeyboardLight? {
+        keyboard.map { keyboardEdits.light ?? KeyboardEditing.lightStart($0, known: keyboardKnown) }
+    }
+
+    var keyboardPreview: (settings: KeyboardSettings, light: KeyboardLight?)? {
+        keyboard.map { KeyboardEditing.preview($0, keyboardEdits, known: keyboardKnown) }
+    }
+
+    func editKeyboardLight(_ change: (inout KeyboardLight) -> Void) {
+        guard let keyboard else { return }
+        keyboardEdits = KeyboardEditing.editLight(keyboard, keyboardEdits, known: keyboardKnown, change)
+    }
+
+    func editKeyboardSleep(_ minutes: Int?) {
+        guard let keyboard else { return }
+        keyboardEdits = KeyboardEditing.editSleep(keyboard, keyboardEdits, minutes)
+    }
+
+    func editKeyboardWarning(_ percent: Int) {
+        guard let keyboard else { return }
+        keyboardEdits = KeyboardEditing.editWarning(keyboard, keyboardEdits, percent)
+    }
+
+    /// Same as the mouse: sleep, warning, then the lighting; every chunk echoed, read back, and one 50 55 with the
+    /// last write, only if all earlier ones matched.
+    private func applyKeyboard() {
+        let work = keyboardEdits.changes
+        guard !work.isEmpty else { return }
+        applying = true
+        let demo = demo
+        DispatchQueue.global(qos: .userInitiated).async {
+            var results: [(KeyboardChange, KeyboardWriteResult)] = []
+            for (i, change) in work.enumerated() {
+                let result = demo
+                    ? KeyboardWriteResult(status: .ok, saved: true, message: "demo")   // nothing is sent
+                    : HIDReader().writeKeyboard(change, save: i == work.count - 1).result
+                results.append((change, result))
+                if result.status != .ok { break }
+            }
+            let saved = results.count == work.count && results.allSatisfy { $0.1.status == .ok }
+                && results.last?.1.saved == true
+            for i in results.indices { results[i].1.saved = saved }
+            DispatchQueue.main.async { self.keyboardApplyDone(results) }
+        }
+    }
+
+    private func keyboardApplyDone(_ results: [(KeyboardChange, KeyboardWriteResult)]) {
+        applying = false
+        var failed: [(KeyboardChange, KeyboardWriteResult)] = []
+        for (change, result) in results {
+            guard result.status == .ok, result.saved else { failed.append((change, result)); continue }
+            switch change {
+            case .sleep(let minutes):
+                keyboard?.sleepMinutes = minutes
+                if let raw = result.after?.raw["battery"] { keyboard?.raw["battery"] = raw }
+                keyboardEdits.sleep = nil
+            case .warning(let percent):
+                keyboard?.lowWarning = percent
+                if let raw = result.after?.raw["battery"] { keyboard?.raw["battery"] = raw }
+                keyboardEdits.warning = nil
+            case .light(let light):
+                keyboard?.lightMode = KeyboardLighting.effectRead(light.effect)
+                if !demo, let profile = result.after?.profile ?? keyboard?.profile {
+                    KeyboardLightMemory.remember(light, profile: profile)
+                }
+                keyboardKnown = light
+                keyboardEdits.light = nil
+            }
+        }
+        if failed.isEmpty {
+            show(toast: "Saved to the keyboard" + (demo ? " (demo, nothing sent)" : ""))
+            return
+        }
+        let texts: [WriteResult.Status: String] = [
+            .asleep: "The keyboard is asleep. Press a key and click Apply again.",
+            .ok: "Written to the keyboard's memory but not saved (lost when it is switched off).",
+            .mismatch: "The keyboard did not take the new value (read back differs). Nothing was saved.",
+            .noResponse: "The keyboard did not answer. Press a key and click Apply again.",
+        ]
+        failure = failed.map { (change: KeyboardChange, result: KeyboardWriteResult) -> String in
+            let text: String = texts[result.status] ?? "\(result.status.rawValue) \(result.message)"
+            let detail: String = result.status == .ok && !result.message.isEmpty ? " (\(result.message))" : ""
+            return "\(change.title): \(text)\(detail)"
+        }.joined(separator: "\n")
     }
 
     /// Writes every change, reads each one back, and saves (50 03) once with the last one, only if all earlier
     /// ones matched. Stops at the first failure: nothing more is written and nothing is saved.
     func apply() {
         guard !applying else { return }
+        if device == .keyboard { return applyKeyboard() }
         let work = changes
         guard !work.isEmpty else { return }
         applying = true

@@ -3,9 +3,11 @@ import SquireCore
 
 /// Top view of the Falchion RX LP (own neutral artwork, no ASUS marks): a 65 % board shaped by the layout the
 /// keyboard reports (ISO or ANSI). Same shapes and coordinates as keyboard_svg() in linux/squire_settings.py.
-/// The LED colour cannot be read yet: a lit effect shows as a neutral glow.
+/// The keyboard cannot report its colour: with `light` (what Squire saved, or an edit not sent yet) the keys glow in
+/// it, otherwise a lit effect shows as a neutral glow. Same as keyboard_glow() on Linux.
 struct KeyboardDrawing: View {
     let settings: KeyboardSettings
+    var light: KeyboardLight? = nil
 
     static let unit: CGFloat = 36, gap: CGFloat = 4, pad: CGFloat = 18
     static let size = CGSize(width: 16 * unit + 2 * pad, height: 5 * unit + 2 * pad)   // 612 x 216
@@ -16,6 +18,34 @@ struct KeyboardDrawing: View {
         }
         .frame(width: Self.size.width, height: Self.size.height)
         .accessibilityLabel("Top view of the keyboard")
+    }
+
+    /// Fill and opacity of the glow under the keys.
+    private func glow(_ mode: String) -> (GraphicsContext.Shading, Double) {
+        guard let light, KeyboardEditing.sameEffect(light, mode) else { return (.color(Color(hex: 0xCFD6E0)), 0.22) }
+        if light.effect == KeyboardLighting.off || light.brightness == 0 { return (.color(.clear), 0) }
+        let opacity = 0.2 + Double(light.brightness) / 100 * 0.4
+        if !KeyboardLighting.colourless.contains(light.effect), let rgb = RGB(hex: light.color ?? "") {
+            return (.color(Color(rgb)), opacity)
+        }
+        var stops: [(Double, String)]
+        if KeyboardLighting.gradientEffects.contains(light.effect),
+           let gradient = try? KeyboardLighting.stops(light.gradient) {
+            stops = gradient.map { (Double($0.0) / 100, $0.1) }
+            if ["left", "up-left", "down-left", "right-to-left"].contains(light.direction ?? "") {
+                stops = stops.reversed().map { (1 - $0.0, $0.1) }
+            }
+        } else if light.effect == "quicksand" {
+            let scale = KeyboardLighting.quicksandScale
+            stops = scale.enumerated().map { (Double($0.offset) / Double(scale.count - 1), $0.element) }
+        } else {
+            stops = [(0, "ff5a5a"), (0.5, "3ccf7a"), (1, "3d8bff")]
+        }
+        let gradient = Gradient(stops: stops.compactMap { stop in
+            RGB(hex: stop.1).map { Gradient.Stop(color: Color($0), location: stop.0) }
+        })
+        return (.linearGradient(gradient, startPoint: CGPoint(x: Self.pad, y: 0),
+                                endPoint: CGPoint(x: Self.size.width - Self.pad, y: 0)), opacity)
     }
 
     private func draw(_ context: inout GraphicsContext) {
@@ -29,12 +59,15 @@ struct KeyboardDrawing: View {
         context.fill(Path(roundedRect: CGRect(x: 5, y: pad + u, width: 4, height: 3 * u), cornerRadius: 2),
                      with: .color(Color(hex: 0x3A404A)))
 
-        if let mode = settings.lightMode, mode != "off" {
-            var glow = context
-            glow.opacity = 0.22
-            glow.addFilter(.blur(radius: 7))
-            glow.fill(Path(roundedRect: CGRect(x: pad - 4, y: pad - 4, width: 16 * u - g + 8, height: 5 * u - g + 8),
-                           cornerRadius: 8), with: .color(Color(hex: 0xCFD6E0)))
+        if let mode = settings.lightMode, mode != KeyboardLighting.off {
+            let (shading, opacity) = glow(mode)
+            if opacity > 0 {
+                var glow = context
+                glow.opacity = opacity
+                glow.addFilter(.blur(radius: 7))
+                glow.fill(Path(roundedRect: CGRect(x: pad - 4, y: pad - 4, width: 16 * u - g + 8, height: 5 * u - g + 8),
+                               cornerRadius: 8), with: shading)
+            }
         }
 
         let keyFill = GraphicsContext.Shading.color(Color(hex: 0x14171B))

@@ -229,7 +229,7 @@ public enum Allowlist {
     public static func isAllowedWrite(_ c: [UInt8], for device: Battery.Device) -> Bool {
         switch device {
         case .mouse: return isAllowedMouseWrite(c)
-        case .keyboard: return false   // keyboard writes exist in squire.py only so far
+        case .keyboard: return isAllowedKeyboardWrite(c)   // KeyboardWrites.swift
         }
     }
 
