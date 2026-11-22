@@ -1333,7 +1333,7 @@ class KeyboardWriteTests(unittest.TestCase):
                      "51 2c 00 00 ff 32 00 00 00 ff 00 00",   # [7..8] not ff ff
                      "51 2c 04 02 3e 32 00 00 02 07 0e f5",   # rainbow gradient chunk
                      "51 2c 00 00 ff 32 00 ff ff ff 00",      # cut short
-                     "51 38 00 00 05", "51 38 00 01 02", "51 3a 00 00 32",
+                     "51 38 00 00 05", "51 38 00 01 02", "51 3a 00 00 3c", "51 3a 00 00 19",
                      "50 03", "50 02 01", "51 28 00 00 00 64 ff 00 00 00 00 00"):
             with self.subTest(command=hex_):
                 self.assertFalse(rb.is_allowed_write(bytes.fromhex(hex_), "keyboard"))

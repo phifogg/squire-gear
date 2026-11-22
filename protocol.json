@@ -903,6 +903,34 @@
             "low_warning": 20
           },
           "notes": "Read back 3 min. Not saved."
+        },
+        {
+          "name": "warning 20 -> 10 %",
+          "function": "keyboard_warning_command",
+          "args": [
+            10
+          ],
+          "packet": "02 51 3a 00 00 0a",
+          "reply": "02 51 3a 00 00 0a 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "read_back": "02 12 01 00 00 00 46 02 01 00 0a 46 81 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "expect": {
+            "sleep_minutes": 3,
+            "low_warning": 10
+          },
+          "notes": "Echoed at once. 12 01 [9] 14 -> 0a. Not saved."
+        },
+        {
+          "name": "warning 10 -> 20 % (restore)",
+          "function": "keyboard_warning_command",
+          "args": [
+            20
+          ],
+          "packet": "02 51 3a 00 00 14",
+          "expect": {
+            "sleep_minutes": 3,
+            "low_warning": 20
+          },
+          "notes": "Read back 20 %. Not saved."
         }
       ]
     }

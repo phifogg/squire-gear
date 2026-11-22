@@ -314,8 +314,9 @@ KEYBOARD_LIGHT_SPEEDS = {
 }
 KEYBOARD_LIGHT_IDS = {name: i for i, name in KEYBOARD_LIGHT_MODES.items() if name in KEYBOARD_LIGHT_SPEEDS}
 KEYBOARD_COLOURLESS = frozenset(["color-cycle"])   # AC sends 00 00 00 as the colour
-# Warning levels seen in the AC captures (10 and 20 %); more once it is known what AC offers.
-KEYBOARD_WARNING_LEVELS = (10, 20)
+# Warning levels: 10 and 20 % captured from AC and confirmed with Squire (2026-11-22); 30..50 assumed like the mouse
+# (owner, 2026-11-22) until AC's list is checked on Windows.
+KEYBOARD_WARNING_LEVELS = LOW_WARNING_LEVELS
 
 
 def keyboard_light_command(effect: str, brightness: int, color: str = "#ffffff", speed: Optional[str] = None) -> bytes:
