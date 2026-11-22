@@ -213,7 +213,8 @@ public enum SettingsQuery: String, CaseIterable, Sendable {
 
 public enum Allowlist {
     public static let reads: Set<[UInt8]> = Set([Command.keyboardBattery, .mouseBattery].map(\.bytes)
-                                                 + SettingsQuery.allCases.map(\.command.bytes))
+                                                 + SettingsQuery.allCases.map(\.command.bytes)
+                                                 + KeyboardQuery.allCases.map(\.command.bytes))
 
     public static func isAllowedWrite(_ c: [UInt8]) -> Bool {
         if c == Command.save.bytes { return true }

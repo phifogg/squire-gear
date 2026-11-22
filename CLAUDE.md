@@ -38,11 +38,11 @@ macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project
   Sources/SquireCore   pure logic: targets, command allowlist + packets (Commands.swift), reply parsing,
                        mouse settings parsing (MouseSettings.swift), settings window logic (SettingsEditing.swift),
                        low-battery rules (Swift Testing tests, read protocol.json)
-  Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, setLED;
+  Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, readKeyboardSettings, write;
                        DeviceLock = same flock file as squire.device_lock
-  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings (mouse settings, read-only)
+  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings / --keyboard-settings (read-only)
   App/                 SwiftUI MenuBarExtra app (BatteryStore, Views), settings window (SettingsWindow,
-                       SettingsStore, MouseDrawing; same layout as the Linux window), Assets
+                       SettingsStore, MouseDrawing, KeyboardDrawing; same layout as the Linux window), Assets
   scripts/             build-release.sh (universal, ad-hoc signed zip), make-icon.swift
 ```
 
@@ -66,6 +66,7 @@ Linux: system python3 is fine (no hidapi needed):
 python3 squire.py --list / --debug             # from the repo
 python3 linux/squire_tray.py --debug           # tray app from the repo, prints each read
 python3 squire.py --settings [--json] [--debug] # mouse DPI / LEDs / sensor / power, read-only
+python3 squire.py --keyboard-settings [--json]   # keyboard profile / layout / lighting effect, read-only
 python3 linux/squire_settings.py [--demo]       # settings window from the repo (--demo: no device access)
 ./linux/install.sh [--no-udev] [--no-start]    # install for the current user
 ```
@@ -97,7 +98,8 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   captures of Armoury Crate into protocol.json write vectors, (4) settings window in the app, writes only on
   an explicit click, never in the background. Show the owner the bytes before the first send of any new command.
 - README reworded for writes (2026-11-12): battery display reads only, settings window writes on Apply (0.3, unreleased).
-- Next after 0.3 (owner, 2026-11-13): Linux window test, release 0.3, then keyboard configuration (Falchion).
+- Next after 0.3 (owner, 2026-11-13): Linux window test, release 0.3 (both done, 0.3.0 published 2026-11-13), then
+  keyboard configuration (Falchion): branch `keyboard-read` first (reads only).
 - Rust (decided 2026-11-13: not now): today the core (protocol, allowlist, parsing, write_verified, edit logic)
   exists twice, Python and Swift, held together by protocol.json; the UIs (GTK, SwiftUI) stay native either way.
   Decide when the keyboard configuration starts, as that is the first big growth of the core. Preferred option then:
@@ -116,7 +118,7 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 ## Rules
 - **Read-only by default.** Squire only sends commands on `ALLOWED_COMMANDS` in squire.py, and the transport
   refuses anything else: `12 01` (keyboard battery), `12 07` (mouse battery) and the mouse settings reads
-  `12 00`, `12 04 00`, `12 04 02`, `12 04 03`, `12 03 00..02`, `12 06` (approved by the owner 2026-11-10).
+  `12 00`, `12 04 00`, `12 04 02`, `12 04 03`, `12 03 00..02`, `12 06` (approved by the owner 2026-11-10); keyboard settings reads `12 00` and `12 12` (approved 2026-11-13).
   All are get requests (first byte `12`); writes start with `50`/`51`. Never send `50 02` (switch profile):
   read the active profile only.
 - **Writes** go through `packet(..., write=True)` and must pass `is_allowed_write()`. Approved and confirmed so far
@@ -202,6 +204,22 @@ debounce (n*4+4 ms), [16] angle snapping, [18..19] angle tuning (signed LE16). `
 (lo/hi each, DPI = v*50+50). `12 04 03` RGB per stage from [4]. `12 03 NN` zone NN (0 logo, 1 wheel, 2 side):
 [4] mode (0 static, 1 breathing, 2 cycle, 3 rainbow, 4 react, 5 comet, 6 battery, f0 off), [5] brightness %,
 [6..8] RGB. `12 06` [6] surface id (ff = none selected), [7] lift-off (0 low, 1 high), [8..10] surface parameters. `12 07` also: [5] power-off (0..4 = 1/2/3/5/10 min, ff never).
+Keyboard settings reads (Falchion RX LP, report ID 02 on the Omni; G-Helper AsusKeyboard.cs, captures in protocol.json
+`keyboard_settings`, 2026-11-13): `12 00` [4..6] receiver firmware, [9] current lighting effect (G-Helper ids: 0 static,
+1 breathing, 2 cycle, 3 reactive, 4 rainbow (G-Helper: wave), 5 ripple, 6 starry night, 7 quicksand, 8 current, 9 raindrop, f1 host-driven;
+all ten confirmed against Armoury Crate on Windows, 2026-11-21; Squire names 04 rainbow like AC, DE Regenbogen; 08 is "Fliessen" in AC), [10] active profile 1-based (profiles 1, 2
+and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply), [11..13] keyboard firmware via the Omni, [4..6] over the cable (05.00.13 = AC, 2026-11-21; wired replies in
+`keyboard_settings.captures_wired`, Windows).
+`12 12` [5] factory layout id (25 = CH-DE confirmed, ISO). `12 01` [6] sleep timeout, mouse power-off coding 00..04 = 1/2/3/5/10 min, ff never (AC offers exactly these; 1, 3 and never confirmed on Windows, 2026-11-21, protocol.json `keyboard_settings.sleep_captures`).
+No source reads the keyboard's LED colour/brightness; G-Helper keeps them in its own config. `12 03 00` (the mouse's LED read)
+was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (not
+approved, not sent): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
+`51 37` is wrong for the Falchion). AC captures (2026-11-21, protocol.json `keyboard_writes`):
+`51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>`, then `50 55`; first reply ff aa. Speed: 3 steps per effect, own
+values each (breathing 0f/1e/2a, raindrop 0e/14/1b fast/normal/slow), ff for static. Colour cycle has no colour. Starry
+night, current, raindrop also have background colour and single/double/random (not captured yet). Ripple = gradient
+like rainbow, quicksand = 6 RGB triples in 2 chunks (random, up/down not captured). Rainbow (04) is a gradient in 3 chunks ([3] = 02, 01, 00): [7] direction
+(00 left->right, 04 right->left; AC has 9, rest unknown), [9] stop count, then position % + RGB per stop (AC: 7 presets + manual).
 Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
 ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).
 Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.cs`,
@@ -284,6 +302,23 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       stage/count, polling + surface + lift-off in one Apply, power-off, "same effect on all zones" (2026-11-13).
 - [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
       is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
+- [ ] Keyboard (Falchion RX LP), branch `keyboard-read`: `--keyboard-settings` reads profile, layout, lighting effect,
+      sleep, warning (2026-11-13). Linux window: read-only keyboard page with a drawing (own
+      65 % artwork, ISO/ANSI from 12 12, CH-DE legends; keys = lighting zone, chips profile/layout/power; neutral glow
+      until the colour can be read) (2026-11-13). macOS window: same keyboard page (KeyboardSettings.swift, KeyboardDrawing),
+      squire-probe --keyboard-settings; written on Linux. On the Mac via Omni (2026-11-13): builds, swift test passes,
+      probe and squire.py read the same values, `--repeat 30` no crash, keyboard page and a mouse LED Apply confirmed
+      by the owner in the window. `--screenshot PATH keyboard` selects the keyboard page on macOS too.
+      Next: find how to read the LED colour. Windows TODO with Armoury Crate:
+      [x] effect names (2026-11-21: all ten AC basic effects = G-Helper ids 00..09), [x] sleep timeout values for
+      12 01 [6] (2026-11-21), [x] keyboard firmware ([11..13] of 12 00 = 05.00.13, 2026-11-21), [x] a capture of how AC reads the LED colour
+      (2026-11-21, protocol.json `keyboard_writes`: AC reads no colour on open, it caches it like G-Helper; so the
+      keyboard colour stays unreadable; a Squire editor would have to remember what it last wrote).
+      Windows session done (2026-11-21): three AC captures (`keyboard_writes`), wired reads (firmware at [4..6]).
+      AC re-flashed the keyboard firmware the same day (failed once, worked after a reboot): versions unchanged
+      (05.00.13 / receiver 07.00.08, mouse 01.00.10), replies unchanged.
+      Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
+      51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects

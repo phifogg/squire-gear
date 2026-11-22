@@ -4,8 +4,8 @@ import IOKit.hid
 import SquireCore
 
 /// Talks to keyboard and mouse through IOKit. Every packet comes from `Packet.build`, i.e. only commands on the
-/// allowlist in SquireCore (Commands.swift) are ever written: the battery queries, the mouse settings reads, and
-/// the LED write + save, which the app sends only after an explicit Apply.
+/// allowlist in SquireCore (Commands.swift) are ever written: the battery queries, the mouse and keyboard settings
+/// reads, and the mouse writes + save, which the app sends only after an explicit Apply.
 ///
 /// Safety rules (same as the Python version, see CLAUDE.md):
 /// - the manager only matches vendor-defined usage pages (>= 0xFF00); the normal keyboard/mouse
@@ -26,6 +26,11 @@ public final class HIDReader {
 
     public struct SettingsResult {
         public var settings: MouseSettings
+        public var diagnostics: [String]
+    }
+
+    public struct KeyboardSettingsResult {
+        public var settings: KeyboardSettings
         public var diagnostics: [String]
     }
 
@@ -99,6 +104,40 @@ public final class HIDReader {
         }
     }
 
+    // MARK: keyboard settings (read-only)
+
+    /// Current settings of the Falchion RX LP: battery query plus the read commands in `KeyboardQuery`.
+    /// Active profile only; never switches profiles.
+    public func readKeyboardSettings() -> KeyboardSettingsResult {
+        DeviceLock.run {
+            var log: [String] = []
+            let devices = listDevices(log: &log)
+            var result = KeyboardSettings(status: .notFound)
+            for target in Target.keyboardTargets {
+                for device in candidates(devices, target) {
+                    var settings = KeyboardSettings(name: target.name, connection: target.connection)
+                    let battery = exchange(device, target: target, command: .keyboardBattery, log: &log)
+                    guard battery.status == .ok else {
+                        result = settings
+                        result.status = Self.settingsStatus(battery.status)
+                        if battery.status == .asleep { break }   // definitive for this interface; try the other connection
+                        continue
+                    }
+                    settings.raw["battery"] = ReplyParser.hex(battery.payload)
+                    settings.applyBattery(battery.payload)
+                    for query in KeyboardQuery.allCases {
+                        let ex = exchange(device, target: target, command: query.command, log: &log)
+                        guard ex.status == .ok else { settings.raw[query.rawValue] = ex.status.rawValue; continue }
+                        settings.raw[query.rawValue] = ReplyParser.hex(ex.payload)
+                        settings.apply(query, ex.payload)
+                    }
+                    return KeyboardSettingsResult(settings: settings, diagnostics: log)
+                }
+            }
+            return KeyboardSettingsResult(settings: result, diagnostics: log)
+        }
+    }
+
     // MARK: writes (only on an explicit click in the app)
 
     /// Sets one LED zone, then reads it back. See `write`.
@@ -154,7 +193,12 @@ public final class HIDReader {
                     if result.status == .ok && save {
                         let saved = exchange(device, target: target, command: .save, log: &log)
                         result.sent.append(Self.describe(target: target, command: .save, prefix: 3))
-                        result.saved = saved.status != .error
+                        // saved only when the mouse echoes 50 03; ff aa or silence = not confirmed (as squire.py)
+                        result.saved = saved.status == .ok
+                        if !result.saved {
+                            result.message = "written, but the save (50 03) was not confirmed: "
+                                + (saved.status == .asleep ? "it answered ff aa" : saved.status == .noResponse ? "no reply" : saved.raw)
+                        }
                     }
                     return (result, log)
                 }
