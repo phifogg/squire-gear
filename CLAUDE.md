@@ -230,10 +230,18 @@ was probed once (owner's go): echoed, but no colour in the reply (protocol.json 
 with --dry-run since 2026-11-22, branch `keyboard-writes`; approved + confirmed 2026-11-22, see Rules; Swift allowlist has none yet): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
 `51 37` is wrong for the Falchion). AC captures (2026-11-21, protocol.json `keyboard_writes`):
 `51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>`, then `50 55`; first reply ff aa. Speed: 3 steps per effect, own
-values each (breathing 0f/1e/2a, raindrop 0e/14/1b fast/normal/slow), ff for static. Colour cycle has no colour. Starry
-night, current, raindrop also have background colour and single/double/random (not captured yet). Ripple = gradient
-like rainbow, quicksand = 6 RGB triples in 2 chunks (random, up/down not captured). Rainbow (04) is a gradient in 3 chunks ([3] = 02, 01, 00): [7] direction
-(00 left->right, 04 right->left; AC has 9, rest unknown), [9] stop count, then position % + RGB per stop (AC: 7 presets + manual).
+values each, fast/normal/slow, larger = slower: breathing 0f/1e/2a, raindrop 0e/14/1b, reactive 08/0f/16, starry night
+0a/0f/19, current 07/0a/0c, colour cycle 12/1f/3e, rainbow 23/3e/55, ripple 50/64/78, quicksand 0c/0f/14; ff for static.
+Brightness [5] = % (AC slider 0..100 step 5). Colour cycle has no colour. Starry night, current, raindrop: [6] colour mode
+00 single / 10 double / 01 random, [9..11] colour 1, [12..14] colour 2 (00 00 00 when single), [15..17] background
+(00 00 00 = off). AC's "lighting off" = static, 4 %, black (plus `03 51 36 00 00 01` to the MOUSE, unknown; "on" sends
+nothing to the mouse). Ripple = gradient like rainbow, [7] ff. Quicksand = 6 RGB triples in 2 chunks, [6] 00 scale / 01
+random, [7] direction 02 down / 06 up. Rainbow (04) and ripple (05) are gradients in 3 chunks ([3] = 02, 01, 00): [7]
+direction, compass in 45 degree steps (00 right = l->r, 01 down-right, 02 down, 03 down-left, 04 left, 05 up-left, 06 up,
+07 up-right, 08 centre outwards; AC's button order 06 02 04 00 05 07 03 01 08), [8] thickness (00 low, 01 normal, 02 strong;
+AC default 02), [9] stop count (2..7), then <position %> <r g b> per stop: 2 in chunk 02, 4 in 01, the rest in 00 (unused
+chunks all zero). AC: 7 unnamed presets (2..7 stops, first at 14 %, last at 100 %) + custom; all in protocol.json
+`keyboard_writes.capture_4` (Windows session 2026-11-22).
 Linux hidraw: the Omni's interface 2 is one node with three collections (report IDs 1-3, pages
 ff02/ff00/ff01); same writes and replies as hidapi on macOS (report ID at [0], 0x00 prefix for unnumbered).
 Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.cs`,
@@ -336,19 +344,16 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       sunset r->l), ripple, quicksand (starts top centre, spreads out, one colour per row).
       Not done yet: Apply of the new effects in the window (owner may try it; Apply saves), macOS (Swift core has the
       per-device allowlist but no keyboard writes; page is read-only).
-- [ ] Next Windows session (owner, planned 2026-11-22): USBPcap of Armoury Crate via the Omni, keyboard page, one
-      change at a time, then back to the owner's settings; extract only the vendor endpoint (OUT 03 / IN 83) into
-      protocol.json `keyboard_writes` (`.pcapng` stays out of the repo). Wanted:
-      - Low-battery warning: which levels AC offers (Squire assumes 10..50 step 10; 10/20 confirmed)
-      - Starry night, current, raindrop: background colour on/off + a colour, second colour ("double"), "random";
-        which bytes change ([7..8] ff ff? beyond [11]?)
-      - Speeds: reactive, starry night, current, colour cycle, rainbow, ripple, quicksand: fast/normal/slow values
-        (only one each so far; reactive's 0f may be "normal")
-      - Rainbow: the other 7 directions ([7]; 00 l->r, 04 r->l known), byte [8] (02); custom gradient (stop count,
-        positions), the other 5 AC gradient presets (+ their names)
-      - Ripple with another gradient; quicksand "random" pattern and up/down ([7] 02, [8] ff); breathing/static with
-        brightness steps AC offers
-      - Optional: how AC turns the lighting off (effect? brightness 0?), any per-key / per-zone mode
+- [x] Windows session 2026-11-22 (USBPcap of AC via the Omni, protocol.json `keyboard_writes.capture_4`, 7 blocks):
+      warning levels (10..50 + never = 00), starry night / current / raindrop options (double, random, background),
+      fast/normal/slow for every effect, rainbow directions (9) + thickness + 7 presets + custom stops, ripple
+      thickness + presets, quicksand random + up/down, brightness slider, lighting off. AC has no per-key mode.
+      Restored afterwards: reactive 75 %, normal, sleep 3 min, warning 20 % (colour AC's blue 00 02 ff, not #f6f5f4).
+      Capture setup on the owner's PC: Omni = \\.\USBPcap2, device 8; USBPcapCMD started via Start-Process (hidden).
+- [ ] Use the session in Squire (Linux first): warning "never" (00; today shown as "None %"), all speeds,
+      direction (9) + thickness for rainbow/ripple, ripple direction ff, colour mode + second colour + background for
+      starry night / current / raindrop, quicksand random + up/down, AC's 7 gradient presets, "off" as static black.
+      New byte values need the owner's approval before the first send (same command 51 2c / 51 3a).
 - [ ] Keyboard on macOS: port keyboard_light_commands / sleep / warning / 50 55 + allowlist to SquireCore, then the
       editable keyboard page (same as Linux); owner builds and tests on the Mac.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
