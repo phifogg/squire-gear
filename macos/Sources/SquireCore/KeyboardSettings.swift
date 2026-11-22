@@ -34,7 +34,7 @@ public struct KeyboardSettings: Equatable, Sendable {
     public var layout: String?          // e.g. CH-DE; nil for an id Squire does not know
     public var iso: Bool?
     public var sleepMinutes: Int?       // nil with status ok = never
-    public var lowWarning: Int?
+    public var lowWarning: Int?         // 0 = never
     public var firmware: String?        // the keyboard's, 12 00 [11..13] via the Omni, [4..6] wired
     public var receiverFirmware: String?
     /// query name -> reply hex (or status), for the debug view and new captures
@@ -62,7 +62,7 @@ public struct KeyboardSettings: Equatable, Sendable {
     public mutating func applyBattery(_ p: [UInt8]) {
         guard p.count >= 14 else { return }
         sleepMinutes = MouseSettings.powerOffMinutes[p[6]]
-        lowWarning = (1...100).contains(p[9]) ? Int(p[9]) : nil
+        lowWarning = p[9] <= 100 ? Int(p[9]) : nil          // 0 = never (AC, 2026-11-22)
     }
 
     /// Fill from one settings reply payload `p` (starting at the echoed command).
@@ -93,10 +93,17 @@ public struct KeyboardSettings: Equatable, Sendable {
         case "host-driven": return "Controlled by an app"
         case "starry-night": return "Starry night"
         case "color-cycle": return "Color cycle"
+        case "off": return "Off"
         default:
             let words = mode.replacingOccurrences(of: "-", with: " ")
             return words.prefix(1).uppercased() + words.dropFirst()
         }
+    }
+
+    /// "20 %", "never" (0) or "–" (not read).
+    public static func warningText(_ level: Int?) -> String {
+        guard let level else { return "–" }
+        return level == 0 ? "never" : "\(level) %"
     }
 
     public var layoutText: String {
@@ -129,7 +136,7 @@ public enum KeyboardZone: String, CaseIterable, Sendable, Identifiable {
         case .layout: return k.layoutID == nil ? "not read" : k.layoutText
         case .power:
             let sleep = k.sleepMinutes.map { "sleep \($0) min" } ?? "never sleeps"
-            return "\(sleep) · warn at \(k.lowWarning.map(String.init) ?? "–") %"
+            return "\(sleep) · " + (k.lowWarning == 0 ? "never warns" : "warn at \(KeyboardSettings.warningText(k.lowWarning))")
         }
     }
 
@@ -143,7 +150,7 @@ public enum KeyboardZone: String, CaseIterable, Sendable, Identifiable {
         case .layout: return [("Layout", k.layoutText, "Set at the factory")]
         case .power:
             return [("Sleep", k.sleepMinutes.map { "After \($0) min" } ?? "Never", ""),
-                    ("Low-battery warning", k.lowWarning.map { "\($0) %" } ?? "–", "")]
+                    ("Low-battery warning", KeyboardSettings.warningText(k.lowWarning).capitalized, "")]
         }
     }
 }

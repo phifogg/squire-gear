@@ -207,6 +207,73 @@ public final class HIDReader {
         }
     }
 
+    /// Keyboard writes, same as squire.write_verified for the keyboard: checks the keyboard is awake, reads the value,
+    /// sends every chunk in order (each must be echoed, a gradient is three), reads it back once, and with `save`
+    /// sends 50 55, but only if the read-back matched. Unsaved changes are lost when the keyboard is switched off.
+    public func writeKeyboard(_ change: KeyboardChange, save: Bool) -> (result: KeyboardWriteResult, diagnostics: [String]) {
+        let commands: [Command]
+        do { commands = try change.commands() } catch {
+            return (KeyboardWriteResult(status: .error, message: "\(error)"), [])
+        }
+        return DeviceLock.run {
+            var log: [String] = []
+            let devices = listDevices(log: &log)
+            var result = KeyboardWriteResult(status: .notFound)
+            for target in Target.keyboardTargets {
+                for device in candidates(devices, target) {
+                    let awake = exchange(device, target: target, command: .keyboardBattery, log: &log)
+                    guard awake.status == .ok else {
+                        result = KeyboardWriteResult(status: Self.writeStatus(awake.status),
+                                                     message: "keyboard not awake: nothing written")
+                        if awake.status == .asleep { break }
+                        continue
+                    }
+                    result = KeyboardWriteResult(status: .error)
+                    result.before = readKeyboard(device, target: target, query: change.readBack, log: &log)
+                    for command in commands {
+                        let written = exchange(device, target: target, command: command, log: &log)
+                        result.sent.append(Self.describe(target: target, command: command, prefix: command.bytes.count + 1))
+                        if written.status == .error || (commands.count > 1 && written.status != .ok) {
+                            result.message = written.status == .error ? written.raw
+                                : "chunk \(ReplyParser.hex(Array(command.bytes.prefix(4)))): \(written.status.rawValue); nothing saved"
+                            return (result, log)
+                        }
+                    }
+                    result.after = readKeyboard(device, target: target, query: change.readBack, log: &log)
+                    result.status = result.after.map { change.matches($0, before: result.before) } == true ? .ok : .mismatch
+                    if result.status == .ok && save {
+                        let saved = exchange(device, target: target, command: .keyboardSave, log: &log)
+                        result.sent.append(Self.describe(target: target, command: .keyboardSave, prefix: 3))
+                        // saved only when the keyboard echoes 50 55 (as squire.py)
+                        result.saved = saved.status == .ok
+                        if !result.saved {
+                            result.message = "written, but the save (50 55) was not confirmed: "
+                                + (saved.status == .asleep ? "it answered ff aa" : saved.status == .noResponse ? "no reply" : saved.raw)
+                        }
+                    }
+                    return (result, log)
+                }
+            }
+            return (result, log)
+        }
+    }
+
+    /// One keyboard read: the battery query 12 01 (query nil) or a settings read; nil if it failed.
+    private func readKeyboard(_ device: IOHIDDevice, target: Target, query: KeyboardQuery?,
+                              log: inout [String]) -> KeyboardSettings? {
+        var k = KeyboardSettings(connection: target.connection)
+        let ex = exchange(device, target: target, command: query?.command ?? .keyboardBattery, log: &log)
+        guard ex.status == .ok else { return nil }
+        if let query {
+            k.apply(query, ex.payload)
+            k.raw[query.rawValue] = ReplyParser.hex(ex.payload)
+        } else {
+            k.applyBattery(ex.payload)
+            k.raw["battery"] = ReplyParser.hex(ex.payload)
+        }
+        return k
+    }
+
     /// Reads the value `change` touches; nil if the read failed.
     private func readBack(_ device: IOHIDDevice, target: Target, change: SettingChange, log: inout [String]) -> MouseSettings? {
         var s = MouseSettings(connection: target.connection)

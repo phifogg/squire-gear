@@ -98,7 +98,7 @@ public enum ReplyParser {
             // [10] carries the percentage; [5] is a copy (confirmed 2026-11-10)
             var percent = byte(10).flatMap { $0 <= 100 ? Int($0) : nil }
             if percent == nil { percent = byte(5).flatMap { $0 <= 100 ? Int($0) : nil } }
-            let warning = byte(9).flatMap { (1...100).contains($0) ? Int($0) : nil }
+            let warning = byte(9).flatMap { $0 <= 100 ? Int($0) : nil }   // 0 = never warn (AC, 2026-11-22)
             return (percent, (byte(8) ?? 0) != 0, warning)
         case .mouse:
             let percent = byte(4).flatMap { $0 <= 100 ? Int($0) : nil }

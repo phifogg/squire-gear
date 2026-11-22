@@ -4,7 +4,7 @@ import SquireCore
 
 /// The settings window, opened from "Settings…" in the popover. Same layout as the Linux window: devices on the
 /// left; the selected device drawn in the middle with clickable zones and callouts; the selected zone's settings
-/// on the right, with Show bytes / Revert / Apply below (mouse). The keyboard page is shown only so far.
+/// on the right, with Show bytes / Revert / Apply below (mouse and keyboard).
 ///
 /// An AppKit-managed window (not a SwiftUI `Window` scene): it opens only on request, never at launch.
 @MainActor
@@ -97,7 +97,7 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             Text(store.device == .keyboard
-                 ? "Keyboard settings are shown only so far; changing them comes next."
+                 ? "Lighting, sleep and the low-battery warning can be changed. Nothing is sent until you click Apply."
                  : "Lights, DPI, sensor and power settings can be changed. Nothing is sent until you click Apply.")
                 .font(.callout)
                 .frame(maxWidth: .infinity)
@@ -346,7 +346,7 @@ struct ZoneCard: View {
     }
 }
 
-// MARK: - keyboard page (shown only)
+// MARK: - keyboard page
 
 struct KeyboardSettingsView: View {
     @ObservedObject var store: SettingsStore
@@ -362,8 +362,12 @@ struct KeyboardSettingsView: View {
             }
             .background(Color.primary.opacity(0.03))
             Divider()
-            KeyboardInspectorView(store: store, settings: settings)
-                .frame(width: 360)
+            VStack(spacing: 0) {
+                KeyboardInspectorView(store: store, settings: settings)
+                Divider()
+                ApplyBar(store: store)
+            }
+            .frame(width: 360)
         }
     }
 }
@@ -378,6 +382,7 @@ struct KeyboardStageView: View {
     var body: some View {
         let d = Self.drawing, size = KeyboardDrawing.size, pad = KeyboardDrawing.pad
         let lightSelected = store.keyboardZone == .light
+        let (preview, light) = store.keyboardPreview ?? (settings, nil)
         ZStack(alignment: .topLeading) {
             Color.clear
             VStack(alignment: .leading, spacing: 4) {
@@ -388,7 +393,7 @@ struct KeyboardStageView: View {
             }
             .offset(x: 32, y: 24)
 
-            KeyboardDrawing(settings: settings)
+            KeyboardDrawing(settings: preview, light: light)
                 .offset(x: d.x, y: d.y)
 
             // the keys are the lighting zone: one outline over all of them, with a callout above
@@ -403,7 +408,8 @@ struct KeyboardStageView: View {
                 .help("Lighting")
                 .accessibilityLabel("Lighting")
                 .offset(x: d.x + pad - 4, y: d.y + pad - 4)
-            KeyboardZoneCard(zone: .light, settings: settings, selected: lightSelected, width: 170) {
+            KeyboardZoneCard(zone: .light, value: KeyboardEditing.lightSummary(preview, light: light),
+                             selected: lightSelected, width: 170) {
                 store.keyboardZone = .light
             }
             .offset(x: StageView.size.width / 2 - 85, y: d.y - 76)
@@ -412,7 +418,7 @@ struct KeyboardStageView: View {
                 Text("Click the keys, or one of these:").foregroundStyle(.secondary)
                 HStack(spacing: 10) {
                     ForEach(KeyboardZone.chips) { zone in
-                        KeyboardZoneCard(zone: zone, settings: settings, selected: zone == store.keyboardZone,
+                        KeyboardZoneCard(zone: zone, value: zone.summary(preview), selected: zone == store.keyboardZone,
                                          width: 190) { store.keyboardZone = zone }
                     }
                 }
@@ -426,7 +432,7 @@ struct KeyboardStageView: View {
 
 struct KeyboardZoneCard: View {
     let zone: KeyboardZone
-    let settings: KeyboardSettings
+    let value: String
     let selected: Bool
     let width: CGFloat
     let action: () -> Void
@@ -435,7 +441,7 @@ struct KeyboardZoneCard: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(zone.title).font(.headline)
-                Text(zone.summary(settings)).font(.caption).foregroundStyle(.secondary)
+                Text(value).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
@@ -457,13 +463,21 @@ struct KeyboardInspectorView: View {
         let zone = store.keyboardZone
         Form {
             Section {
-                ForEach(Array(zone.rows(settings).enumerated()), id: \.offset) { _, row in
-                    InfoRow(row.0, row.1, subtitle: row.2)
+                if zone == .light {
+                    KeyboardLightEditor(store: store, settings: settings)
+                } else if zone == .power {
+                    KeyboardPowerEditor(store: store, settings: settings)
+                } else {
+                    ForEach(Array(zone.rows(settings).enumerated()), id: \.offset) { _, row in
+                        InfoRow(row.0, row.1, subtitle: row.2)
+                    }
                 }
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(zone.title).font(.headline)
-                    Text("Shown only").font(.caption).foregroundStyle(.secondary)
+                    Text(zone == .light ? "The keyboard reports its effect but not its color or brightness"
+                         : zone == .power ? "Battery" : "Shown only")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             Section("Device") {
@@ -473,6 +487,156 @@ struct KeyboardInspectorView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Lighting of the keyboard: effect and the options that effect has (same rows as the Linux window).
+struct KeyboardLightEditor: View {
+    @ObservedObject var store: SettingsStore
+    let settings: KeyboardSettings
+    /// The last background colour, kept while the switch is off.
+    @State private var lastBackground = "#ffffff"
+
+    var body: some View {
+        if let light = store.keyboardLight {
+            let editing = KeyboardEditing.isEditing(settings, store.keyboardEdits)
+            if let mode = settings.lightMode, KeyboardLighting.speeds[mode] == nil {
+                InfoRow("On the keyboard", KeyboardSettings.effectTitle(mode),
+                        subtitle: "Squire cannot write this effect yet; pick one below to replace it")
+            }
+            Picker("Effect", selection: Binding(get: { editing ? light.effect : "" },
+                                                set: { effect in store.editKeyboardLight { $0.effect = effect } })) {
+                if !editing { Text("–").tag("") }
+                ForEach(KeyboardLighting.effects, id: \.self) { Text(KeyboardSettings.effectTitle($0)).tag($0) }
+            }
+            if editing { rows(light) }
+        }
+    }
+
+    @ViewBuilder private func rows(_ light: KeyboardLight) -> some View {
+        let effect = light.effect
+        let known = store.keyboardKnown != nil || store.keyboardEdits.light != nil
+        let options = KeyboardLighting.optionEffects.contains(effect)
+        let twoColours = options && light.mode != nil && light.mode != "single"
+        if effect == KeyboardLighting.off {
+            InfoRow("Off", "Black at 4 %", subtitle: "How Armoury Crate turns the keyboard lighting off")
+        } else {
+            LabeledContent {
+                HStack {
+                    Slider(value: Binding(get: { Double(light.brightness) },
+                                          set: { value in store.editKeyboardLight { $0.brightness = Int(value.rounded()) } }),
+                           in: 0...100)   // no step: on macOS a step draws a tick mark per value
+                        .frame(width: 150)
+                    Text("\(light.brightness) %").monospacedDigit().frame(width: 44, alignment: .trailing)
+                }
+            } label: {
+                Text("Brightness")
+                if !known { Text("Not readable from the keyboard") }
+            }
+            if options {
+                choice("Colors", KeyboardLighting.colourModes.map(\.0), KeyboardEditing.modeNames, light.mode ?? "single") { mode in
+                    store.editKeyboardLight { $0.mode = mode }
+                }
+            }
+            if !KeyboardLighting.colourless.contains(effect) {
+                colorRow(twoColours ? "First color" : "Color", light.color) { hex in store.editKeyboardLight { $0.color = hex } }
+            }
+            if twoColours {
+                colorRow("Second color", light.color2 ?? KeyboardLighting.secondColour) { hex in
+                    store.editKeyboardLight { $0.color2 = hex }
+                }
+            }
+            if options {
+                Toggle(isOn: Binding(get: { light.background != nil }, set: { on in
+                    if let bg = light.background { lastBackground = bg }
+                    let value = on ? lastBackground : nil
+                    store.editKeyboardLight { $0.background = value }
+                })) {
+                    Text("Background")
+                    Text("Lights the keys that are not animated")
+                }
+                if let bg = light.background {
+                    colorRow("Background color", bg) { hex in
+                        lastBackground = hex
+                        store.editKeyboardLight { $0.background = hex }
+                    }
+                }
+            }
+            if KeyboardLighting.gradientEffects.contains(effect) {
+                let current = light.gradient ?? "spectrum"
+                let presets = KeyboardLighting.gradients.map(\.0)
+                let names = KeyboardEditing.gradientNames.merging([current: "Custom"]) { old, _ in old }
+                choice("Colors", subtitle: "Gradients from Armoury Crate", presets.contains(current) ? presets : presets + [current],
+                       names, current) { gradient in store.editKeyboardLight { $0.gradient = gradient } }
+                choice("Thickness", KeyboardLighting.thicknesses.map(\.0), KeyboardEditing.thicknessNames,
+                       light.thickness ?? "strong") { value in store.editKeyboardLight { $0.thickness = value } }
+            } else if effect == "quicksand" {
+                choice("Colors", subtitle: "The six-color scale Armoury Crate uses by default", KeyboardLighting.quicksandModes.map(\.0),
+                       KeyboardEditing.modeNames, light.mode ?? "scale") { mode in store.editKeyboardLight { $0.mode = mode } }
+            }
+            if let directions = KeyboardLighting.directions[effect]?.map(\.0), directions.count > 1 {
+                choice("Direction", directions, KeyboardEditing.directionNames, light.direction ?? directions[0]) { way in
+                    store.editKeyboardLight { $0.direction = way }
+                }
+            }
+            if let speeds = KeyboardLighting.speeds[effect]?.map(\.0), speeds.count > 1 {
+                choice("Speed", speeds, KeyboardEditing.speedNames, light.speed ?? "normal") { speed in
+                    store.editKeyboardLight { $0.speed = speed }
+                }
+            }
+        }
+    }
+
+    private func choice(_ title: String, subtitle: String = "", _ values: [String], _ names: [String: String],
+                        _ current: String, set: @escaping (String) -> Void) -> some View {
+        Picker(selection: Binding(get: { current }, set: set)) {
+            ForEach(values, id: \.self) { Text(names[$0] ?? $0).tag($0) }
+        } label: {
+            Text(title)
+            if !subtitle.isEmpty { Text(subtitle) }
+        }
+    }
+
+    private func colorRow(_ title: String, _ hex: String?, set: @escaping (String) -> Void) -> some View {
+        LabeledContent(title) {
+            LEDColorWell(color: RGB(hex: hex ?? "#ffffff") ?? RGB(0xFF, 0xFF, 0xFF)) { rgb in set(rgb.hex) }
+                .frame(width: 44, height: 24)
+        }
+    }
+}
+
+/// Sleep and low-battery warning of the keyboard (51 38 / 51 3a), editable when the value read is one Squire can
+/// write back.
+struct KeyboardPowerEditor: View {
+    @ObservedObject var store: SettingsStore
+    let settings: KeyboardSettings
+
+    var body: some View {
+        let p = store.keyboardPreview?.settings ?? settings
+        if let b = store.batteries[.keyboard], let percent = b.percent {
+            InfoRow("Battery", "\(percent) %", subtitle: b.charging ? "charging" : "")
+        }
+        if KeyboardEditing.canEditSleep(settings) {
+            Picker("Sleep after", selection: Binding(get: { p.sleepMinutes ?? 0 },
+                                                     set: { store.editKeyboardSleep($0 == 0 ? nil : $0) })) {
+                ForEach([1, 2, 3, 5, 10], id: \.self) { Text("\($0) min").tag($0) }
+                Text("Never").tag(0)
+            }
+        } else {
+            InfoRow("Sleep after", settings.sleepMinutes.map { "\($0) min" } ?? "Never",
+                    subtitle: "Not a value Squire can write back, so it is shown only")
+        }
+        if KeyboardEditing.canEditWarning(settings) {
+            Picker(selection: Binding(get: { p.lowWarning ?? 20 }, set: { store.editKeyboardWarning($0) })) {
+                ForEach(Command.keyboardWarningLevels, id: \.self) { Text($0 == 0 ? "Never" : "\($0) %").tag($0) }
+            } label: {
+                Text("Low-battery warning")
+                Text("Squire's notification uses this level")
+            }
+        } else {
+            InfoRow("Low-battery warning", KeyboardSettings.warningText(settings.lowWarning),
+                    subtitle: "Not a level Squire can write back (10–50 % or never), so it is shown only")
+        }
     }
 }
 

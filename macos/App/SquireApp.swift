@@ -11,6 +11,7 @@ struct SquireApp: App {
     }
 
     /// Development aids: `--settings` opens the settings window at launch; `--screenshot PATH [ZONE|keyboard] [edit] [linked]`
+    /// (`keyboard edit`: a sample lighting edit on the keyboard page, never sent)
     /// also saves it as PNG and quits (`linked`: the edit with "Same effect on all zones" on); `--demo` shows the
     /// protocol.json captures and sends nothing.
     private static func handleLaunchArguments() {
@@ -24,6 +25,15 @@ struct SquireApp: App {
             if args.contains("edit") {   // sample edit, never sent: static blue on the selected light
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     let store = SettingsStore.shared
+                    if i + 2 < args.count, args[i + 2] == "keyboard" {   // sample: raindrop, two colours, green background
+                        store.keyboardZone = .light
+                        store.editKeyboardLight {
+                            $0.effect = "raindrop"; $0.mode = "double"; $0.color = "#3d8bff"; $0.color2 = "#ff00ff"
+                            $0.background = "#1bff00"
+                        }
+                        store.showBytes = true
+                        return
+                    }
                     store.device = .mouse
                     if let zone = store.selected.ledZone {
                         if args.contains("linked") { store.setLinkZones(true, from: zone) }

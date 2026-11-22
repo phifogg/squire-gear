@@ -37,8 +37,11 @@ linux/             squire_settings.py (GTK 4 + libadwaita settings window, own p
 macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project (project.yml)
   Sources/SquireCore   pure logic: targets, command allowlist + packets (Commands.swift), reply parsing,
                        mouse settings parsing (MouseSettings.swift), settings window logic (SettingsEditing.swift),
+                       keyboard writes + allowlist + remembered lighting (KeyboardWrites.swift), keyboard page logic
+                       (KeyboardEditing.swift),
                        low-battery rules (Swift Testing tests, read protocol.json)
-  Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, readKeyboardSettings, write;
+  Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, readKeyboardSettings, write,
+                       writeKeyboard;
                        DeviceLock = same flock file as squire.device_lock
   Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings / --keyboard-settings (read-only)
   App/                 SwiftUI MenuBarExtra app (BatteryStore, Views), settings window (SettingsWindow,
@@ -372,8 +375,16 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       Linux window Apply of the new options confirmed by the owner, no errors (2026-11-22); profile 4 is now
       reactive normal 75 % #e01b24 (saved from the window). Open: thickness not judged by eye; Swift still reads
       keyboard warning 00 as "none".
-- [ ] Keyboard on macOS: port keyboard_light_commands / sleep / warning / 50 55 + allowlist to SquireCore, then the
-      editable keyboard page (same as Linux); owner builds and tests on the Mac.
+- [ ] Keyboard on macOS, branch `keyboard-macos` (2026-11-22): SquireCore KeyboardWrites.swift (KeyboardLight =
+      squire.KEYBOARD_LIGHT_FIELDS, KeyboardLighting.commands, Command.keyboardSleep/Warning/Save, allowlist,
+      KeyboardChange, KeyboardLightMemory = the same keyboard-lighting.json as squire.py on the Mac) and
+      KeyboardEditing.swift (port of the kb_* window logic); HIDReader.writeKeyboard (chunks echoed on 4 bytes, read
+      back once, 50 55 only when all matched and echoed); editable keyboard page (lighting with every option, sleep,
+      warning incl. never; Apply/Revert/Show bytes per device; drawing glows in the known colour); warning 00 = never
+      in the Swift reads, popover and notification. Tests read the same protocol.json vectors (squire_writes, every
+      one-colour AC packet, the 7 presets). Written on Linux without a Swift compiler: CI (`swift test`) checks the
+      core; the app target only builds in Xcode. OPEN: owner builds on the Mac, `--demo --screenshot PATH keyboard
+      edit`, then Apply on the device; squire-probe has no keyboard writes.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects
