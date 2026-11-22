@@ -1122,14 +1122,59 @@ def set_stage_count(count: int, save: bool = False, dry_run: bool = False, debug
                           save, dry_run, debug, hid)
 
 
+def keyboard_light_file() -> Path:
+    return state_dir() / "keyboard-lighting.json"
+
+
+def keyboard_light_value(effect: str, brightness: int, color: str = "#ffffff", speed: Optional[str] = None) -> dict:
+    """The lighting as Squire writes it (normalised: colour #rrggbb lower case, the speed actually sent)."""
+    command = keyboard_light_command(effect, brightness, color, speed)
+    speed_name = next(n for n, b in KEYBOARD_LIGHT_SPEEDS[effect].items() if b == command[4])
+    return {"effect": effect, "brightness": int(brightness), "color": "#" + command[9:12].hex(), "speed": speed_name}
+
+
+def remembered_keyboard_light(profile: Optional[int], effect: Optional[str], path: Optional[Path] = None) -> Optional[dict]:
+    """The lighting Squire last saved to this profile, if the keyboard still runs that effect. The keyboard cannot
+    report its colour or brightness, so this is the only way to show them; if the effect differs (changed on the
+    keyboard or in Armoury Crate) the remembered values are stale and None is returned."""
+    if profile is None or effect is None:
+        return None
+    try:
+        data = json.loads((path or keyboard_light_file()).read_text())
+        value = data["profiles"][str(profile)]
+        keyboard_light_value(value["effect"], value["brightness"], value["color"], value["speed"])   # still valid
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+    return value if value["effect"] == effect else None
+
+
+def remember_keyboard_light(profile: int, value: dict, path: Optional[Path] = None) -> None:
+    path = path or keyboard_light_file()
+    try:
+        data = json.loads(path.read_text())
+        data["profiles"]   # noqa: B018 (shape check)
+    except (OSError, ValueError, KeyError, TypeError):
+        data = {"profiles": {}}
+    data["profiles"][str(profile)] = value
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n")
+    except OSError as error:
+        print(f"squire: could not remember the keyboard lighting: {error}", file=sys.stderr)
+
+
 def set_keyboard_light(effect: str, brightness: int, color: str = "#ffffff", speed: Optional[str] = None,
                        save: bool = False, dry_run: bool = False, debug: bool = False, hid=None) -> WriteResult:
     """Lighting effect of the Falchion. Only the effect can be read back (12 00 [9]): colour and brightness are not
-    readable on this keyboard (Armoury Crate keeps its own copy too), so the result says so."""
+    readable on this keyboard (Armoury Crate keeps its own copy too), so the result says so. Once saved, the values
+    are remembered for the active profile (remembered_keyboard_light) so the window can show them."""
+    value = keyboard_light_value(effect, brightness, color, speed)
     command = keyboard_light_command(effect, brightness, color, speed)
-    result = write_verified(command, "profile", lambda s: {"light_mode": s.light_mode},
-                            lambda after, _: after == {"light_mode": effect}, save, dry_run, debug, hid,
-                            device="keyboard")
+    result = write_verified(command, "profile", lambda s: {"light_mode": s.light_mode, "profile": s.profile},
+                            lambda after, before: bool(after and before) and after == {**before, "light_mode": effect},
+                            save, dry_run, debug, hid, device="keyboard")
+    if result.status == "ok" and result.saved and result.after.get("profile"):
+        remember_keyboard_light(result.after["profile"], value)
     if result.status == "ok" and not result.message:
         result.message = "effect read back; colour and brightness cannot be read from the keyboard"
     return result

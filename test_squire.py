@@ -1259,6 +1259,14 @@ class PerDeviceAllowlistTests(unittest.TestCase):
 
 
 class KeyboardWriteTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.memory = Path(self.tmp.name) / "keyboard-lighting.json"
+        original = rb.keyboard_light_file
+        rb.keyboard_light_file = lambda: self.memory
+        self.addCleanup(setattr, rb, "keyboard_light_file", original)
+
     def captures(self):
         return json.loads((Path(__file__).parent / "protocol.json").read_text())["keyboard_writes"]
 
@@ -1409,9 +1417,28 @@ class KeyboardWriteTests(unittest.TestCase):
         backend, sent, state = self.make()
         result = rb.set_keyboard_light("static", 100, "#ff0000", hid=backend)
         self.assertEqual(result.status, "ok")
-        self.assertEqual((result.before, result.after), ({"light_mode": "reactive"}, {"light_mode": "static"}))
+        self.assertEqual((result.before, result.after), ({"light_mode": "reactive", "profile": 1},
+                                                         {"light_mode": "static", "profile": 1}))
         self.assertIn("cannot be read", result.message)
         self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 01", "12 00", "51 2c", "12 00"])
+
+    def test_saved_light_is_remembered_per_profile(self):
+        backend, _, _ = self.make()
+        self.assertIsNone(rb.remembered_keyboard_light(1, "static"))
+        rb.set_keyboard_light("static", 40, "#FF0000", hid=backend)           # not saved: not remembered
+        self.assertIsNone(rb.remembered_keyboard_light(1, "static"))
+        result = rb.set_keyboard_light("breathing", 60, "#00FF00", speed="slow", save=True, hid=backend)
+        self.assertTrue(result.saved)
+        value = {"effect": "breathing", "brightness": 60, "color": "#00ff00", "speed": "slow"}
+        self.assertEqual(rb.remembered_keyboard_light(1, "breathing"), value)
+        self.assertIsNone(rb.remembered_keyboard_light(1, "raindrop"))       # changed elsewhere: stale
+        self.assertIsNone(rb.remembered_keyboard_light(2, "breathing"))      # other profile
+        rb.remember_keyboard_light(2, {"effect": "static", "brightness": 101, "color": "#000000", "speed": "none"})
+        self.assertIsNone(rb.remembered_keyboard_light(2, "static"))         # invalid values are ignored
+        self.memory.write_text("not json")
+        self.assertIsNone(rb.remembered_keyboard_light(1, "breathing"))
+        rb.remember_keyboard_light(3, value)                                  # a broken file is replaced
+        self.assertEqual(rb.remembered_keyboard_light(3, "breathing"), value)
 
     def test_mismatch_is_never_saved(self):
         backend, sent, _ = self.make(keep=False)

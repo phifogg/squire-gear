@@ -27,7 +27,7 @@ install.sh         on Linux hands over to linux/install.sh. macOS: venv + hidapi
                    squire-gear.5m.sh (runs --swiftbar --notify) with xbar metadata
 README.md          English, public
 linux/             squire_settings.py (GTK 4 + libadwaita settings window, own process, opened from the tray's
-                   "Settings…"; read-only so far; --demo shows protocol.json captures, --screenshot PATH [ZONE]
+                   "Settings…"; mouse + keyboard editing with Apply; --demo shows protocol.json captures, --screenshot PATH [ZONE]
                    saves a PNG and quits), squire_tray.py (AppIndicator + GTK 3 top bar app: one indicator, shield icon from
                    linux/icons/ + text label "⌨︎ 78%  🖱︎ 80%" with U+FE0E so no colour emoji; same menu items
                    as the Mac popover; one indicator = one menu, so never split it per device), install.sh (to ~/.local/share/squire-gear, launcher, ~/.local/bin/
@@ -334,7 +334,11 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       sleep 3->5->3 min, warning 20->10->20 % (2026-11-22, keyboard_writes.squire_writes), lighting static red 50 %
       (owner saw it on all keys; unsaved, so raindrop came back after off/on: RAM only, like the mouse);
       save 50 55 with sleep 5 min: echoed, survived off/on, lighting unchanged; restored to 3 min + save.
-      Next: windows (Linux first), more effects (starry night, current, raindrop need background/double/random captures).
+      Linux window (2026-11-22): keyboard page edits lighting (effect, brightness, colour, speed), sleep and warning,
+      Apply = writes in the order sleep, warning, lighting, one 50 55 with the last. The colour is remembered per profile
+      in state_dir()/keyboard-lighting.json when saved (CLI too) and shown only while 12 00 [9] still has that effect.
+      `--screenshot PATH keyboard edit` / `kb_power`. Not yet tried on the device by the owner.
+      Next: owner tests the Linux window; then Swift core + macOS page; more effects need captures.
       Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
       51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

@@ -1,4 +1,5 @@
 """Tests for the Linux settings window's logic (linux/squire_settings.py). No GTK and no hardware needed."""
+import dataclasses
 import sys
 import unittest
 import xml.etree.ElementTree as ET
@@ -254,6 +255,82 @@ class TrayLinkTests(unittest.TestCase):
         command = tray.settings_command()
         self.assertEqual(Path(command[1]).name, "squire_settings.py")
         self.assertTrue(Path(command[1]).is_file())
+
+
+class KeyboardEditTests(unittest.TestCase):
+    """The keyboard page's editing logic: lighting, sleep, warning; colour known only from what Squire saved."""
+
+    def kb(self, effect="raindrop", sleep_code=0x02, warn=20, profile=4):
+        k = squire.KeyboardSettings("ROG Falchion RX LP", "omni")
+        reply = bytearray(63)
+        reply[0:2], reply[6], reply[9], reply[10] = b"\x12\x01", sleep_code, warn, 70
+        squire.parse_keyboard_settings(k, "battery", bytes(reply))
+        k.raw["battery"] = bytes(reply).hex(" ")
+        k.light_mode, k.profile = effect, profile
+        return k
+
+    def test_unwritable_effect_starts_from_static_and_any_edit_is_pending(self):
+        k = self.kb("raindrop")
+        self.assertEqual(ui.kb_light_start(k, None),
+                         {"effect": "static", "brightness": 100, "color": "#ffffff", "speed": "none"})
+        pending = ui.kb_edit_light(k, {}, None, effect="breathing")
+        self.assertEqual(pending["kb_light"]["speed"], "normal")             # a new effect: its default speed
+        self.assertEqual(ui.kb_planned_packets(k, pending),
+                         ["02 51 2c 01 00 1e 64 00 ff ff ff ff ff …", "02 50 55 …  (save)"])
+
+    def test_known_light_drops_an_edit_that_is_back_to_it(self):
+        k = self.kb("static")
+        known = {"effect": "static", "brightness": 50, "color": "#ff0000", "speed": "none"}
+        pending = ui.kb_edit_light(k, {}, known, brightness=80)
+        self.assertIn("kb_light", pending)
+        self.assertEqual(ui.kb_edit_light(k, pending, known, brightness=50), {})
+        # without knowledge the same values stay pending: the keyboard cannot be asked
+        self.assertIn("kb_light", ui.kb_edit_light(k, {}, None, color="#ff0000", brightness=50))
+
+    def test_colour_cycle_sends_no_colour_but_keeps_the_choice(self):
+        k = self.kb("static")
+        pending = ui.kb_edit_light(k, {}, None, color="#3d8bff")
+        pending = ui.kb_edit_light(k, pending, None, effect="color-cycle")
+        self.assertEqual(ui.kb_planned_packets(k, pending)[0], "02 51 2c 02 00 1f 64 00 ff ff 00 00 00 …")
+        pending = ui.kb_edit_light(k, pending, None, effect="static")
+        self.assertEqual(pending["kb_light"]["color"], "#3d8bff")
+
+    def test_power_edits_and_apply_order(self):
+        k = self.kb()
+        pending = ui.kb_edit(k, {}, "kb_sleep", 5)
+        self.assertEqual(ui.kb_edit(k, pending, "kb_sleep", 3), {})          # back to what the keyboard has
+        pending = ui.kb_edit_light(k, ui.kb_edit(k, pending, "kb_warning", 10), None, effect="static")
+        self.assertEqual(ui.kb_changes(pending), ["kb_sleep", "kb_warning", "kb_light"])
+        lines = ui.kb_planned_packets(k, pending)
+        self.assertEqual([line[:17] for line in lines],
+                         ["02 51 38 00 00 03", "02 51 3a 00 00 0a", "02 51 2c 00 00 ff", "02 50 55 …  (save"])
+        wired = dataclasses.replace(k, connection="wired")
+        self.assertTrue(ui.kb_planned_packets(wired, pending)[0].startswith("00 51 38"))
+        self.assertIn("Sleep, Low-battery warning, Lighting", ui.kb_apply_status(pending))
+
+    def test_preview(self):
+        k = self.kb("raindrop")
+        pending = ui.kb_edit_light(k, ui.kb_edit(k, {}, "kb_sleep", None), None, effect="static", brightness=40)
+        p, light = ui.kb_preview(k, pending, None)
+        self.assertEqual((p.light_mode, p.sleep_minutes, light["brightness"]), ("static", None, 40))
+        self.assertEqual(ui.keyboard_zone_summary(p, "kb_light", light), "Static · 40 %")
+        self.assertEqual(ui.keyboard_zone_summary(p, "kb_power", light), "never sleeps · warn at 20 %")
+        self.assertEqual(k.light_mode, "raindrop")                            # the read values stay untouched
+
+    def test_glow_shows_a_known_colour_only_for_its_effect(self):
+        k = self.kb("static")
+        light = {"effect": "static", "brightness": 100, "color": "#ff0000", "speed": "none"}
+        self.assertEqual(ui.keyboard_glow(k, light), ("#ff0000", 0.6))
+        self.assertEqual(ui.keyboard_glow(self.kb("raindrop"), light), ("#cfd6e0", 0.22))   # stale: neutral
+        self.assertEqual(ui.keyboard_glow(k, {**light, "brightness": 0}), ("none", 0.0))
+        self.assertEqual(ui.keyboard_glow(self.kb("color-cycle"), {**light, "effect": "color-cycle"})[0], "url(#kb-cycle)")
+        ET.fromstring(ui.keyboard_svg(k, light))
+
+    def test_power_is_editable_only_with_values_squire_can_write_back(self):
+        self.assertTrue(ui.can_edit_kb_sleep(self.kb(sleep_code=0xFF)))      # never
+        self.assertFalse(ui.can_edit_kb_sleep(self.kb(sleep_code=0x07)))     # unknown code, also parsed as None
+        self.assertTrue(ui.can_edit_kb_warning(self.kb(warn=50)))
+        self.assertFalse(ui.can_edit_kb_warning(self.kb(warn=25)))
 
 
 if __name__ == "__main__":
