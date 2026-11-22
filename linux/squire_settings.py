@@ -157,7 +157,12 @@ def demo_keyboard() -> "squire.KeyboardSettings":
 
 
 KEYBOARD_EFFECT_NAMES = {"host-driven": "Controlled by an app", "starry-night": "Starry night",
-                         "color-cycle": "Color cycle"}
+                         "color-cycle": "Color cycle", "off": "Off"}
+
+
+def same_effect(light: Optional[dict], mode: Optional[str]) -> bool:
+    """Whether a lighting value is what the keyboard reports as `mode` ("off" reads as static)."""
+    return bool(light) and mode is not None and mode in (light["effect"], squire.keyboard_effect_read(light["effect"]))
 
 
 def keyboard_effect_name(mode: Optional[str]) -> str:
@@ -189,7 +194,7 @@ def keyboard_groups(k: "squire.KeyboardSettings") -> list[tuple[str, list[tuple[
         ]),
         ("Power", [
             ("Sleep", sleep, ""),
-            ("Low-battery warning", f"{k.low_warning} %" if k.low_warning else "–", ""),
+            ("Low-battery warning", squire.warning_text(k.low_warning).capitalize(), ""),
         ]),
         ("Device", device),
     ]
@@ -228,8 +233,8 @@ def keyboard_glow(k: "squire.KeyboardSettings", light: Optional[dict] = None) ->
     saved, or an edit not sent yet) the glow shows it, otherwise a lit effect is a neutral glow."""
     if k.light_mode in (None, "off"):
         return "none", 0.0
-    if light and light["effect"] == k.light_mode:
-        if light["brightness"] == 0:
+    if same_effect(light, k.light_mode):
+        if light["brightness"] == 0 or light["effect"] == squire.KEYBOARD_OFF:
             return "none", 0.0
         opacity = round(0.2 + light["brightness"] / 100 * 0.4, 2)
         if light["effect"] in squire.KEYBOARD_COLOURLESS:
@@ -240,10 +245,15 @@ def keyboard_glow(k: "squire.KeyboardSettings", light: Optional[dict] = None) ->
 
 def keyboard_gradient_stops(light: Optional[dict]) -> list[tuple[float, str]]:
     """Colour stops for the glow of an effect without one colour: the gradient sent (rainbow, ripple), quicksand's
-    scale, or a plain spectrum (colour cycle). Right to left mirrors the gradient."""
+    scale, or a plain spectrum (colour cycle). A leftward direction mirrors the gradient."""
     if light and light["effect"] in squire.KEYBOARD_GRADIENT_EFFECTS:
-        stops = [(pos / 100, "#" + rgb) for pos, rgb in squire.KEYBOARD_GRADIENTS[light.get("gradient") or "spectrum"]]
-        if light.get("direction") == "right-to-left":
+        try:
+            gradient = squire.keyboard_gradient_stops(light.get("gradient"))
+        except ValueError:
+            gradient = squire.KEYBOARD_GRADIENTS["spectrum"]
+        stops = [(pos / 100, "#" + rgb) for pos, rgb in gradient]
+        direction = squire.KEYBOARD_DIRECTION_ALIASES.get(light.get("direction"), light.get("direction"))
+        if direction in ("left", "up-left", "down-left"):
             stops = [(round(1 - pos, 2), color) for pos, color in reversed(stops)]
         return stops
     if light and light["effect"] == "quicksand":
@@ -304,7 +314,9 @@ KB_ZONE_TITLES = {"kb_light": "Lighting", "kb_profile": "Profile", "kb_layout": 
 
 def keyboard_zone_summary(k: "squire.KeyboardSettings", zone: str, light: Optional[dict] = None) -> str:
     if zone == "kb_light":
-        if light and light["effect"] == k.light_mode:
+        if same_effect(light, k.light_mode):
+            if light["effect"] == squire.KEYBOARD_OFF:
+                return "Off"
             return f"{keyboard_effect_name(k.light_mode)} · {light['brightness']} %"
         return keyboard_effect_name(k.light_mode)
     if zone == "kb_profile":
@@ -315,18 +327,25 @@ def keyboard_zone_summary(k: "squire.KeyboardSettings", zone: str, light: Option
         return (k.layout or f"id {k.layout_id}") + (" · ISO" if k.iso else " · ANSI")
     if zone == "kb_power":
         sleep = "never sleeps" if k.sleep_minutes is None else f"sleep {k.sleep_minutes} min"
-        return f"{sleep} · warn at {k.low_warning} %"
+        return f"{sleep} · " + ("never warns" if k.low_warning == 0 else f"warn at {squire.warning_text(k.low_warning)}")
     return ""
 
 
 # --- keyboard editing (writes approved and confirmed on the device 2026-11-22) ---
-# `kb_pending` holds "kb_sleep" (minutes, None = never), "kb_warning" (%) and "kb_light"
-# ({"effect", "brightness", "color", "speed"}). The keyboard reports only the effect, never its colour or brightness:
+# `kb_pending` holds "kb_sleep" (minutes, None = never), "kb_warning" (%, 0 = never) and "kb_light"
+# (squire.KEYBOARD_LIGHT_FIELDS). The keyboard reports only the effect, never its colour or brightness:
 # `known` is what Squire last saved to the active profile (squire.remembered_keyboard_light), or None.
-KB_EFFECTS = list(squire.KEYBOARD_LIGHT_SPEEDS)            # every effect Squire writes, in the keyboard's id order
-KB_GRADIENT_NAMES = {"spectrum": "Spectrum", "sunset": "Sunset"}
-KB_DIRECTION_NAMES = {"left-to-right": "Left to right", "right-to-left": "Right to left", "none": "None"}
+KB_EFFECTS = squire.KEYBOARD_EFFECTS                       # every effect Squire writes, in the keyboard's id order
+KB_GRADIENT_NAMES = {"red": "Red", "blue-red": "Blue to red", "sunset": "Sunset", "lime-cyan": "Lime and cyan",
+                     "yellow-magenta": "Yellow and magenta", "pink-purple": "Pink and purple", "spectrum": "Spectrum"}
+# Rainbow: the direction the colours move. Diagonals are assumed (AC's odd codes, capture_4); quicksand: down / up.
+KB_DIRECTION_NAMES = {"right": "Left to right", "left": "Right to left", "down": "Top to bottom",
+                      "up": "Bottom to top", "down-right": "To bottom right", "down-left": "To bottom left",
+                      "up-left": "To top left", "up-right": "To top right", "outwards": "From the center outwards",
+                      "none": "None"}
 KB_SPEED_NAMES = {"fast": "Fast", "normal": "Normal", "slow": "Slow", "none": "None"}
+KB_THICKNESS_NAMES = {"low": "Low", "normal": "Normal", "strong": "Strong"}
+KB_MODE_NAMES = {"single": "One color", "double": "Two colors", "random": "Random", "scale": "Color scale"}
 KB_KEYS = ("kb_sleep", "kb_warning", "kb_light")           # Apply order; the light last (it is the one saved)
 KB_CHANGE_TITLES = {"kb_sleep": "Sleep", "kb_warning": "Low-battery warning", "kb_light": "Lighting"}
 
@@ -341,8 +360,7 @@ def kb_light_start(k: "squire.KeyboardSettings", known: Optional[dict]) -> dict:
 
 def kb_light_sent(light: dict) -> dict:
     """The lighting as it is sent (an effect without a colour of its own carries none)."""
-    return squire.keyboard_light_value(light["effect"], light["brightness"], light["color"], light["speed"],
-                                       light.get("gradient"), light.get("direction"))
+    return squire.keyboard_light_from(light)
 
 
 def kb_current(k: "squire.KeyboardSettings", key: str, known: Optional[dict]):
@@ -364,14 +382,18 @@ def kb_edit_light(k: "squire.KeyboardSettings", pending: dict, known: Optional[d
     Squire knows the keyboard has; without that knowledge every edit stays pending (the keyboard cannot be asked)."""
     light = dict(pending.get("kb_light") or kb_light_start(k, known))
     if changes.get("effect", light["effect"]) != light["effect"]:
-        light["speed"] = light["direction"] = None        # the new effect's defaults
+        light["speed"] = light["direction"] = light["mode"] = None        # the new effect's defaults
+        if light["effect"] == squire.KEYBOARD_OFF:                        # off fixed them at 4 % black
+            light["brightness"], light["color"] = 100, "#ffffff"
     light.update(changes)
     sent = kb_light_sent(light)                           # validates
-    # colour and gradient stay as chosen, for a later effect that uses them
-    light = {**light, "speed": sent["speed"], "direction": sent["direction"],
-             "gradient": sent["gradient"] or light.get("gradient")}
+    # colours, gradient, thickness and background stay as chosen, for a later effect that uses them
+    light = {**light, "speed": sent["speed"], "direction": sent["direction"], "mode": sent["mode"],
+             **{f: sent[f] or light.get(f) for f in ("gradient", "thickness", "color2")}}
+    if light["effect"] == squire.KEYBOARD_OFF:
+        light.update(brightness=sent["brightness"], color=sent["color"])
     pending = dict(pending)
-    if known and kb_light_sent(light) == kb_light_sent(known) and k.light_mode == light["effect"]:
+    if known and kb_light_sent(light) == kb_light_sent(known) and same_effect(light, k.light_mode):
         pending.pop("kb_light", None)
     else:
         pending["kb_light"] = light
@@ -393,8 +415,7 @@ def kb_command(key: str, value) -> bytes:
 def kb_commands(key: str, value) -> list:
     """Every packet one change sends (a gradient is three, quicksand two)."""
     if key == "kb_light":
-        return squire.keyboard_light_commands(value["effect"], value["brightness"], value["color"], value["speed"],
-                                              value.get("gradient"), value.get("direction"))
+        return squire.keyboard_light_packets(squire.keyboard_light_from(value))
     return [kb_command(key, value)]
 
 
@@ -403,8 +424,10 @@ def kb_write(key: str, value, save: bool) -> "squire.WriteResult":
         return squire.set_keyboard_sleep(value, save=save)
     if key == "kb_warning":
         return squire.set_keyboard_warning(value, save=save)
-    return squire.set_keyboard_light(value["effect"], value["brightness"], value["color"], value["speed"],
-                                     value.get("gradient"), value.get("direction"), save=save)
+    v = squire.keyboard_light_from(value)
+    return squire.set_keyboard_light(v["effect"], v["brightness"], v["color"], v["speed"], v["gradient"],
+                                     v["direction"], save=save, thickness=v["thickness"], mode=v["mode"],
+                                     color2=v["color2"], background=v["background"])
 
 
 def kb_planned_packets(k: "squire.KeyboardSettings", pending: dict) -> list[str]:
@@ -437,7 +460,7 @@ def kb_preview(k: "squire.KeyboardSettings", pending: dict, known: Optional[dict
     p = dataclasses.replace(k, sleep_minutes=pending.get("kb_sleep", k.sleep_minutes),
                             low_warning=pending.get("kb_warning", k.low_warning))
     if "kb_light" in pending:
-        p = dataclasses.replace(p, light_mode=pending["kb_light"]["effect"])
+        p = dataclasses.replace(p, light_mode=pending["kb_light"]["effect"])   # "off" draws as off
     return p, light
 
 
@@ -769,6 +792,7 @@ def run(argv: list[str]) -> int:
             self.value_labels: dict = {}   # zone -> callout/chip value label
             self.kb_pending: dict = {}     # keyboard edits not sent yet (kb_sleep, kb_warning, kb_light)
             self.kb_known: Optional[dict] = None   # the lighting Squire last saved to the active profile
+            self.kb_background: Optional[str] = None   # last background colour, kept while the switch is off
             self.kb_value_labels: dict = {}
 
             split = Adw.NavigationSplitView(min_sidebar_width=240, max_sidebar_width=280)
@@ -879,7 +903,10 @@ def run(argv: list[str]) -> int:
             if zone == "keyboard" and "edit" in SCREENSHOT[2:] and "kb_light" not in self.kb_pending:
                 self.kb_selected = "kb_light"
                 if "rainbow" in SCREENSHOT[2:]:
-                    self.on_kb_light(effect="rainbow", gradient="sunset", direction="right-to-left")   # not sent
+                    self.on_kb_light(effect="rainbow", gradient="sunset", direction="left")   # not sent
+                elif "raindrop" in SCREENSHOT[2:]:
+                    self.on_kb_light(effect="raindrop", mode="double", color="#3d8bff", color2="#ff00ff",
+                                     background="#1bff00")                                # not sent
                 else:
                     self.on_kb_light(effect="static", brightness=80, color="#3d8bff")   # sample edit, not sent
                 self.render()
@@ -1087,7 +1114,9 @@ def run(argv: list[str]) -> int:
             effect.connect("notify::selected", lambda r, _p: self.on_kb_effect(KB_EFFECTS[r.get_selected()])
                            if r.get_selected() < len(KB_EFFECTS) else None)
             group.add(effect)
-            if editing:
+            if editing and light["effect"] == squire.KEYBOARD_OFF:
+                group.add(row("Off", "Black at 4 %", "How Armoury Crate turns the keyboard lighting off"))
+            elif editing:
                 bright = Adw.ActionRow(title="Brightness", subtitle="" if known or "kb_light" in self.kb_pending
                                        else "Not readable from the keyboard")
                 scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
@@ -1101,45 +1130,79 @@ def run(argv: list[str]) -> int:
                 scale.connect("value-changed", lambda sc: self.on_kb_light(brightness=int(round(sc.get_value()))))
                 bright.add_suffix(scale)
                 group.add(bright)
+                subtitle = "" if known or "kb_light" in self.kb_pending else "Not readable from the keyboard"
+                options = light["effect"] in squire.KEYBOARD_OPTION_EFFECTS
+                if options:
+                    self.add_kb_choice(group, "Colors", list(squire.KEYBOARD_COLOUR_MODES), KB_MODE_NAMES,
+                                       light.get("mode") or "single", "mode")
                 if light["effect"] not in squire.KEYBOARD_COLOURLESS:
-                    color = Adw.ActionRow(title="Color", subtitle="" if known or "kb_light" in self.kb_pending
-                                          else "Not readable from the keyboard")
-                    button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
-                    rgba = Gdk.RGBA()
-                    rgba.parse(light["color"])
-                    button.set_rgba(rgba)
-
-                    def on_color(btn, _p):
-                        c = btn.get_rgba()
-                        self.on_kb_light(color="#%02x%02x%02x" % (round(c.red * 255), round(c.green * 255),
-                                                                  round(c.blue * 255)))
-                    button.connect("notify::rgba", on_color)
-                    color.add_suffix(button)
-                    group.add(color)
+                    title = "First color" if options and light.get("mode") not in (None, "single") else "Color"
+                    group.add(self.kb_color_row(title, light["color"], "color", subtitle))
+                if options and light.get("mode") not in (None, "single"):
+                    group.add(self.kb_color_row("Second color", light.get("color2") or squire.KEYBOARD_SECOND_COLOUR,
+                                                "color2", "Random mode uses both colors too"
+                                                if light.get("mode") == "random" else ""))
+                if options:
+                    background = Adw.SwitchRow(title="Background", subtitle="Lights the keys that are not animated",
+                                               active=bool(light.get("background")))
+                    background.connect("notify::active", lambda r, _p: self.on_kb_light_rerender(
+                        background=(self.kb_background or "#ffffff") if r.get_active() else None))
+                    group.add(background)
+                    if light.get("background"):
+                        self.kb_background = light["background"]
+                        group.add(self.kb_color_row("Background color", light["background"], "background", ""))
                 if light["effect"] in squire.KEYBOARD_GRADIENT_EFFECTS:
                     names = list(squire.KEYBOARD_GRADIENTS)
-                    grad = Adw.ComboRow(title="Colors", subtitle="Gradients from Armoury Crate",
-                                        model=Gtk.StringList.new([KB_GRADIENT_NAMES[n] for n in names]))
-                    grad.set_selected(names.index(light.get("gradient") or "spectrum"))
-                    grad.connect("notify::selected", lambda r, _p: self.on_kb_light(gradient=names[r.get_selected()]))
-                    group.add(grad)
-                    directions = list(squire.KEYBOARD_DIRECTIONS[light["effect"]])
-                    if len(directions) > 1:
-                        way = Adw.ComboRow(title="Direction",
-                                           model=Gtk.StringList.new([KB_DIRECTION_NAMES[d] for d in directions]))
-                        way.set_selected(directions.index(light.get("direction") or directions[0]))
-                        way.connect("notify::selected",
-                                    lambda r, _p: self.on_kb_light(direction=directions[r.get_selected()]))
-                        group.add(way)
+                    gradient = light.get("gradient") or "spectrum"
+                    labels = dict(KB_GRADIENT_NAMES)
+                    if gradient not in names:              # a custom gradient set with the CLI
+                        names.append(gradient)
+                        labels[gradient] = "Custom"
+                    self.add_kb_choice(group, "Colors", names, labels, gradient, "gradient",
+                                       subtitle="Gradients from Armoury Crate")
+                    self.add_kb_choice(group, "Thickness", list(squire.KEYBOARD_THICKNESS), KB_THICKNESS_NAMES,
+                                       light.get("thickness") or "strong", "thickness")
                 elif light["effect"] == "quicksand":
-                    group.add(row("Colors", "Six-color scale", "The one Armoury Crate uses by default"))
+                    self.add_kb_choice(group, "Colors", list(squire.KEYBOARD_QUICKSAND_MODES), KB_MODE_NAMES,
+                                       light.get("mode") or "scale", "mode",
+                                       subtitle="The six-color scale Armoury Crate uses by default")
+                directions = list(squire.KEYBOARD_DIRECTIONS.get(light["effect"], ()))
+                if len(directions) > 1:
+                    self.add_kb_choice(group, "Direction", directions, KB_DIRECTION_NAMES,
+                                       light.get("direction") or directions[0], "direction")
                 speeds = list(squire.KEYBOARD_LIGHT_SPEEDS[light["effect"]])
                 if len(speeds) > 1:
-                    speed = Adw.ComboRow(title="Speed", model=Gtk.StringList.new([KB_SPEED_NAMES[n] for n in speeds]))
-                    speed.set_selected(speeds.index(light["speed"]))
-                    speed.connect("notify::selected", lambda r, _p: self.on_kb_light(speed=speeds[r.get_selected()]))
-                    group.add(speed)
+                    self.add_kb_choice(group, "Speed", speeds, KB_SPEED_NAMES, light["speed"], "speed")
             page.add(group)
+
+        def add_kb_choice(self, group, title, values, names, current, field, subtitle=""):
+            """A combo row for one lighting field. Rows that change which other rows exist re-render."""
+            combo = Adw.ComboRow(title=title, subtitle=subtitle, model=Gtk.StringList.new([names[v] for v in values]))
+            combo.set_selected(values.index(current) if current in values else 0)
+            rerender = field == "mode"
+
+            def on_selected(r, _p):
+                if r.get_selected() < len(values):
+                    (self.on_kb_light_rerender if rerender else self.on_kb_light)(**{field: values[r.get_selected()]})
+            combo.connect("notify::selected", on_selected)
+            group.add(combo)
+
+        def kb_color_row(self, title, color, field, subtitle):
+            action = Adw.ActionRow(title=title, subtitle=subtitle)
+            button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
+            rgba = Gdk.RGBA()
+            rgba.parse(color)
+            button.set_rgba(rgba)
+
+            def on_color(btn, _p):
+                c = btn.get_rgba()
+                value = "#%02x%02x%02x" % (round(c.red * 255), round(c.green * 255), round(c.blue * 255))
+                if field == "background":
+                    self.kb_background = value
+                self.on_kb_light(**{field: value})
+            button.connect("notify::rgba", on_color)
+            action.add_suffix(button)
+            return action
 
         def build_kb_power_editor(self, page, k):
             group = Adw.PreferencesGroup(title="Power", description="Battery")
@@ -1158,15 +1221,15 @@ def run(argv: list[str]) -> int:
                 group.add(row("Sleep after", "Never" if k.sleep_minutes is None else f"{k.sleep_minutes} min",
                               "Not a value Squire can write back, so it is shown only"))
             if can_edit_kb_warning(k):
-                levels = list(squire.KEYBOARD_WARNING_LEVELS)
+                levels = list(squire.LOW_WARNING_LEVELS) + [0]            # AC's order: 10..50 %, then never
                 warn = Adw.ComboRow(title="Low-battery warning", subtitle="Squire's notification uses this level",
-                                    model=Gtk.StringList.new([f"{w} %" for w in levels]))
+                                    model=Gtk.StringList.new([squire.warning_text(w).capitalize() for w in levels]))
                 warn.set_selected(levels.index(p.low_warning))
                 warn.connect("notify::selected", lambda r, _p: self.on_kb("kb_warning", levels[r.get_selected()]))
                 group.add(warn)
             else:
-                group.add(row("Low-battery warning", f"{k.low_warning} %" if k.low_warning else "–",
-                              "Not a level Squire can write back (10–50 %), so it is shown only"))
+                group.add(row("Low-battery warning", squire.warning_text(k.low_warning),
+                              "Not a level Squire can write back (10–50 % or never), so it is shown only"))
             page.add(group)
 
         def on_kb(self, key, value):
@@ -1176,6 +1239,10 @@ def run(argv: list[str]) -> int:
         def on_kb_light(self, **changes):
             self.kb_pending = kb_edit_light(self.keyboard, self.kb_pending, self.kb_known, **changes)
             self.update_preview()
+
+        def on_kb_light_rerender(self, **changes):
+            self.on_kb_light(**changes)
+            self.render()   # e.g. a second colour row appears or goes
 
         def on_kb_effect(self, effect):
             current = (self.kb_pending.get("kb_light") or kb_light_start(self.keyboard, self.kb_known))["effect"]

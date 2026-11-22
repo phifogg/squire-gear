@@ -350,10 +350,18 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       thickness + presets, quicksand random + up/down, brightness slider, lighting off. AC has no per-key mode.
       Restored afterwards: reactive 75 %, normal, sleep 3 min, warning 20 % (colour AC's blue 00 02 ff, not #f6f5f4).
       Capture setup on the owner's PC: Omni = \\.\USBPcap2, device 8; USBPcapCMD started via Start-Process (hidden).
-- [ ] Use the session in Squire (Linux first): warning "never" (00; today shown as "None %"), all speeds,
-      direction (9) + thickness for rainbow/ripple, ripple direction ff, colour mode + second colour + background for
-      starry night / current / raindrop, quicksand random + up/down, AC's 7 gradient presets, "off" as static black.
-      New byte values need the owner's approval before the first send (same command 51 2c / 51 3a).
+- [ ] Use the session in Squire (Linux first, 2026-11-22, branch `keyboard-writes`): in squire.py, CLI and the Linux
+      window, every capture_4 packet rebuilt byte for byte in the tests. Warning never (0 = 00; Squire's notification
+      stays quiet too), fast/normal/slow for every effect (reactive 0f is "normal" now; keyboard-lighting.json v2
+      migrates the old "fast"), rainbow direction (9, compass names right/down/.../outwards; old left-to-right /
+      right-to-left still accepted) + thickness low/normal/strong (rainbow, ripple), AC's 7 gradient presets (names
+      are Squire's: red, blue-red, sunset, lime-cyan, yellow-magenta, pink-purple, spectrum) + custom stops via the CLI
+      (`--gradient 14:ff0000,100:0000ff`), starry night / current / raindrop `--color-mode single|double|random`,
+      `--color2`, `--background`, quicksand `--color-mode scale|random` + `--direction down|up`, `--set-kb-light off`
+      (static 4 % black; reads back static; AC's mouse 51 36 is not sent). One normalised value
+      (squire.KEYBOARD_LIGHT_FIELDS) drives packets, memory and the window.
+      OPEN: owner's approval of the new byte values, then send each unsaved and look at the keyboard (diagonal
+      directions 01/03/05/07 are assumed), then Apply in the window. Swift still reads keyboard warning 00 as "none".
 - [ ] Keyboard on macOS: port keyboard_light_commands / sleep / warning / 50 55 + allowlist to SquireCore, then the
       editable keyboard page (same as Linux); owner builds and tests on the Mac.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

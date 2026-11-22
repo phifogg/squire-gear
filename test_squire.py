@@ -1305,7 +1305,7 @@ class KeyboardWriteTests(unittest.TestCase):
     def test_gradient_chunks_are_checked_one_by_one(self):
         first, middle, last = rb.keyboard_light_commands("rainbow", 50)
         for bad in (first[:9] + b"\x08" + first[10:],             # 8 stops: more than AC ever sent
-                    first[:7] + b"\x02" + first[8:],              # direction 02: not captured
+                    first[:7] + b"\x09" + first[8:],              # direction 09: AC has 00..08
                     first[:4] + b"\x10" + first[5:],              # speed AC did not send
                     first[:10] + b"\x00" + first[11:],            # stop at 0 %
                     first[:-1],                                   # cut short
@@ -1322,6 +1322,150 @@ class KeyboardWriteTests(unittest.TestCase):
             rb.keyboard_light_commands("ripple", 50, direction="left-to-right")   # ripple has no direction
         with self.assertRaises(ValueError):
             rb.keyboard_light_commands("host-driven", 50)
+
+    # capture_4 (Windows, 2026-11-22): every AC packet must come out of Squire byte for byte
+    C1 = "14:6500ff,29:0006ff,43:00faff,57:01ff00,72:fff600,86:ff7807,100:ff000d"    # stop 1 recoloured
+    C4 = "14:6500ff,29:0006ff,43:00faff,57:ebf5eb,72:fff600,86:ff7807,100:ff000d"    # + stop 4
+    C6 = "14:6500ff,29:0006ff,43:00faff,57:ebf5eb,72:fff600,86:3dff00,100:ff000d"    # + stop 6
+    REMOVED = "14:6500ff,29:0006ff,43:00faff,57:ebf5eb,72:fff600,100:ff000d"         # stop 6 removed
+    DRAGGED = "14:6500ff,29:0006ff,43:00faff,57:ebf5eb,83:fff600,100:ff000d"         # stop 5 72 -> 83 %
+
+    def capture_4_multi_chunk_cases(self):
+        rb_ = dict(effect="rainbow", brightness=50, speed="slow", direction="outwards", gradient="sunset")
+        cases = {}
+        for speed in ("fast", "normal", "slow"):
+            cases[f"rainbow {speed} (chunk 02)"] = {**rb_, "speed": speed}
+            cases[f"ripple {speed} (chunk 02)"] = dict(effect="ripple", brightness=50, speed=speed)
+            cases[f"quicksand {speed} (chunk 01)"] = dict(effect="quicksand", brightness=50, speed=speed)
+        names = ["up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right", "outwards"]
+        for i, (code, name) in enumerate(zip("06 02 04 00 05 07 03 01 08".split(), names)):
+            label = {0: "1st button: up", 1: "2nd: down", 2: "3rd: left", 3: "4th: right", 8: "9th: centre outwards"}
+            cases[f"direction {code} ({label.get(i, f'{i + 1}th: diagonal')})"] = {**rb_, "direction": name}
+        cases["(chunks 01 / 00 for the directions above)"] = rb_
+        presets = ["red", "blue-red", "sunset", "lime-cyan", "yellow-magenta", "pink-purple", "spectrum"]
+        labels = ["red", "blue -> red", "orange / pink / red", "lime / cyan", "yellow / magenta", "pink / purple",
+                  "spectrum"]
+        for n, (preset, label) in enumerate(zip(presets, labels), 1):
+            for suffix in (" (chunk 02; 01 and 00 zero)", " (chunk 02)", " (chunk 01)", " (chunk 00)"):
+                cases[f"preset {n} {label}{suffix}"] = cases[f"preset {n}{suffix}"] = {**rb_, "gradient": preset}
+        cases["custom: stop 1 colour 65 00 ff (chunk 02)"] = {**rb_, "gradient": self.C1}
+        cases["custom: stop 4 colour eb f5 eb (chunk 01)"] = {**rb_, "gradient": self.C4}
+        cases["custom: stop 6 colour 3d ff 00 (chunk 01; chunk 00 unchanged)"] = {**rb_, "gradient": self.C6}
+        for code, thickness in (("00", "low"), ("01", "normal"), ("02", "strong")):
+            cases[f"rainbow thickness {code} (chunk 02)"] = {**rb_, "gradient": self.C6, "thickness": thickness}
+            cases[f"ripple thickness {code}"] = dict(effect="ripple", brightness=50, speed="slow", gradient="red",
+                                                     thickness=thickness)
+        cases["rainbow: stop removed, 6 stops (chunk 02)"] = {**rb_, "gradient": self.REMOVED}
+        cases["rainbow: stop removed (chunk 01; chunk 00 zero)"] = {**rb_, "gradient": self.REMOVED}
+        cases["rainbow: stop 5 dragged 72 % -> 83 % (chunk 01; chunk 02 as above, chunk 00 zero)"] = \
+            {**rb_, "gradient": self.DRAGGED}
+        cases["ripple slow, spectrum (chunk 02)"] = dict(effect="ripple", brightness=50, speed="slow")
+        cases["ripple preset 1 red (chunk 02; 01 and 00 zero)"] = dict(effect="ripple", brightness=50, speed="slow",
+                                                                     gradient="red")
+        qs = dict(effect="quicksand", brightness=50, speed="slow")
+        cases["quicksand colour scale, down (chunk 01)"] = {**qs, "mode": "scale", "direction": "down"}
+        cases["quicksand random (chunk 01)"] = {**qs, "mode": "random"}
+        cases["quicksand up (chunk 01)"] = {**qs, "direction": "up"}
+        cases["(quicksand chunk 00, unchanged)"] = qs
+        return cases
+
+    def test_armoury_crate_capture_4(self):
+        data = self.captures()["capture_4"]
+        cases = self.capture_4_multi_chunk_cases()
+        modes = {v: k for k, v in rb.KEYBOARD_COLOUR_MODES.items()}
+        checked = 0
+        for block, content in data.items():
+            if block.startswith("_"):
+                continue
+            for w in content["writes"]:
+                raw = bytes.fromhex(w["packet"])
+                with self.subTest(block=block, name=w["name"]):
+                    if raw[0] == 0x03:                       # AC's lighting off also sends 51 36 to the mouse
+                        self.assertFalse(rb.is_allowed_write(raw[1:7], "mouse"))
+                        self.assertFalse(rb.is_allowed_write(raw[1:7], "keyboard"))
+                        continue
+                    if raw[1:3] == rb.KEYBOARD_WARNING_WRITE:
+                        commands = [rb.keyboard_warning_command(raw[5])]
+                    elif raw[1:3] == rb.KEYBOARD_LIGHT_WRITE and w["name"] in cases:
+                        commands = rb.keyboard_light_commands(**cases[w["name"]])
+                        commands = [c for c in commands if c[3] == raw[4]]      # the chunk this entry shows
+                    else:
+                        effect = rb.KEYBOARD_LIGHT_MODES[raw[3]]
+                        speed = {v: k for k, v in rb.KEYBOARD_LIGHT_SPEEDS[effect].items()}[raw[5]]
+                        options = {}
+                        if effect in rb.KEYBOARD_OPTION_EFFECTS:
+                            options = dict(mode=modes[raw[7]], color2="#" + raw[13:16].hex(),
+                                           background="#" + raw[16:19].hex())
+                        commands = rb.keyboard_light_commands(effect, raw[6], "#" + raw[10:13].hex(), speed, **options)
+                    self.assertEqual(len(commands), 1)
+                    self.assertEqual(rb.packet(0x02, commands[0], 64, write=True, device="keyboard"), raw)
+                    checked += 1
+        self.assertGreaterEqual(checked, 90)
+        self.assertEqual(rb.packet(0x02, rb.KEYBOARD_SAVE_COMMAND, 64, write=True, device="keyboard"),
+                         bytes.fromhex(data["warning_levels"]["save"]))
+
+    def test_off_is_acs_black_static(self):
+        off = bytes.fromhex(self.captures()["capture_4"]["brightness_off"]["writes"][-1]["packet"])
+        self.assertEqual(rb.packet(0x02, rb.keyboard_light_command("off", 100, "#ff0000"), 64, write=True,
+                                   device="keyboard"), off)                  # brightness and colour are fixed
+        value = rb.keyboard_light_value("off", 80)
+        self.assertEqual((value["brightness"], value["color"], rb.keyboard_effect_read("off")), (4, "#000000", "static"))
+
+    def test_effect_options(self):
+        single = rb.keyboard_light_command("raindrop", 50, "#ffffff", mode="single", color2="#00ff00")
+        self.assertEqual(single[12:15], b"\0\0\0")                           # no second colour in single mode
+        double = rb.keyboard_light_command("current", 50, "#ff0000", mode="double")
+        self.assertEqual(double[12:15].hex(), "ff00ff")                      # AC's second colour
+        self.assertEqual(rb.keyboard_light_value("starry-night", 50, background="#000000")["background"], None)
+        custom = rb.keyboard_light_value("rainbow", 50, gradient="14:FF0000, 100:0000FF")
+        self.assertEqual(custom["gradient"], "14:ff0000,100:0000ff")
+        for bad in (dict(effect="current", brightness=50, mode="scale"),
+                    dict(effect="quicksand", brightness=50, mode="double"),
+                    dict(effect="quicksand", brightness=50, direction="left"),
+                    dict(effect="rainbow", brightness=50, thickness="thick"),
+                    dict(effect="rainbow", brightness=50, gradient="14:ff0000"),                  # one stop
+                    dict(effect="rainbow", brightness=50, gradient="50:ff0000,14:00ff00"),        # not ascending
+                    dict(effect="rainbow", brightness=50, gradient="0:ff0000,100:00ff00"),        # 0 %
+                    dict(effect="rainbow", brightness=50, gradient=",".join(f"{p}:ffffff" for p in range(10, 90, 10))),
+                    dict(effect="raindrop", brightness=50, background="#12345")):
+            with self.subTest(**bad), self.assertRaises(ValueError):
+                rb.keyboard_light_value(**bad)
+        for hex_ in ("51 2c 09 00 14 32 00 ff ff ff ff ff 00 ff 00 00 00 00",   # single with a second colour
+                     "51 2c 09 00 14 32 02 ff ff ff ff ff 00 00 00 00 00 00",   # colour mode 02
+                     "51 2c 09 00 14 32 00 ff ff ff ff ff",                     # options cut off
+                     "51 2c 00 00 ff 32 10 ff ff ff 00 00",                     # static with a colour mode
+                     "51 2c 07 01 0f 32 02 02 ff ff f6 00 01 ff 00 00 fa ff",   # quicksand mode 02
+                     "51 2c 07 01 0f 32 00 04 ff ff f6 00 01 ff 00 00 fa ff",   # quicksand direction 04
+                     "51 2c 04 02 3e 32 00 00 03 07 0e f5 00 ff 1d 00 06 ff",   # thickness 03
+                     "51 2c 05 02 64 32 00 00 02 07 0e f5 00 ff 1d 00 06 ff",   # ripple with a direction
+                     "51 2c 04 02 3e 32 00 00 02 01 0e f5 00 ff"):              # one stop
+            with self.subTest(command=hex_):
+                self.assertFalse(rb.is_allowed_write(bytes.fromhex(hex_), "keyboard"))
+
+    def test_warning_never(self):
+        self.assertEqual(rb.keyboard_warning_command(0).hex(" "), "51 3a 00 00 00")
+        s = rb.KeyboardSettings("k", "omni")
+        rb.parse_keyboard_settings(s, "battery", bytes.fromhex("12 01 00 00 00 46 02 01 00 00 46 81 0f 00"))
+        self.assertEqual((s.low_warning, rb.warning_text(s.low_warning)), (0, "never"))
+        self.assertEqual(rb.parse_warning("keyboard", bytes.fromhex("12 01 00 00 00 46 02 01 00 00 46"), 0), 0)
+        self.assertIsNone(rb.parse_warning("mouse", bytes.fromhex("12 07 00 00 46 02 00 00 00 00"), 0))
+        battery = rb.Battery("keyboard", "Falchion", "omni", 3, low_warning=0)
+        notes = []
+        self.assertEqual(rb.check_low_battery([battery], Path(self.tmp.name) / "state.json",
+                                              lambda *a: notes.append(a)), [])
+        self.assertEqual(notes, [])                                           # set to never: Squire is quiet too
+
+    def test_old_remembered_values_are_migrated(self):
+        self.memory.write_text(json.dumps({"profiles": {
+            "4": {"effect": "reactive", "brightness": 75, "color": "#f6f5f4", "speed": "fast"},
+            "2": {"effect": "rainbow", "brightness": 50, "color": "#000000", "speed": "normal", "gradient": "sunset",
+                  "direction": "right-to-left"}}}))
+        self.assertEqual(rb.remembered_keyboard_light(4, "reactive")["speed"], "normal")   # 0f was always sent
+        self.assertEqual(rb.remembered_keyboard_light(2, "rainbow")["direction"], "left")
+        rb.remember_keyboard_light(1, rb.keyboard_light_value("reactive", 50, speed="fast"))
+        data = json.loads(self.memory.read_text())
+        self.assertEqual((data["version"], data["profiles"]["4"]["speed"], data["profiles"]["1"]["speed"]),
+                         (2, "normal", "fast"))                               # migrated once, new "fast" kept
 
     def test_armoury_crate_power_packets(self):
         for w in self.captures()["capture_3"]["power_writes"]:
@@ -1340,9 +1484,12 @@ class KeyboardWriteTests(unittest.TestCase):
         for w in data:
             with self.subTest(name=w["name"]):
                 if w["function"] == "keyboard_light_commands":
-                    built = rb.keyboard_light_commands(*w["args"])
-                    self.assertEqual([rb.packet(0x02, c, 64, write=True, device="keyboard")[:len(c) + 1].hex(" ")
-                                      for c in built], w["packets"])
+                    built = [rb.packet(0x02, c, 64, write=True, device="keyboard")
+                             for c in rb.keyboard_light_commands(*w["args"])]
+                    heads = [bytes.fromhex(p) for p in w["packets"]]
+                    self.assertEqual([p[:len(h)] for p, h in zip(built, heads)], heads)
+                    self.assertTrue(all(set(p[len(h):]) <= {0} for p, h in zip(built, heads)))
+                    self.assertEqual(len(built), len(heads))
                     continue
                 command = getattr(rb, w["function"])(*w["args"])
                 head = bytes.fromhex(w["packet"])
@@ -1369,7 +1516,7 @@ class KeyboardWriteTests(unittest.TestCase):
     def test_defaults_and_wired_framing(self):
         self.assertEqual(rb.keyboard_light_command("breathing", 100, "#3584e4").hex(" "),
                          "51 2c 01 00 1e 64 00 ff ff 35 84 e4")              # normal speed
-        self.assertEqual(rb.keyboard_light_command("reactive", 100, "#0002ff")[4], 0x0F)   # only speed
+        self.assertEqual(rb.keyboard_light_command("reactive", 100, "#0002ff")[4], 0x0F)   # AC's normal
         self.assertEqual(rb.keyboard_light_command("color-cycle", 50, "#ff0000")[9:], b"\0\0\0")
         self.assertEqual(rb.keyboard_sleep_command(None).hex(" "), "51 38 00 00 ff")
         data = rb.packet(None, rb.keyboard_sleep_command(3), 65, write=True, device="keyboard")
@@ -1379,7 +1526,7 @@ class KeyboardWriteTests(unittest.TestCase):
         for call in (lambda: rb.keyboard_light_command("rainbow", 50),          # gradient: not yet
                      lambda: rb.keyboard_light_command("host-driven", 50),      # not an effect Squire writes
                      lambda: rb.keyboard_light_command("ripple", 50),           # a gradient: keyboard_light_commands
-                     lambda: rb.keyboard_light_command("reactive", 50, speed="slow"),
+                     lambda: rb.keyboard_light_command("reactive", 50, speed="none"),
                      lambda: rb.keyboard_light_command("static", 101),
                      lambda: rb.keyboard_light_command("static", 50, "#12345"),
                      lambda: rb.keyboard_sleep_command(4), lambda: rb.keyboard_warning_command(25)):
@@ -1474,7 +1621,7 @@ class KeyboardWriteTests(unittest.TestCase):
         result = rb.set_keyboard_light("breathing", 60, "#00FF00", speed="slow", save=True, hid=backend)
         self.assertTrue(result.saved)
         value = {"effect": "breathing", "brightness": 60, "color": "#00ff00", "speed": "slow", "gradient": None,
-                 "direction": None}
+                 "direction": None, "thickness": None, "mode": None, "color2": None, "background": None}
         self.assertEqual(rb.remembered_keyboard_light(1, "breathing"), value)
         self.assertIsNone(rb.remembered_keyboard_light(1, "raindrop"))       # changed elsewhere: stale
         self.assertIsNone(rb.remembered_keyboard_light(2, "breathing"))      # other profile
@@ -1494,7 +1641,8 @@ class KeyboardWriteTests(unittest.TestCase):
                           "50 55 00 00"])
         self.assertEqual(rb.remembered_keyboard_light(1, "rainbow"),
                          {"effect": "rainbow", "brightness": 50, "color": "#000000", "speed": "normal",
-                          "gradient": "sunset", "direction": "right-to-left"})
+                          "gradient": "sunset", "direction": "left", "thickness": "strong", "mode": None,
+                          "color2": None, "background": None})
 
     def test_a_missing_chunk_echo_stops_before_the_rest(self):
         backend, sent, state = self.make(chunk_echo=False)

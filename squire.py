@@ -298,59 +298,90 @@ KEYBOARD_LIGHT_MODES = {0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 
 
 
 # --- Keyboard writes (Falchion RX Low Profile) ---
-# Source: Armoury Crate captures on Windows (USBPcap via the Omni, 2026-11-21, protocol.json keyboard_writes); G-Helper
-# AsusKeyboard.cs (GPL-3.0, facts only) has the same 51 2c layout and 50 55, but 51 37 for the warning, which is
-# wrong for the Falchion (AC sends 51 3a). Only single-colour effects with the speed values AC sent.
+# Source: Armoury Crate captures on Windows (USBPcap via the Omni, 2026-11-21 and 2026-11-22, protocol.json
+# keyboard_writes, capture_4 has every option); G-Helper AsusKeyboard.cs (GPL-3.0, facts only) has the same 51 2c
+# layout and 50 55, but 51 37 for the warning, which is wrong for the Falchion (AC sends 51 3a). Only byte values AC sent.
 KEYBOARD_SAVE_COMMAND = bytes([0x50, 0x55])      # the keyboard's save (the mouse uses 50 03)
-KEYBOARD_LIGHT_WRITE = bytes([0x51, 0x2C])       # 51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>
+KEYBOARD_LIGHT_WRITE = bytes([0x51, 0x2C])       # 51 2c <effect> 00 <speed> <brightness %> <mode> ff ff <r g b> ...
 KEYBOARD_SLEEP_WRITE = bytes([0x51, 0x38])       # 51 38 00 00 <power-off code>, read back 12 01 [6]
 KEYBOARD_WARNING_WRITE = bytes([0x51, 0x3A])     # 51 3a 00 00 <%>, read back 12 01 [9]
-# Effect -> {speed name: byte}, exactly the values in the AC captures (capture_2, capture_3). Static has no speed (ff).
-# Where AC sent only one value it is the one AC picks when the effect is chosen ("normal"); reactive's 0f was named
-# "fast" before that was clear and is kept so remembered values stay valid.
+# Effect -> {speed name: byte}: AC's fast / normal / slow, own values per effect, larger = slower (capture_4 block 3;
+# breathing and raindrop from capture_2 / 3). Static has no speed (ff).
 KEYBOARD_LIGHT_SPEEDS = {
     "static": {"none": 0xFF},
     "breathing": {"fast": 0x0F, "normal": 0x1E, "slow": 0x2A},
-    "color-cycle": {"normal": 0x1F},
-    "reactive": {"fast": 0x0F},
-    "rainbow": {"normal": 0x3E},
-    "ripple": {"normal": 0x64},
-    "starry-night": {"normal": 0x0F},
-    "quicksand": {"normal": 0x0F},
-    "current": {"normal": 0x0A},
+    "color-cycle": {"fast": 0x12, "normal": 0x1F, "slow": 0x3E},
+    "reactive": {"fast": 0x08, "normal": 0x0F, "slow": 0x16},
+    "rainbow": {"fast": 0x23, "normal": 0x3E, "slow": 0x55},
+    "ripple": {"fast": 0x50, "normal": 0x64, "slow": 0x78},
+    "starry-night": {"fast": 0x0A, "normal": 0x0F, "slow": 0x19},
+    "quicksand": {"fast": 0x0C, "normal": 0x0F, "slow": 0x14},
+    "current": {"fast": 0x07, "normal": 0x0A, "slow": 0x0C},
     "raindrop": {"fast": 0x0E, "normal": 0x14, "slow": 0x1B},
 }
 KEYBOARD_LIGHT_IDS = {name: i for i, name in KEYBOARD_LIGHT_MODES.items() if name in KEYBOARD_LIGHT_SPEEDS}
-# Effects written as one 51 2c with one colour. Starry night, current and raindrop only in the form AC sends by
-# default (one colour, [7..8] ff ff); background colour, a second colour and "random" are not captured yet.
+# "off" is not an effect of its own: AC's lighting switch sends static, 4 %, black (capture_4 block 6), and the
+# keyboard then reads 00 static. (AC also sends an unknown 51 36 to the mouse; Squire does not.)
+KEYBOARD_OFF = "off"
+KEYBOARD_OFF_BRIGHTNESS = 4
+KEYBOARD_EFFECTS = list(KEYBOARD_LIGHT_SPEEDS) + [KEYBOARD_OFF]   # what Squire can set, in the keyboard's id order
+# Effects written as one 51 2c: [6] 00, [7..8] ff ff, [9..11] colour.
 KEYBOARD_SINGLE_COLOUR = ("static", "breathing", "color-cycle", "reactive", "starry-night", "current", "raindrop")
+# Starry night, current and raindrop also have (capture_4 block 2): [6] colour mode, [12..14] second colour
+# (00 00 00 unless double), [15..17] background (00 00 00 = off). Random keeps both colours in the packet.
+KEYBOARD_OPTION_EFFECTS = ("starry-night", "current", "raindrop")
+KEYBOARD_COLOUR_MODES = {"single": 0x00, "double": 0x10, "random": 0x01}
+KEYBOARD_SECOND_COLOUR = "#ff00ff"               # AC's second colour when switching to double
 # Colour gradients (rainbow, ripple): three 51 2c chunks, [3] = 02, 01, 00. First chunk: <speed> <brightness> 00
-# <direction> 02 <stop count>, then 4 bytes per stop (position %, R, G, B): 2 stops in the first chunk, up to 4 in each
-# of the next two (AC sends the last chunk even when empty). Only the two gradients AC sent; the names are Squire's.
+# <direction> <thickness> <stop count>, then 4 bytes per stop (position %, R, G, B): 2 stops in the first chunk, up to
+# 4 in the next one, the rest in the last (AC sends every chunk, unused ones as zeros).
 KEYBOARD_GRADIENT_EFFECTS = ("rainbow", "ripple")
+# AC's 7 gradient presets in AC's order (capture_4 block 4). AC shows them without names; the names are Squire's.
 KEYBOARD_GRADIENTS = {
+    "red": ((14, "ff0029"), (100, "ff0029")),
+    "blue-red": ((14, "0018f0"), (100, "ff0031")),
+    "sunset": ((14, "febe3f"), (57, "fe3f7d"), (100, "f91d1d")),
+    "lime-cyan": ((14, "d1fe3f"), (45, "00dcff"), (72, "00dcff"), (100, "d1fe3f")),
+    "yellow-magenta": ((14, "f1ff00"), (36, "ff00ed"), (57, "f1ff00"), (79, "ff00ed"), (100, "f1ff00")),
+    "pink-purple": ((14, "ff0091"), (32, "8c00ff"), (49, "4b00d9"), (66, "4b00d9"), (83, "8c00ff"), (100, "ff0091")),
     "spectrum": ((14, "f500ff"), (29, "0006ff"), (43, "00faff"), (57, "01ff00"), (72, "fff600"), (86, "ff7807"),
                  (100, "ff000d")),                                     # AC's default
-    "sunset": ((14, "febe3f"), (57, "fe3f7d"), (100, "f91d1d")),       # an AC preset (capture_2)
 }
-# Directions per gradient effect: rainbow 00 left to right, 04 right to left (AC has 9; the rest not captured);
-# ripple has none (ff).
-KEYBOARD_DIRECTIONS = {"rainbow": {"left-to-right": 0x00, "right-to-left": 0x04}, "ripple": {"none": 0xFF}}
-KEYBOARD_GRADIENT_MAX_STOPS = 7                       # the most AC sent
-# Quicksand: two chunks ([3] = 01, 00): <speed> <brightness> 00 02 ff, then 6 RGB triples without positions, 3 per
-# chunk. [7] 02 and [8] ff are sent as AC sent them (pattern / direction? not known). Only AC's default scale.
+KEYBOARD_GRADIENT_STOPS = (2, 7)                 # AC: 2..7 stops; positions 1..100 %, ascending
+# Direction byte, per effect. Rainbow: a compass in 45 degree steps (capture_4 block 4: 00 right, 02 down, 04 left,
+# 06 up, 08 from the centre outwards; the diagonals 01/03/05/07 are assumed to be in between, clockwise). Ripple has
+# none (ff). Quicksand uses the same coding for down / up (block 5). The first one is the default.
+KEYBOARD_DIRECTIONS = {
+    "rainbow": {"right": 0x00, "down-right": 0x01, "down": 0x02, "down-left": 0x03, "left": 0x04, "up-left": 0x05,
+                "up": 0x06, "up-right": 0x07, "outwards": 0x08},
+    "ripple": {"none": 0xFF},
+    "quicksand": {"down": 0x02, "up": 0x06},
+}
+KEYBOARD_DIRECTION_ALIASES = {"left-to-right": "right", "right-to-left": "left"}    # names used before 2026-11-22
+# Thickness (rainbow, ripple): byte [8] of chunk 02; AC's Low / Normal / Strong, Strong is AC's default.
+KEYBOARD_THICKNESS = {"strong": 0x02, "normal": 0x01, "low": 0x00}
+# Quicksand: two chunks ([3] = 01, 00): <speed> <brightness> <mode> <direction> ff, then 6 RGB triples without
+# positions, 3 per chunk. Mode 00 = the colour scale, 01 = random (AC still sends the scale). Only AC's default scale.
 KEYBOARD_QUICKSAND_SCALE = ("fff600", "01ff00", "00faff", "0006ff", "f500ff", "ff000d")
-KEYBOARD_COLOURLESS = frozenset(["color-cycle", "rainbow", "ripple", "quicksand"])   # no colour of their own
-# Warning levels: 10 and 20 % captured from AC and confirmed with Squire (2026-11-22); 30..50 assumed like the mouse
-# (owner, 2026-11-22) until AC's list is checked on Windows.
-KEYBOARD_WARNING_LEVELS = LOW_WARNING_LEVELS
+KEYBOARD_QUICKSAND_MODES = {"scale": 0x00, "random": 0x01}
+KEYBOARD_COLOURLESS = frozenset(["color-cycle", "rainbow", "ripple", "quicksand", KEYBOARD_OFF])  # no colour to pick
+# Warning levels: AC offers exactly 10..50 % and "never" (00, capture_4 block 1). 0 = never.
+KEYBOARD_WARNING_LEVELS = (0,) + LOW_WARNING_LEVELS
+# The fields of a lighting value (keyboard_light_value); a field the effect does not use is None.
+KEYBOARD_LIGHT_FIELDS = ("effect", "brightness", "color", "speed", "gradient", "direction", "thickness", "mode",
+                         "color2", "background")
+
+
+def keyboard_effect_read(effect: str) -> str:
+    """The effect 12 00 [9] reports after `effect` was written ("off" is a black static)."""
+    return "static" if effect == KEYBOARD_OFF else effect
 
 
 def keyboard_speed(effect: str, speed: Optional[str]) -> str:
     """The speed name for an effect: `speed`, or "normal" if it has one, else its only value."""
-    speeds = KEYBOARD_LIGHT_SPEEDS.get(effect)
+    speeds = KEYBOARD_LIGHT_SPEEDS.get(keyboard_effect_read(effect))
     if speeds is None:
-        raise ValueError(f"keyboard effect {effect!r} is not one Squire writes ({', '.join(KEYBOARD_LIGHT_SPEEDS)})")
+        raise ValueError(f"keyboard effect {effect!r} is not one Squire writes ({', '.join(KEYBOARD_EFFECTS)})")
     if speed is None:
         speed = "normal" if "normal" in speeds else next(iter(speeds))
     if speed not in speeds:
@@ -358,61 +389,147 @@ def keyboard_speed(effect: str, speed: Optional[str]) -> str:
     return speed
 
 
-def keyboard_light_command(effect: str, brightness: int, color: str = "#ffffff", speed: Optional[str] = None) -> bytes:
-    """51 2c for a single-colour effect. `speed` None = "normal" if the effect has it, else its only value."""
-    speed = keyboard_speed(effect, speed)
-    if effect not in KEYBOARD_SINGLE_COLOUR:
-        raise ValueError(f"{effect} is not a single-colour effect")
-    if not 0 <= int(brightness) <= 100:
-        raise ValueError("brightness must be 0-100 %")
-    rgb = bytes.fromhex(color.lstrip("#"))
-    if len(rgb) != 3:
-        raise ValueError(f"colour {color!r} is not #rrggbb")
-    if effect in KEYBOARD_COLOURLESS:
-        rgb = b"\0\0\0"
-    command = KEYBOARD_LIGHT_WRITE + bytes([KEYBOARD_LIGHT_IDS[effect], 0x00, KEYBOARD_LIGHT_SPEEDS[effect][speed],
-                                            int(brightness), 0x00, 0xFF, 0xFF]) + rgb
-    assert is_allowed_write(command, "keyboard")
-    return command
-
-
 def keyboard_direction(effect: str, direction: Optional[str]) -> str:
     directions = KEYBOARD_DIRECTIONS[effect]
-    direction = direction or next(iter(directions))
+    direction = KEYBOARD_DIRECTION_ALIASES.get(direction, direction) or next(iter(directions))
     if direction not in directions:
         raise ValueError(f"direction {direction!r} for {effect}: only {', '.join(directions)}")
     return direction
 
 
-def keyboard_light_commands(effect: str, brightness: int, color: str = "#ffffff", speed: Optional[str] = None,
-                            gradient: Optional[str] = None, direction: Optional[str] = None) -> list:
-    """Every 51 2c chunk for one lighting setting, in the order they are sent (one for a single-colour effect, three
-    for a gradient, two for quicksand)."""
+def _rgb(color: Optional[str], what: str = "colour") -> str:
+    """#rrggbb, lower case; raises ValueError otherwise."""
+    try:
+        raw = bytes.fromhex((color or "").lstrip("#"))
+    except ValueError:
+        raw = b""
+    if len(raw) != 3:
+        raise ValueError(f"{what} {color!r} is not #rrggbb")
+    return "#" + raw.hex()
+
+
+def keyboard_gradient_stops(gradient: Optional[str]) -> tuple:
+    """((position %, "rrggbb"), ...) for a preset name or a custom gradient "POS:RRGGBB,POS:RRGGBB,..." (2..7 stops,
+    positions 1..100 % ascending, like AC's editor)."""
+    gradient = gradient or "spectrum"
+    if gradient in KEYBOARD_GRADIENTS:
+        return KEYBOARD_GRADIENTS[gradient]
+    if ":" not in gradient:
+        raise ValueError(f"gradient {gradient!r}: one of {', '.join(KEYBOARD_GRADIENTS)} or POS:RRGGBB,... ")
+    try:
+        stops = tuple((int(pos), _rgb(rgb, "gradient colour")[1:])
+                      for pos, rgb in (part.split(":") for part in gradient.split(",")))
+    except ValueError as error:
+        raise ValueError(f"gradient {gradient!r}: {error}") from None
+    low, high = KEYBOARD_GRADIENT_STOPS
+    positions = [pos for pos, _ in stops]
+    if not low <= len(stops) <= high:
+        raise ValueError(f"gradient {gradient!r}: {low} to {high} stops")
+    if not all(1 <= p <= 100 for p in positions) or positions != sorted(set(positions)):
+        raise ValueError(f"gradient {gradient!r}: positions 1..100 %, ascending")
+    return stops
+
+
+def keyboard_gradient_name(gradient: Optional[str]) -> str:
+    """A preset name, or the custom gradient written canonically (lower case, no spaces)."""
+    gradient = gradient or "spectrum"
+    if gradient in KEYBOARD_GRADIENTS:
+        return gradient
+    return ",".join(f"{pos}:{rgb}" for pos, rgb in keyboard_gradient_stops(gradient))
+
+
+def _pick(name: str, value: Optional[str], choices: dict) -> str:
+    value = value or next(iter(choices))
+    if value not in choices:
+        raise ValueError(f"{name} {value!r}: only {', '.join(choices)}")
+    return value
+
+
+def keyboard_light_value(effect: str, brightness: int, color: Optional[str] = "#ffffff", speed: Optional[str] = None,
+                         gradient: Optional[str] = None, direction: Optional[str] = None, *,
+                         thickness: Optional[str] = None, mode: Optional[str] = None, color2: Optional[str] = None,
+                         background: Optional[str] = None) -> dict:
+    """The lighting as Squire writes it, validated and normalised (keys KEYBOARD_LIGHT_FIELDS): colours #rrggbb lower
+    case (#000000 for an effect without one), the speed actually sent, and None for every field the effect does not
+    use. `mode`: single / double / random (starry night, current, raindrop) or scale / random (quicksand).
+    `background` None or #000000 = off. "off" is AC's black static at 4 %. Options the effect does not use are
+    ignored (the window keeps them for a later effect)."""
+    if effect == KEYBOARD_OFF:
+        brightness, color = KEYBOARD_OFF_BRIGHTNESS, "#000000"
     speed = keyboard_speed(effect, speed)          # also refuses an effect Squire does not write
-    if effect in KEYBOARD_SINGLE_COLOUR:
-        return [keyboard_light_command(effect, brightness, color, speed)]
-    speed_byte = KEYBOARD_LIGHT_SPEEDS[effect][speed]
     if not 0 <= int(brightness) <= 100:
         raise ValueError("brightness must be 0-100 %")
+    value = dict.fromkeys(KEYBOARD_LIGHT_FIELDS)
+    value.update(effect=effect, brightness=int(brightness), speed=speed,
+                 color="#000000" if effect in KEYBOARD_COLOURLESS else _rgb(color or "#ffffff"))
+    if effect in KEYBOARD_GRADIENT_EFFECTS:
+        value.update(gradient=keyboard_gradient_name(gradient), direction=keyboard_direction(effect, direction),
+                     thickness=_pick("thickness", thickness, KEYBOARD_THICKNESS))
+    elif effect == "quicksand":
+        value.update(direction=keyboard_direction(effect, direction),
+                     mode=_pick("colour mode", mode, KEYBOARD_QUICKSAND_MODES))
+    elif effect in KEYBOARD_OPTION_EFFECTS:
+        value["mode"] = _pick("colour mode", mode, KEYBOARD_COLOUR_MODES)
+        if value["mode"] != "single":
+            value["color2"] = _rgb(color2 or KEYBOARD_SECOND_COLOUR, "second colour")
+        bg = _rgb(background, "background") if background else None
+        value["background"] = None if bg == "#000000" else bg
+    return value
+
+
+def keyboard_light_from(stored: dict) -> dict:
+    """keyboard_light_value from a dict with (some of) the KEYBOARD_LIGHT_FIELDS, e.g. a remembered or pending value."""
+    options = {f: stored.get(f) for f in KEYBOARD_LIGHT_FIELDS[2:]}
+    return keyboard_light_value(stored["effect"], stored["brightness"], **options)
+
+
+def keyboard_light_packets(value: dict) -> list:
+    """Every 51 2c chunk for a normalised lighting value, in the order they are sent (one for a single-colour
+    effect, three for a gradient, two for quicksand)."""
+    effect = keyboard_effect_read(value["effect"])
     eid = KEYBOARD_LIGHT_IDS[effect]
-    if effect == "quicksand":
-        rgb = [bytes.fromhex(c) for c in KEYBOARD_QUICKSAND_SCALE]
-        commands = [KEYBOARD_LIGHT_WRITE + bytes([eid, 0x01, speed_byte, int(brightness), 0x00, 0x02, 0xFF])
-                    + b"".join(rgb[:3]),
-                    KEYBOARD_LIGHT_WRITE + bytes([eid, 0x00]) + b"".join(rgb[3:])]
+    speed = KEYBOARD_LIGHT_SPEEDS[effect][value["speed"]]
+    brightness = value["brightness"]
+    rgb = lambda c: bytes.fromhex((c or "#000000").lstrip("#"))     # noqa: E731
+    if effect in KEYBOARD_SINGLE_COLOUR:
+        command = KEYBOARD_LIGHT_WRITE + bytes([eid, 0x00, speed, brightness, 0x00, 0xFF, 0xFF]) + rgb(value["color"])
+        if effect in KEYBOARD_OPTION_EFFECTS:
+            command = (command[:6] + bytes([KEYBOARD_COLOUR_MODES[value["mode"]]]) + command[7:]
+                       + rgb(value["color2"]) + rgb(value["background"]))
+        commands = [command]
+    elif effect == "quicksand":
+        scale = [bytes.fromhex(c) for c in KEYBOARD_QUICKSAND_SCALE]
+        commands = [KEYBOARD_LIGHT_WRITE + bytes([eid, 0x01, speed, brightness, KEYBOARD_QUICKSAND_MODES[value["mode"]],
+                                                  KEYBOARD_DIRECTIONS[effect][value["direction"]], 0xFF])
+                    + b"".join(scale[:3]),
+                    KEYBOARD_LIGHT_WRITE + bytes([eid, 0x00]) + b"".join(scale[3:])]
     else:
-        stops = KEYBOARD_GRADIENTS.get(gradient or "spectrum")
-        if stops is None:
-            raise ValueError(f"gradient {gradient!r}: only {', '.join(KEYBOARD_GRADIENTS)}")
-        d = KEYBOARD_DIRECTIONS[effect][keyboard_direction(effect, direction)]
-        packed = [bytes([pos]) + bytes.fromhex(rgb) for pos, rgb in stops]
-        commands = [KEYBOARD_LIGHT_WRITE + bytes([eid, 0x02, speed_byte, int(brightness), 0x00, d, 0x02, len(stops)])
+        stops = keyboard_gradient_stops(value["gradient"])
+        packed = [bytes([pos]) + bytes.fromhex(c) for pos, c in stops]
+        commands = [KEYBOARD_LIGHT_WRITE + bytes([eid, 0x02, speed, brightness, 0x00,
+                                                  KEYBOARD_DIRECTIONS[effect][value["direction"]],
+                                                  KEYBOARD_THICKNESS[value["thickness"]], len(stops)])
                     + b"".join(packed[:2]),
                     KEYBOARD_LIGHT_WRITE + bytes([eid, 0x01]) + b"".join(packed[2:6]),
                     KEYBOARD_LIGHT_WRITE + bytes([eid, 0x00]) + b"".join(packed[6:10])]
     for command in commands:
         assert is_allowed_write(command, "keyboard")
     return commands
+
+
+def keyboard_light_commands(effect: str, brightness: int, color: Optional[str] = "#ffffff",
+                            speed: Optional[str] = None, gradient: Optional[str] = None,
+                            direction: Optional[str] = None, **options) -> list:
+    """Every 51 2c chunk for one lighting setting (see keyboard_light_value for the options)."""
+    return keyboard_light_packets(keyboard_light_value(effect, brightness, color, speed, gradient, direction, **options))
+
+
+def keyboard_light_command(effect: str, brightness: int, color: str = "#ffffff", speed: Optional[str] = None,
+                           **options) -> bytes:
+    """51 2c for a single-colour effect. `speed` None = "normal" if the effect has it, else its only value."""
+    if keyboard_effect_read(effect) not in KEYBOARD_SINGLE_COLOUR:
+        raise ValueError(f"{effect} is not a single-colour effect")
+    return keyboard_light_commands(effect, brightness, color, speed, **options)[0]
 
 
 def keyboard_sleep_command(minutes: Optional[int]) -> bytes:
@@ -425,11 +542,21 @@ def keyboard_sleep_command(minutes: Optional[int]) -> bytes:
 
 
 def keyboard_warning_command(percent: int) -> bytes:
+    """51 3a: low-battery warning at 10..50 %, 0 = never."""
     if percent not in KEYBOARD_WARNING_LEVELS:
-        raise ValueError(f"low-battery warning {percent!r} % is not one of {KEYBOARD_WARNING_LEVELS}")
+        raise ValueError(f"low-battery warning {percent!r} % is not one of {LOW_WARNING_LEVELS} or never")
     command = KEYBOARD_WARNING_WRITE + bytes([0x00, 0x00, percent])
     assert is_allowed_write(command, "keyboard")
     return command
+
+
+def warning_text(level: Optional[int]) -> str:
+    """A low-battery warning level for people: "20 %", "never" (0) or "–" (unknown)."""
+    return "–" if level is None else "never" if level == 0 else f"{level} %"
+
+
+def _stops_ok(stops: bytes) -> bool:
+    return len(stops) % 4 == 0 and all(1 <= stops[i] <= 100 for i in range(0, len(stops), 4))
 
 
 def is_allowed_keyboard_write(command: bytes) -> bool:
@@ -444,6 +571,10 @@ def is_allowed_keyboard_write(command: bytes) -> bool:
         if effect not in KEYBOARD_LIGHT_SPEEDS:
             return False
         speeds = KEYBOARD_LIGHT_SPEEDS[effect].values()
+        if effect in KEYBOARD_OPTION_EFFECTS:
+            return (len(command) == 18 and command[3] == 0 and command[4] in speeds and command[5] <= 100
+                    and command[6] in KEYBOARD_COLOUR_MODES.values() and command[7:9] == b"\xff\xff"
+                    and (command[6] != KEYBOARD_COLOUR_MODES["single"] or command[12:15] == b"\0\0\0"))
         if effect in KEYBOARD_SINGLE_COLOUR:
             return (len(command) == 12 and command[3] == 0 and command[4] in speeds and command[5] <= 100
                     and command[6:9] == bytes([0x00, 0xFF, 0xFF])
@@ -451,23 +582,20 @@ def is_allowed_keyboard_write(command: bytes) -> bool:
         if effect == "quicksand":
             if command[3] == 0x01:
                 return (len(command) == 18 and command[4] in speeds and command[5] <= 100
-                        and command[6:9] == bytes([0x00, 0x02, 0xFF]))
+                        and command[6] in KEYBOARD_QUICKSAND_MODES.values()
+                        and command[7] in KEYBOARD_DIRECTIONS["quicksand"].values() and command[8] == 0xFF)
             return command[3] == 0x00 and len(command) == 13
-        # gradient chunk: 02 = header + up to 2 stops, 01 / 00 = up to 4 stops each; positions 1..100 %
+        # gradient chunk: 02 = header + 2 stops, 01 / 00 = up to 4 stops each; positions 1..100 %
         chunk = command[3]
         if chunk == 0x02:
             head, stops = command[4:10], command[10:]
-            if not (len(head) == 6 and head[0] in speeds and head[1] <= 100 and head[2] == 0
-                    and head[3] in KEYBOARD_DIRECTIONS[effect].values() and head[4] == 0x02
-                    and 1 <= head[5] <= KEYBOARD_GRADIENT_MAX_STOPS and len(stops) == 4 * min(head[5], 2)):
-                return False
-        elif chunk in (0x01, 0x00):
-            stops = command[4:]
-            if len(stops) > 16:
-                return False
-        else:
-            return False
-        return len(stops) % 4 == 0 and all(1 <= stops[i] <= 100 for i in range(0, len(stops), 4))
+            low, high = KEYBOARD_GRADIENT_STOPS
+            return (len(head) == 6 and head[0] in speeds and head[1] <= 100 and head[2] == 0
+                    and head[3] in KEYBOARD_DIRECTIONS[effect].values() and head[4] in KEYBOARD_THICKNESS.values()
+                    and low <= head[5] <= high and len(stops) == 8 and _stops_ok(stops))
+        if chunk in (0x01, 0x00):
+            return len(command[4:]) <= 16 and _stops_ok(command[4:])
+        return False
     return False
 
 
@@ -567,7 +695,8 @@ def parse_warning(device: str, reply: bytes, base: int) -> Optional[int]:
     p = reply[base:]
     index = 9 if device == "keyboard" else 6
     value = p[index] if len(p) > index else None
-    return value if value is not None and 1 <= value <= 100 else None
+    low = 0 if device == "keyboard" else 1             # keyboard: 0 = never warn (AC, 2026-11-22)
+    return value if value is not None and low <= value <= 100 else None
 
 
 @dataclass
@@ -1006,7 +1135,7 @@ def parse_keyboard_settings(s: KeyboardSettings, name: str, p: bytes) -> None:
         return
     if name == "battery":
         s.sleep_minutes = POWER_OFF_MINUTES.get(p[6])
-        s.low_warning = p[9] if 1 <= p[9] <= 100 else None
+        s.low_warning = p[9] if p[9] <= 100 else None          # 0 = never (AC, 2026-11-22)
     elif name == "profile":
         s.light_mode = KEYBOARD_LIGHT_MODES.get(p[9], f"0x{p[9]:02x}")
         s.profile = p[10] if 1 <= p[10] <= 5 else None
@@ -1069,7 +1198,7 @@ def print_keyboard_settings(s: KeyboardSettings) -> None:
     print(f"  Layout:       {layout}{' (ISO)' if s.iso else ''}")
     print(f"  Lighting:     {s.light_mode} (the colour cannot be read)")
     sleep = "never sleeps" if s.sleep_minutes is None else f"sleep after {s.sleep_minutes} min"
-    print(f"  Power:        {sleep}, low-battery warning {s.low_warning} %")
+    print(f"  Power:        {sleep}, low-battery warning {warning_text(s.low_warning)}")
 
 
 @dataclass
@@ -1222,19 +1351,6 @@ def keyboard_light_file() -> Path:
     return state_dir() / "keyboard-lighting.json"
 
 
-def keyboard_light_value(effect: str, brightness: int, color: str = "#ffffff", speed: Optional[str] = None,
-                         gradient: Optional[str] = None, direction: Optional[str] = None) -> dict:
-    """The lighting as Squire writes it, normalised: colour #rrggbb lower case (#000000 for an effect without one),
-    the speed actually sent, and for rainbow / ripple the gradient and direction (None for other effects)."""
-    keyboard_light_commands(effect, brightness, color, speed, gradient, direction)      # validates
-    multi = effect in KEYBOARD_GRADIENT_EFFECTS
-    return {"effect": effect, "brightness": int(brightness),
-            "color": "#000000" if effect in KEYBOARD_COLOURLESS else "#" + bytes.fromhex(color.lstrip("#")).hex(),
-            "speed": keyboard_speed(effect, speed),
-            "gradient": (gradient or "spectrum") if multi else None,
-            "direction": keyboard_direction(effect, direction) if multi else None}
-
-
 def remembered_keyboard_light(profile: Optional[int], effect: Optional[str], path: Optional[Path] = None) -> Optional[dict]:
     """The lighting Squire last saved to this profile, if the keyboard still runs that effect. The keyboard cannot
     report its colour or brightness, so this is the only way to show them; if the effect differs (changed on the
@@ -1242,22 +1358,35 @@ def remembered_keyboard_light(profile: Optional[int], effect: Optional[str], pat
     if profile is None or effect is None:
         return None
     try:
-        data = json.loads((path or keyboard_light_file()).read_text())
-        stored = data["profiles"][str(profile)]
-        value = keyboard_light_value(stored["effect"], stored["brightness"], stored["color"], stored["speed"],
-                                     stored.get("gradient"), stored.get("direction"))      # still valid
+        data = _keyboard_light_data(path or keyboard_light_file())
+        value = keyboard_light_from(data["profiles"][str(profile)])      # still valid
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
-    return value if value["effect"] == effect else None
+    return value if keyboard_effect_read(value["effect"]) == effect else None
+
+
+KEYBOARD_LIGHT_FILE_VERSION = 2
+
+
+def _keyboard_light_data(path: Path) -> dict:
+    """The remembered lighting, migrated: before version 2 Squire sent reactive only at 0f and called it "fast";
+    AC calls 0f "normal" (capture_4). The old direction names are mapped by keyboard_direction."""
+    data = json.loads(path.read_text())
+    profiles = data["profiles"]
+    if data.get("version", 1) < 2:
+        for stored in profiles.values():
+            if isinstance(stored, dict) and stored.get("effect") == "reactive" and stored.get("speed") == "fast":
+                stored["speed"] = "normal"
+    return data
 
 
 def remember_keyboard_light(profile: int, value: dict, path: Optional[Path] = None) -> None:
     path = path or keyboard_light_file()
     try:
-        data = json.loads(path.read_text())
-        data["profiles"]   # noqa: B018 (shape check)
-    except (OSError, ValueError, KeyError, TypeError):
+        data = _keyboard_light_data(path)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         data = {"profiles": {}}
+    data["version"] = KEYBOARD_LIGHT_FILE_VERSION
     data["profiles"][str(profile)] = value
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1266,16 +1395,18 @@ def remember_keyboard_light(profile: int, value: dict, path: Optional[Path] = No
         print(f"squire: could not remember the keyboard lighting: {error}", file=sys.stderr)
 
 
-def set_keyboard_light(effect: str, brightness: int, color: str = "#ffffff", speed: Optional[str] = None,
+def set_keyboard_light(effect: str, brightness: int, color: Optional[str] = "#ffffff", speed: Optional[str] = None,
                        gradient: Optional[str] = None, direction: Optional[str] = None,
-                       save: bool = False, dry_run: bool = False, debug: bool = False, hid=None) -> WriteResult:
+                       save: bool = False, dry_run: bool = False, debug: bool = False, hid=None,
+                       **options) -> WriteResult:
     """Lighting effect of the Falchion. Only the effect can be read back (12 00 [9]): colour and brightness are not
     readable on this keyboard (Armoury Crate keeps its own copy too), so the result says so. Once saved, the values
     are remembered for the active profile (remembered_keyboard_light) so the window can show them."""
-    value = keyboard_light_value(effect, brightness, color, speed, gradient, direction)
-    commands = keyboard_light_commands(effect, brightness, color, speed, gradient, direction)
+    value = keyboard_light_value(effect, brightness, color, speed, gradient, direction, **options)
+    commands = keyboard_light_packets(value)
+    read = keyboard_effect_read(effect)
     result = write_verified(commands, "profile", lambda s: {"light_mode": s.light_mode, "profile": s.profile},
-                            lambda after, before: bool(after and before) and after == {**before, "light_mode": effect},
+                            lambda after, before: bool(after and before) and after == {**before, "light_mode": read},
                             save, dry_run, debug, hid, device="keyboard")
     if result.status == "ok" and result.saved and result.after.get("profile"):
         remember_keyboard_light(result.after["profile"], value)
@@ -1295,7 +1426,7 @@ def set_keyboard_sleep(minutes: Optional[int], save: bool = False, dry_run: bool
 
 def set_keyboard_warning(percent: int, save: bool = False, dry_run: bool = False, debug: bool = False,
                          hid=None) -> WriteResult:
-    """Low-battery warning level, read back from 12 01 [9]."""
+    """Low-battery warning level (10..50 %, 0 = never), read back from 12 01 [9]."""
     command = keyboard_warning_command(percent)
     return write_verified(command, "battery", lambda s: {"low_warning": s.low_warning},
                           lambda after, _: after == {"low_warning": percent}, save, dry_run, debug, hid,
@@ -1487,7 +1618,7 @@ def check_low_battery(results: list[Battery], state_path: Path = STATE_FILE,
         if b.percent is None:
             continue
         level = b.low_warning if b.low_warning is not None else DEFAULT_LOW_WARNING
-        if b.charging or b.percent > level:
+        if level == 0 or b.charging or b.percent > level:          # 0: the device is set to never warn
             state.pop(b.device, None)
         elif not state.get(b.device):
             notify(f"{b.name}: battery low", f"{b.percent}% left (device warning level {level}%)")
@@ -1569,18 +1700,27 @@ def main() -> int:
     ap.add_argument("--set-liftoff", choices=list(LIFTOFF_CODES),
                     help="WRITE: lift-off distance, keeps the surface (mouse pad) setting; --dry-run reads it "
                          "and prints the bytes")
-    ap.add_argument("--set-kb-light", metavar="EFFECT", choices=list(KEYBOARD_LIGHT_SPEEDS),
-                    help="WRITE: keyboard lighting effect (" + ", ".join(KEYBOARD_LIGHT_SPEEDS) + "); with "
-                         "--brightness, --color, --speed (rainbow/ripple: --gradient, --direction); only the "
-                         "effect can be read back")
-    ap.add_argument("--gradient", choices=list(KEYBOARD_GRADIENTS), help="keyboard rainbow / ripple colours (default spectrum)")
-    ap.add_argument("--direction", choices=sorted({d for ds in KEYBOARD_DIRECTIONS.values() for d in ds}),
-                    help="keyboard rainbow direction (default left-to-right)")
+    ap.add_argument("--set-kb-light", metavar="EFFECT", choices=KEYBOARD_EFFECTS,
+                    help="WRITE: keyboard lighting effect (" + ", ".join(KEYBOARD_EFFECTS) + "); with "
+                         "--brightness, --color, --speed and the effect's options (--gradient, --direction, "
+                         "--thickness, --color-mode, --color2, --background); only the effect can be read back")
+    ap.add_argument("--gradient", metavar="NAME|POS:RRGGBB,...",
+                    help="keyboard rainbow / ripple colours: " + ", ".join(KEYBOARD_GRADIENTS) + " (default spectrum)"
+                         " or 2-7 stops like 14:ff0000,100:0000ff")
+    ap.add_argument("--direction", choices=sorted({d for ds in KEYBOARD_DIRECTIONS.values() for d in ds}
+                                                  | set(KEYBOARD_DIRECTION_ALIASES)),
+                    help="keyboard rainbow direction (default right = left to right), quicksand down / up")
+    ap.add_argument("--thickness", choices=list(KEYBOARD_THICKNESS), help="keyboard rainbow / ripple (default strong)")
+    ap.add_argument("--color-mode", choices=sorted(set(KEYBOARD_COLOUR_MODES) | set(KEYBOARD_QUICKSAND_MODES)),
+                    help="keyboard starry night / current / raindrop: single, double, random; quicksand: scale, random")
+    ap.add_argument("--color2", help="#rrggbb: second keyboard colour (double / random; default #ff00ff)")
+    ap.add_argument("--background", help="#rrggbb or none: keyboard background (starry night, current, raindrop)")
     ap.add_argument("--speed", choices=["fast", "normal", "slow", "none"],
                     help="keyboard effect speed (default: normal, or the effect's only speed)")
     ap.add_argument("--set-kb-sleep", metavar="MIN", help="WRITE: keyboard sleep after 1, 2, 3, 5, 10 min or never")
-    ap.add_argument("--set-kb-warning", type=int, metavar="PCT",
-                    help="WRITE: keyboard low-battery warning in %% (" + ", ".join(map(str, KEYBOARD_WARNING_LEVELS)) + ")")
+    ap.add_argument("--set-kb-warning", metavar="PCT",
+                    help="WRITE: keyboard low-battery warning in %% (" + ", ".join(map(str, LOW_WARNING_LEVELS))
+                         + ") or never")
     ap.add_argument("--mode", choices=list(LED_WRITE_MODES), default="static")
     ap.add_argument("--brightness", type=int, default=100)
     ap.add_argument("--color", help="#rrggbb: LED colour (default #ffffff), or the DPI stage colour (default: keep)")
@@ -1630,13 +1770,18 @@ def main() -> int:
                 elif args.set_polling:
                     result = set_polling(args.set_polling, **options)
                 elif args.set_kb_light:
+                    background = None if (args.background or "").lower() in ("", "none") else args.background
                     result = set_keyboard_light(args.set_kb_light, args.brightness, args.color or "#ffffff",
-                                                args.speed, args.gradient, args.direction, **options)
+                                                args.speed, args.gradient, args.direction, thickness=args.thickness,
+                                                mode=args.color_mode, color2=args.color2, background=background,
+                                                **options)
                 elif args.set_kb_sleep:
                     off = args.set_kb_sleep
                     result = set_keyboard_sleep(None if off == "never" else int(off) if off.isdigit() else -1, **options)
                 elif args.set_kb_warning:
-                    result = set_keyboard_warning(args.set_kb_warning, **options)
+                    warn = args.set_kb_warning.lower()
+                    result = set_keyboard_warning(0 if warn == "never" else int(warn) if warn.isdigit() else -1,
+                                                  **options)
                 elif args.set_surface:
                     sid = NO_SURFACE if args.set_surface.lower() == "none" else int(args.set_surface, 16)
                     result = set_surface(sid, **options)
