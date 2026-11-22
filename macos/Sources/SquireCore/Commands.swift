@@ -1,4 +1,4 @@
-// Command allowlist, same as squire.py (ALLOWED_COMMANDS, is_allowed_write, packet).
+// Command allowlist, same as squire.py (ALLOWED_READS, is_allowed_write, packet), per device.
 //
 // Reads are "get" requests (first byte 0x12) and must be on `Allowlist.reads`. Writes (0x50 / 0x51) are built
 // only by the functions here, carry `isWrite`, and must pass `Allowlist.isAllowedWrite`. `Packet.build` is the
@@ -31,7 +31,7 @@ public struct Command: Equatable, Hashable, Sendable {
         guard (0...100).contains(led.brightness) else { throw CommandError.notAllowed("brightness \(led.brightness)") }
         let bytes: [UInt8] = [0x51, 0x28, zone.index, 0x00, led.mode.byte, UInt8(led.brightness),
                               led.color.r, led.color.g, led.color.b, 0x00, 0x00, 0x00]
-        guard Allowlist.isAllowedWrite(bytes) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
+        guard Allowlist.isAllowedWrite(bytes, for: .mouse) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
         return Command(bytes, isWrite: true, echoLength: 2)
     }
 
@@ -155,7 +155,7 @@ public struct Command: Equatable, Hashable, Sendable {
     }
 
     private static func checked(_ bytes: [UInt8]) throws -> Command {
-        guard Allowlist.isAllowedWrite(bytes) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
+        guard Allowlist.isAllowedWrite(bytes, for: .mouse) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
         return Command(bytes, isWrite: true, echoLength: 2)
     }
 }
@@ -211,12 +211,29 @@ public enum SettingsQuery: String, CaseIterable, Sendable {
     }
 }
 
+/// Per device, like squire.py (ALLOWED_READS, is_allowed_write(command, device), REPORT_IDS): the keyboard never
+/// gets a mouse command and the other way round, since the same bytes can mean something else on the other device.
 public enum Allowlist {
-    public static let reads: Set<[UInt8]> = Set([Command.keyboardBattery, .mouseBattery].map(\.bytes)
-                                                 + SettingsQuery.allCases.map(\.command.bytes)
-                                                 + KeyboardQuery.allCases.map(\.command.bytes))
+    public static let mouseReads: Set<[UInt8]> = Set([Command.mouseBattery.bytes] + SettingsQuery.allCases.map(\.command.bytes))
+    public static let keyboardReads: Set<[UInt8]> = Set([Command.keyboardBattery.bytes]
+                                                        + KeyboardQuery.allCases.map(\.command.bytes))
+    /// All reads of both devices (for checks over both).
+    public static let reads: Set<[UInt8]> = mouseReads.union(keyboardReads)
+    /// Report ID of each device on the Omni receiver; wired, both are unnumbered (nil).
+    public static let reportIDs: [Battery.Device: UInt8] = [.keyboard: 0x02, .mouse: 0x03]
 
-    public static func isAllowedWrite(_ c: [UInt8]) -> Bool {
+    public static func reads(for device: Battery.Device) -> Set<[UInt8]> {
+        device == .mouse ? mouseReads : keyboardReads
+    }
+
+    public static func isAllowedWrite(_ c: [UInt8], for device: Battery.Device) -> Bool {
+        switch device {
+        case .mouse: return isAllowedMouseWrite(c)
+        case .keyboard: return false   // keyboard writes exist in squire.py only so far
+        }
+    }
+
+    static func isAllowedMouseWrite(_ c: [UInt8]) -> Bool {
         if c == Command.save.bytes { return true }
         if c.starts(with: [0x51, 0x35]) {
             let codes = Set(Command.liftoffCodes.values)
@@ -245,17 +262,22 @@ public enum Allowlist {
             && c[9] == 0 && c[10] == 0 && c[11] == 0
     }
 
-    public static func isAllowed(_ command: Command) -> Bool {
-        command.isWrite ? isAllowedWrite(command.bytes) : reads.contains(command.bytes)
+    public static func isAllowed(_ command: Command, for device: Battery.Device) -> Bool {
+        command.isWrite ? isAllowedWrite(command.bytes, for: device) : reads(for: device).contains(command.bytes)
     }
 }
 
 public enum Packet {
     /// Report ID (0x00 = unnumbered) + command, zero-padded to `length`. Refuses anything not on the allowlist;
-    /// a read can never carry write bytes because `isWrite` decides which list is checked.
-    public static func build(reportID: UInt8?, command: Command, length: Int) throws -> [UInt8] {
-        guard Allowlist.isAllowed(command) else {
-            throw CommandError.notAllowed((command.isWrite ? "write " : "") + ReplyParser.hex(command.bytes))
+    /// a read can never carry write bytes because `isWrite` decides which list is checked. The list is the
+    /// device's own, and the report ID must be that device's on the Omni (or nil, wired).
+    public static func build(device: Battery.Device, reportID: UInt8?, command: Command, length: Int) throws -> [UInt8] {
+        if let reportID, reportID != Allowlist.reportIDs[device] {
+            throw CommandError.notAllowed("report ID \(reportID) for the \(device.rawValue)")
+        }
+        guard Allowlist.isAllowed(command, for: device) else {
+            throw CommandError.notAllowed((command.isWrite ? "write " : "") + ReplyParser.hex(command.bytes)
+                                          + " for the \(device.rawValue)")
         }
         var bytes: [UInt8] = [reportID ?? 0x00] + command.bytes
         if bytes.count < length { bytes += [UInt8](repeating: 0, count: length - bytes.count) }

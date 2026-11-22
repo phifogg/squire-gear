@@ -295,7 +295,7 @@ public final class HIDReader {
         // Build first: a command that is not on the allowlist never gets as far as opening the device.
         let packets: [[UInt8]]
         do {
-            packets = try target.reportLengths.map { try Packet.build(reportID: target.reportID, command: command, length: $0) }
+            packets = try target.reportLengths.map { try Packet.build(device: target.device, reportID: target.reportID, command: command, length: $0) }
         } catch {
             log.append("[\(target.connection.rawValue)] refused: \(error)")
             return "refused: \(error)"
@@ -379,7 +379,7 @@ public final class HIDReader {
     }
 
     private static func describe(target: Target, command: Command, prefix: Int) -> String {
-        guard let packet = try? Packet.build(reportID: target.reportID, command: command,
+        guard let packet = try? Packet.build(device: target.device, reportID: target.reportID, command: command,
                                              length: target.reportLengths[0]) else { return "refused" }
         return ReplyParser.hex(Array(packet.prefix(prefix)))
     }

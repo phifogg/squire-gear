@@ -121,7 +121,10 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   `12 00`, `12 04 00`, `12 04 02`, `12 04 03`, `12 03 00..02`, `12 06` (approved by the owner 2026-11-10); keyboard settings reads `12 00` and `12 12` (approved 2026-11-13).
   All are get requests (first byte `12`); writes start with `50`/`51`. Never send `50 02` (switch profile):
   read the active profile only.
-- **Writes** go through `packet(..., write=True)` and must pass `is_allowed_write()`. Approved and confirmed so far
+- **Allowlist per device** (2026-11-22): `packet(..., device=...)` / `Packet.build(device:...)` check the device's own
+  reads (`ALLOWED_READS[device]`) and writes (`is_allowed_write(command, device)`), and the report ID must be the
+  device's (02 keyboard, 03 mouse, or none wired). A mouse command never reaches the keyboard and the other way round.
+- **Writes** go through `packet(..., write=True, device=...)` and must pass `is_allowed_write(command, device)`. Approved and confirmed so far
   (2026-11-10): `51 28 <zone> 00 <mode> <brightness %> <r g b> 00 00 00` (set one LED zone; modes 00 static,
   01 breathing, 02 cycle, 04 react, 06 battery, f0 off), and `50 03` (save to flash, approved 2026-11-10) only
   with an explicit --save / Apply click. set_led() checks the mouse is awake, reads the zone before, writes, reads back, and saves only on a match.
@@ -212,8 +215,8 @@ and 5 of 5 confirmed; G-Helper's "reported == count -> profile 0" does not apply
 `keyboard_settings.captures_wired`, Windows).
 `12 12` [5] factory layout id (25 = CH-DE confirmed, ISO). `12 01` [6] sleep timeout, mouse power-off coding 00..04 = 1/2/3/5/10 min, ff never (AC offers exactly these; 1, 3 and never confirmed on Windows, 2026-11-21, protocol.json `keyboard_settings.sleep_captures`).
 No source reads the keyboard's LED colour/brightness; G-Helper keeps them in its own config. `12 03 00` (the mouse's LED read)
-was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (not
-approved, not sent): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
+was probed once (owner's go): echoed, but no colour in the reply (protocol.json keyboard_settings.probes). Keyboard writes (in squire.py
+with --dry-run since 2026-11-22, branch `keyboard-writes`; NOT approved, never sent yet; Swift allowlist has none): lighting `51 2c`, save `50 55`, sleep `51 38 00 00 <step>`, warning `51 3a 00 00 <%>` (AC; G-Helper's
 `51 37` is wrong for the Falchion). AC captures (2026-11-21, protocol.json `keyboard_writes`):
 `51 2c <effect> 00 <speed> <brightness %> 00 ff ff <r g b>`, then `50 55`; first reply ff aa. Speed: 3 steps per effect, own
 values each (breathing 0f/1e/2a, raindrop 0e/14/1b fast/normal/slow), ff for static. Colour cycle has no colour. Starry
@@ -317,6 +320,10 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       Windows session done (2026-11-21): three AC captures (`keyboard_writes`), wired reads (firmware at [4..6]).
       AC re-flashed the keyboard firmware the same day (failed once, worked after a reboot): versions unchanged
       (05.00.13 / receiver 07.00.08, mouse 01.00.10), replies unchanged.
+      Branch `keyboard-writes` (2026-11-22): allowlist per device (Python + Swift); squire.py `--set-kb-light EFFECT
+      [--brightness --color --speed]` (static, breathing, color-cycle, reactive; only AC's speed values),
+      `--set-kb-sleep MIN|never`, `--set-kb-warning 10|20`, `--save` = 50 55; read back effect (12 00 [9]) / 12 01 [6], [9].
+      Dry runs match the AC captures byte for byte (tests). Waiting for the owner's go per command before the first send.
       Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
       51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users

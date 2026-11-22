@@ -98,13 +98,13 @@ private func json() throws -> [String: Any] {
             let led = LEDState(mode: LEDMode(name: args["mode"] as! String)!, brightness: args["brightness"] as! Int,
                                color: RGB(hex: args["color"] as! String)!)
             let command = try Command.setLED(LEDZone(rawValue: args["zone"] as! String)!, led)
-            let packet = try Packet.build(reportID: 0x03, command: command, length: 64)
+            let packet = try Packet.build(device: .mouse, reportID: 0x03, command: command, length: 64)
             #expect(packet.count == 64)
             #expect(Array(packet.prefix(13)) == bytes(write["packet"] as! String), "\(write["name"]!)")
             #expect(packet.dropFirst(13).allSatisfy { $0 == 0 })
         }
         let save = (writes["save"] as! [String: Any])["packet"] as! String
-        #expect(Array(try Packet.build(reportID: 0x03, command: .save, length: 64).prefix(3)) == bytes(save))
+        #expect(Array(try Packet.build(device: .mouse, reportID: 0x03, command: .save, length: 64).prefix(3)) == bytes(save))
     }
 
     /// protocol.json mouse_writes.settings_writes: same vectors as the Python tests.
@@ -130,7 +130,7 @@ private func json() throws -> [String: Any] {
             default: Issue.record("unknown function \(write["function"]!)"); continue
             }
             let head = bytes(write["packet"] as! String)
-            let packet = try Packet.build(reportID: 0x03, command: command, length: 64)
+            let packet = try Packet.build(device: .mouse, reportID: 0x03, command: command, length: 64)
             #expect(Array(packet.prefix(head.count)) == head, "\(write["name"]!)")
             #expect(packet.dropFirst(head.count).allSatisfy { $0 == 0 })
         }
@@ -158,9 +158,9 @@ private func json() throws -> [String: Any] {
                       "51 35 00 00 01 00 01 1c 34 16", "51 31 06 00 02", "51 31 0b 00 07 00", "51 37 00 00 05 00 14",
                       "51 37 00 01 03 00 14", "50 02 01"])
     func everythingElseStaysRefused(hex: String) {
-        #expect(!Allowlist.isAllowedWrite(bytes(hex)))
+        #expect(!Allowlist.isAllowedWrite(bytes(hex), for: .mouse))
         #expect(throws: CommandError.self) {
-            try Packet.build(reportID: 0x03, command: Command(bytes(hex), isWrite: true), length: 64)
+            try Packet.build(device: .mouse, reportID: 0x03, command: Command(bytes(hex), isWrite: true), length: 64)
         }
     }
 
@@ -184,7 +184,7 @@ private func json() throws -> [String: Any] {
         let captures = section["captures"] as! [[String: Any]]
         let sheath = captures.first { $0["name"] as? String == "lift-off low -> high (surface ROG Sheath)" }!
         let command = try Command.setLiftoff("high", surfaceID: 0x01, surfaceParams: [0x1C, 0x34, 0x16])
-        #expect(Array(try Packet.build(reportID: 0x03, command: command, length: 64).prefix(11))
+        #expect(Array(try Packet.build(device: .mouse, reportID: 0x03, command: command, length: 64).prefix(11))
                 == bytes((sheath["packets"] as! [String])[0]))
         var s = MouseSettings()
         let read = bytes(sheath["read_after"] as! String)
@@ -198,7 +198,7 @@ private func json() throws -> [String: Any] {
             #expect(Command.surfaceName(id) == (id == 0xFF ? "None (no calibration)" : name))
             let c = try Command.setLiftoff("low", surfaceID: id, surfaceParams: params)
             let expected = preset["packet"] as? String ?? "03 51 35 00 00 \(preset["id"]!) 00 00 \(preset["params"]!)"
-            #expect(Array(try Packet.build(reportID: 0x03, command: c, length: 64).prefix(c.bytes.count + 1)) == bytes(expected))
+            #expect(Array(try Packet.build(device: .mouse, reportID: 0x03, command: c, length: 64).prefix(c.bytes.count + 1)) == bytes(expected))
         }
         #expect(Command.surfaces.count == presets.count - 1)
     }
@@ -253,7 +253,7 @@ private func json() throws -> [String: Any] {
         commands += [try Command.setStageCount(4), try Command.setActiveStage(after["dpi_stage"] as! Int)]
         let packets = Set(capture["packets"] as! [String])
         for c in commands {
-            let head = Array(try Packet.build(reportID: 0x03, command: c, length: 64).prefix(c.bytes.count + 1))
+            let head = Array(try Packet.build(device: .mouse, reportID: 0x03, command: c, length: 64).prefix(c.bytes.count + 1))
             #expect(packets.contains(ReplyParser.hex(head)), "\(ReplyParser.hex(head))")
         }
     }
@@ -298,7 +298,7 @@ private func json() throws -> [String: Any] {
 
     @Test func wiredWriteIsUnnumbered65Bytes() throws {
         let command = try Command.setLED(.wheel, LEDState(mode: .static, brightness: 100, color: RGB(0, 0, 0xFF)))
-        let packet = try Packet.build(reportID: nil, command: command, length: 65)
+        let packet = try Packet.build(device: .mouse, reportID: nil, command: command, length: 65)
         #expect(packet.count == 65)
         #expect(Array(packet.prefix(13)) == [0x00, 0x51, 0x28, 0x01, 0x00, 0x00, 0x64, 0x00, 0x00, 0xFF, 0, 0, 0])
     }
@@ -323,33 +323,52 @@ private func json() throws -> [String: Any] {
         #expect(Allowlist.reads.allSatisfy { $0.first == 0x12 })
     }
 
+    @Test func readsAndWritesOnlyForTheirOwnDevice() throws {
+        // mouse reads and writes never pass for the keyboard, keyboard reads never for the mouse
+        #expect(throws: CommandError.self) { try Packet.build(device: .keyboard, reportID: 0x02, command: .mouseBattery, length: 64) }
+        #expect(throws: CommandError.self) { try Packet.build(device: .mouse, reportID: 0x03, command: .keyboardBattery, length: 64) }
+        #expect(throws: CommandError.self) { try Packet.build(device: .mouse, reportID: 0x03, command: KeyboardQuery.layout.command, length: 64) }
+        #expect(throws: CommandError.self) { try Packet.build(device: .keyboard, reportID: 0x02, command: .save, length: 64) }
+        #expect(throws: CommandError.self) { try Packet.build(device: .keyboard, reportID: nil, command: .save, length: 65) }
+        let led = try Command.setLED(.logo, LEDState(mode: .static, brightness: 100, color: RGB(255, 0, 0)))
+        #expect(!Allowlist.isAllowedWrite(led.bytes, for: .keyboard))
+        #expect(Allowlist.isAllowedWrite(led.bytes, for: .mouse))
+        #expect(!Allowlist.isAllowedWrite([0x51, 0x37, 0x00, 0x00, 0x03, 0x00, 0x14], for: .keyboard))
+    }
+
+    @Test func reportIDMustBeTheDevicesOwn() {
+        #expect(throws: CommandError.self) { try Packet.build(device: .keyboard, reportID: 0x03, command: .keyboardBattery, length: 64) }
+        #expect(throws: CommandError.self) { try Packet.build(device: .mouse, reportID: 0x02, command: .mouseBattery, length: 64) }
+        #expect(throws: CommandError.self) { try Packet.build(device: .mouse, reportID: 0x02, command: .save, length: 64) }
+    }
+
     @Test func profileSwitchIsNeverAllowed() {
-        #expect(!Allowlist.isAllowedWrite([0x50, 0x02]))
-        #expect(!Allowlist.isAllowedWrite([0x50, 0x02, 0x01]))
+        #expect(!Allowlist.isAllowedWrite([0x50, 0x02], for: .mouse))
+        #expect(!Allowlist.isAllowedWrite([0x50, 0x02, 0x01], for: .mouse))
     }
 
     @Test func writeBytesAreRefusedOnTheReadPath() {
         // a write command marked as a read must not pass, and a read marked as a write must not either
-        #expect(throws: CommandError.self) { try Packet.build(reportID: 3, command: Command([0x50, 0x03]), length: 64) }
+        #expect(throws: CommandError.self) { try Packet.build(device: .mouse, reportID: 3, command: Command([0x50, 0x03]), length: 64) }
         #expect(throws: CommandError.self) {
-            try Packet.build(reportID: 3, command: Command([0x12, 0x07], isWrite: true), length: 64)
+            try Packet.build(device: .mouse, reportID: 3, command: Command([0x12, 0x07], isWrite: true), length: 64)
         }
-        #expect(throws: CommandError.self) { try Packet.build(reportID: 3, command: Command([0x12, 0x05]), length: 64) }
+        #expect(throws: CommandError.self) { try Packet.build(device: .mouse, reportID: 3, command: Command([0x12, 0x05]), length: 64) }
     }
 
     @Test func malformedLEDWritesAreRefused() {
         let ok: [UInt8] = [0x51, 0x28, 0x00, 0x00, 0x00, 0x64, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00]
-        #expect(Allowlist.isAllowedWrite(ok))
-        var zone = ok; zone[2] = 0x03; #expect(!Allowlist.isAllowedWrite(zone))
-        var speed = ok; speed[11] = 0x05; #expect(!Allowlist.isAllowedWrite(speed))
-        var bright = ok; bright[5] = 101; #expect(!Allowlist.isAllowedWrite(bright))
-        #expect(!Allowlist.isAllowedWrite(Array(ok.dropLast())))
+        #expect(Allowlist.isAllowedWrite(ok, for: .mouse))
+        var zone = ok; zone[2] = 0x03; #expect(!Allowlist.isAllowedWrite(zone, for: .mouse))
+        var speed = ok; speed[11] = 0x05; #expect(!Allowlist.isAllowedWrite(speed, for: .mouse))
+        var bright = ok; bright[5] = 101; #expect(!Allowlist.isAllowedWrite(bright, for: .mouse))
+        #expect(!Allowlist.isAllowedWrite(Array(ok.dropLast()), for: .mouse))
     }
 
     @Test func batteryPacketsGoThroughTheAllowlist() throws {
         for target in Target.all {
             for length in target.reportLengths {
-                #expect(try Packet.build(reportID: target.reportID, command: target.command, length: length)
+                #expect(try Packet.build(device: target.device, reportID: target.reportID, command: target.command, length: length)
                         == target.packet(length: length))
             }
         }

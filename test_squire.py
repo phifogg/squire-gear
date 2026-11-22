@@ -312,7 +312,7 @@ class AllowlistTests(unittest.TestCase):
         for command in (bytes([0x51, 0x28, 0x00]), bytes([0x50, 0x02, 0x01]), bytes([0x50, 0x03]),
                         bytes([0x51, 0x31, 0x00]), bytes([0x12, 0x99])):
             with self.subTest(command=command.hex(" ")), self.assertRaises(ValueError):
-                rb.packet(0x03, command, 64)
+                rb.packet(0x03, command, 64, device="mouse")
 
     def test_exact_bytes_omni(self):
         expected = {
@@ -323,14 +323,14 @@ class AllowlistTests(unittest.TestCase):
         self.assertEqual(set(expected), set(rb.MOUSE_SETTINGS_QUERIES))
         for name, prefix in expected.items():
             with self.subTest(name=name):
-                data = rb.packet(0x03, rb.MOUSE_SETTINGS_QUERIES[name], 64)
+                data = rb.packet(0x03, rb.MOUSE_SETTINGS_QUERIES[name], 64, device="mouse")
                 head = bytes.fromhex(prefix)
                 self.assertEqual(len(data), 64)
                 self.assertEqual(data[:len(head)], head)
                 self.assertEqual(set(data[len(head):]), {0})
 
     def test_exact_bytes_wired(self):
-        data = rb.packet(None, rb.MOUSE_SETTINGS_QUERIES["led_side"], 65)
+        data = rb.packet(None, rb.MOUSE_SETTINGS_QUERIES["led_side"], 65, device="mouse")
         self.assertEqual((len(data), data[:4]), (65, bytes.fromhex("00 12 03 02")))
 
 
@@ -556,7 +556,7 @@ class LedWriteTests(unittest.TestCase):
     def test_exact_bytes_static_red_logo(self):
         command = rb.led_command("logo", "static", 100, "#ff0000")
         self.assertEqual(command.hex(" "), "51 28 00 00 00 64 ff 00 00 00 00 00")
-        data = rb.packet(0x03, command, 64, write=True)
+        data = rb.packet(0x03, command, 64, write=True, device="mouse")
         self.assertEqual((len(data), data[:13].hex(" ")), (64, "03 51 28 00 00 00 64 ff 00 00 00 00 00"))
         self.assertEqual(set(data[13:]), {0})
 
@@ -569,7 +569,7 @@ class LedWriteTests(unittest.TestCase):
         # tested on the device: the Keris ignores it, so the allowlist keeps [9..11] at 00
         command = rb.led_command("logo", "color-cycle", 50, "#ff0000")
         self.assertEqual(command[9:], b"\0\0\0")
-        self.assertFalse(rb.is_allowed_write(command[:11] + b"\x05"))
+        self.assertFalse(rb.is_allowed_write(command[:11] + b"\x05", "mouse"))
 
     def test_invalid_values_are_refused(self):
         for args in (("bottom", "static", 50), ("logo", "rainbow", 50), ("logo", "static", 101),
@@ -580,15 +580,15 @@ class LedWriteTests(unittest.TestCase):
     def test_reads_cannot_send_writes_and_writes_need_the_flag(self):
         command = rb.led_command("logo", "static", 100, "#ff0000")
         with self.assertRaises(ValueError):
-            rb.packet(0x03, command, 64)                    # write without write=True
+            rb.packet(0x03, command, 64, device="mouse")                    # write without write=True
         with self.assertRaises(ValueError):
-            rb.packet(0x03, rb.MOUSE_QUERY, 64, write=True)  # a read is not a write
+            rb.packet(0x03, rb.MOUSE_QUERY, 64, write=True, device="mouse")  # a read is not a write
         tampered = command[:9] + b"\x01\x00\x00"           # direction byte set: still refused
         with self.assertRaises(ValueError):
-            rb.packet(0x03, tampered, 64, write=True)
-        self.assertEqual(rb.packet(0x03, rb.SAVE_COMMAND, 64, write=True)[:3].hex(" "), "03 50 03")
+            rb.packet(0x03, tampered, 64, write=True, device="mouse")
+        self.assertEqual(rb.packet(0x03, rb.SAVE_COMMAND, 64, write=True, device="mouse")[:3].hex(" "), "03 50 03")
         with self.assertRaises(ValueError):
-            rb.packet(0x03, bytes([0x50, 0x02, 0x01]), 64, write=True)   # profile switch: never
+            rb.packet(0x03, bytes([0x50, 0x02, 0x01]), 64, write=True, device="mouse")   # profile switch: never
 
     def test_dry_run_touches_no_device(self):
         class NoBackend:
@@ -610,7 +610,7 @@ class RealWriteVectorTests(unittest.TestCase):
                 a = w["args"]
                 command = rb.led_command(a["zone"], a["mode"], a["brightness"], a["color"])
                 head = bytes.fromhex(w["packet"])
-                packet = rb.packet(0x03, command, 64, write=True)
+                packet = rb.packet(0x03, command, 64, write=True, device="mouse")
                 self.assertEqual(packet[:len(head)], head)
                 self.assertEqual(set(packet[len(head):]), {0})
                 self.assertTrue(rb.led_matches(a, w["read_back"]))
@@ -625,7 +625,7 @@ class RealSettingsWriteVectorTests(unittest.TestCase):
             with self.subTest(name=w["name"]):
                 command = getattr(rb, w["function"])(*w["args"])
                 head = bytes.fromhex(w["packet"])
-                packet = rb.packet(0x03, command, 64, write=True)
+                packet = rb.packet(0x03, command, 64, write=True, device="mouse")
                 self.assertEqual(packet[:len(head)], head)
                 self.assertEqual(set(packet[len(head):]), {0})
 
@@ -745,7 +745,7 @@ class PowerAndSensorWriteTests(unittest.TestCase):
         self.assertEqual(rb.angle_snapping_command(False).hex(" "), "51 31 06 00 00")
         self.assertEqual(rb.angle_tuning_command(-20).hex(" "), "51 31 0b 00 ec ff")
         self.assertEqual(rb.angle_tuning_command(15).hex(" "), "51 31 0b 00 0f 00")
-        data = rb.packet(None, rb.power_command(3, 20), 65, write=True)
+        data = rb.packet(None, rb.power_command(3, 20), 65, write=True, device="mouse")
         self.assertEqual((len(data), data[:8].hex(" ")), (65, "00 51 37 00 00 02 00 14"))
         self.assertEqual(set(data[8:]), {0})
 
@@ -776,9 +776,9 @@ class PowerAndSensorWriteTests(unittest.TestCase):
                      "51 37 00 01 03 00 14",     # reserved byte set
                      "50 02 01"):                # profile switch: never
             with self.subTest(command=hex_):
-                self.assertFalse(rb.is_allowed_write(bytes.fromhex(hex_)))
+                self.assertFalse(rb.is_allowed_write(bytes.fromhex(hex_), "mouse"))
                 with self.assertRaises(ValueError):
-                    rb.packet(0x03, bytes.fromhex(hex_), 64, write=True)
+                    rb.packet(0x03, bytes.fromhex(hex_), 64, write=True, device="mouse")
 
     def make(self, awake=True):
         """Fake mouse on the Omni that keeps power-off code, warning, snapping and tuning like the real one."""
@@ -898,7 +898,7 @@ class LiftoffWriteTests(unittest.TestCase):
         data = json.loads((Path(__file__).parent / "protocol.json").read_text())["mouse_writes"]["armoury_crate"]
         captures = {c["name"]: c for c in data["captures"]}
         sheath = captures["lift-off low -> high (surface ROG Sheath)"]
-        self.assertEqual(rb.packet(0x03, rb.liftoff_command("high", 0x01, "1c 34 16"), 64, write=True)[:11].hex(" "),
+        self.assertEqual(rb.packet(0x03, rb.liftoff_command("high", 0x01, "1c 34 16"), 64, write=True, device="mouse")[:11].hex(" "),
                          sheath["packets"][0])
         for name, (liftoff, sid, params) in {sheath["name"]: ("high", 0x01, "1c 34 16"),
                                              "surface ROG Sheath -> Balteus Qi": ("low", 0x0B, "1a 32 20")}.items():
@@ -913,7 +913,7 @@ class LiftoffWriteTests(unittest.TestCase):
                     " (second tile, same name)", " (2)"))
                 command = rb.liftoff_command("low", sid, preset["params"])
                 expected = preset.get("packet") or f"03 51 35 00 00 {preset['id']} 00 00 {preset['params']}"
-                self.assertEqual(rb.packet(0x03, command, 64, write=True)[:len(command) + 1].hex(" "), expected)
+                self.assertEqual(rb.packet(0x03, command, 64, write=True, device="mouse")[:len(command) + 1].hex(" "), expected)
         self.assertEqual(len(rb.SURFACES), len(presets) - 1)
 
     def make(self, surface=(0x01, b"\x1c\x34\x16"), liftoff=0, keep_surface=True):
@@ -1041,7 +1041,7 @@ class DpiWriteTests(unittest.TestCase):
         after = capture["after"]
         built = [rb.dpi_command(i + 1, after["dpi"][i], after["dpi_colors"][i]) for i in range(4)]
         built += [rb.stage_count_command(4), rb.active_stage_command(after["dpi_stage"])]
-        built = {rb.packet(0x03, c, 64, write=True)[:len(c) + 1].hex(" ") for c in built}
+        built = {rb.packet(0x03, c, 64, write=True, device="mouse")[:len(c) + 1].hex(" ") for c in built}
         self.assertLessEqual(built, set(capture["packets"]))
 
     def make(self, xy=None, colors=None, stage=4, count=4):
@@ -1206,6 +1206,233 @@ class SwiftBarTests(unittest.TestCase):
 
     def test_nothing_found(self):
         self.assertIn("No ASUS devices", rb.swiftbar([]))
+
+
+class PerDeviceAllowlistTests(unittest.TestCase):
+    """A command is only allowed for the device it belongs to; the report ID must be that device's."""
+
+    MOUSE_WRITES = lambda: [rb.led_command("logo", "static", 100, "#ff0000"), rb.power_command(5, 20),
+                            rb.polling_command(1000), rb.SAVE_COMMAND]
+    KEYBOARD_WRITES = lambda: [rb.keyboard_light_command("static", 50, "#ff0000"), rb.keyboard_sleep_command(5),
+                               rb.keyboard_warning_command(20), rb.KEYBOARD_SAVE_COMMAND]
+
+    def test_writes_only_for_their_own_device(self):
+        for command in PerDeviceAllowlistTests.MOUSE_WRITES():
+            with self.subTest(mouse=command.hex(" ")):
+                self.assertTrue(rb.is_allowed_write(command, "mouse"))
+                self.assertFalse(rb.is_allowed_write(command, "keyboard"))
+                with self.assertRaises(ValueError):
+                    rb.packet(0x02, command, 64, write=True, device="keyboard")
+                with self.assertRaises(ValueError):
+                    rb.packet(None, command, 65, write=True, device="keyboard")
+        for command in PerDeviceAllowlistTests.KEYBOARD_WRITES():
+            with self.subTest(keyboard=command.hex(" ")):
+                self.assertTrue(rb.is_allowed_write(command, "keyboard"))
+                self.assertFalse(rb.is_allowed_write(command, "mouse"))
+                with self.assertRaises(ValueError):
+                    rb.packet(0x03, command, 64, write=True, device="mouse")
+
+    def test_reads_only_for_their_own_device(self):
+        with self.assertRaises(ValueError):
+            rb.packet(0x02, rb.MOUSE_QUERY, 64, device="keyboard")
+        with self.assertRaises(ValueError):
+            rb.packet(0x02, rb.MOUSE_SETTINGS_QUERIES["led_logo"], 64, device="keyboard")
+        with self.assertRaises(ValueError):
+            rb.packet(0x03, rb.KEYBOARD_QUERY, 64, device="mouse")
+        with self.assertRaises(ValueError):
+            rb.packet(0x03, rb.KEYBOARD_SETTINGS_QUERIES["layout"], 64, device="mouse")
+        self.assertEqual(rb.packet(0x02, rb.KEYBOARD_QUERY, 64, device="keyboard")[:3].hex(" "), "02 12 01")
+
+    def test_report_id_must_match_the_device(self):
+        with self.assertRaises(ValueError):
+            rb.packet(0x03, rb.keyboard_sleep_command(3), 64, write=True, device="keyboard")
+        with self.assertRaises(ValueError):
+            rb.packet(0x02, rb.power_command(3, 20), 64, write=True, device="mouse")
+        with self.assertRaises(ValueError):
+            rb.packet(0x02, rb.KEYBOARD_QUERY, 64, device="printer")
+        with self.assertRaises(TypeError):
+            rb.packet(0x02, rb.KEYBOARD_QUERY, 64)        # the device is never implied
+
+    def test_g_helper_keyboard_warning_is_refused(self):
+        # G-Helper's 51 37 for the keyboard: AC sends 51 3a; 51 37 is the mouse's power command
+        self.assertFalse(rb.is_allowed_write(bytes.fromhex("51 37 00 00 03 00 14"), "keyboard"))
+
+
+class KeyboardWriteTests(unittest.TestCase):
+    def captures(self):
+        return json.loads((Path(__file__).parent / "protocol.json").read_text())["keyboard_writes"]
+
+    def test_armoury_crate_single_colour_packets(self):
+        data = self.captures()
+        writes = data["writes"] + data["capture_2"]["writes"] + data["capture_3"]["effect_writes"]
+        speeds = {v: k for e in rb.KEYBOARD_LIGHT_SPEEDS.values() for k, v in e.items()}
+        checked = 0
+        for w in writes:
+            if "packet" not in w:
+                continue
+            raw = bytes.fromhex(w["packet"])
+            effect = rb.KEYBOARD_LIGHT_MODES[raw[3]]
+            if effect not in rb.KEYBOARD_LIGHT_SPEEDS:
+                continue        # starry night, current, raindrop: not written by Squire yet
+            with self.subTest(name=w["name"]):
+                command = rb.keyboard_light_command(effect, raw[6], "#" + raw[10:13].hex(), speeds[raw[5]])
+                self.assertEqual(rb.packet(0x02, command, 64, write=True, device="keyboard"), raw)
+                checked += 1
+        self.assertGreaterEqual(checked, 10)
+
+    def test_armoury_crate_power_packets(self):
+        for w in self.captures()["capture_3"]["power_writes"]:
+            raw = bytes.fromhex(w["packet"])
+            with self.subTest(name=w["name"]):
+                if raw[1:3] == b"\x51\x38":
+                    command = rb.keyboard_sleep_command(rb.POWER_OFF_MINUTES[raw[5]])
+                else:
+                    command = rb.keyboard_warning_command(raw[5])
+                self.assertEqual(rb.packet(0x02, command, 64, write=True, device="keyboard"), raw)
+        save = bytes.fromhex(self.captures()["save"]["packet"])
+        self.assertEqual(rb.packet(0x02, rb.KEYBOARD_SAVE_COMMAND, 64, write=True, device="keyboard"), save)
+
+    def test_squire_writes_confirmed_on_the_device(self):
+        data = self.captures()["squire_writes"]["writes"]
+        for w in data:
+            with self.subTest(name=w["name"]):
+                command = getattr(rb, w["function"])(*w["args"])
+                head = bytes.fromhex(w["packet"])
+                packet = rb.packet(0x02, command, 64, write=True, device="keyboard")
+                self.assertEqual(packet[:len(head)], head)
+                self.assertEqual(set(packet[len(head):]), {0})
+                if "read_back" in w:
+                    s = rb.KeyboardSettings("k", "omni")
+                    rb.parse_keyboard_settings(s, "battery", bytes.fromhex(w["read_back"])[1:])
+                    self.assertEqual({k: getattr(s, k) for k in w["expect"]}, w["expect"])
+
+    def test_defaults_and_wired_framing(self):
+        self.assertEqual(rb.keyboard_light_command("breathing", 100, "#3584e4").hex(" "),
+                         "51 2c 01 00 1e 64 00 ff ff 35 84 e4")              # normal speed
+        self.assertEqual(rb.keyboard_light_command("reactive", 100, "#0002ff")[4], 0x0F)   # only speed
+        self.assertEqual(rb.keyboard_light_command("color-cycle", 50, "#ff0000")[9:], b"\0\0\0")
+        self.assertEqual(rb.keyboard_sleep_command(None).hex(" "), "51 38 00 00 ff")
+        data = rb.packet(None, rb.keyboard_sleep_command(3), 65, write=True, device="keyboard")
+        self.assertEqual((len(data), data[:6].hex(" ")), (65, "00 51 38 00 00 02"))
+
+    def test_invalid_values_are_refused(self):
+        for call in (lambda: rb.keyboard_light_command("rainbow", 50),          # gradient: not yet
+                     lambda: rb.keyboard_light_command("raindrop", 50),         # background unknown
+                     lambda: rb.keyboard_light_command("reactive", 50, speed="slow"),
+                     lambda: rb.keyboard_light_command("static", 101),
+                     lambda: rb.keyboard_light_command("static", 50, "#12345"),
+                     lambda: rb.keyboard_sleep_command(4), lambda: rb.keyboard_warning_command(25)):
+            with self.assertRaises(ValueError):
+                call()
+
+    def test_everything_else_stays_refused(self):
+        for hex_ in ("51 2c 00 00 0f 32 00 ff ff ff 00 00",   # static with a speed
+                     "51 2c 01 00 10 32 00 ff ff ff 00 00",   # breathing speed AC never sent
+                     "51 2c 02 00 1f 32 00 ff ff ff 00 00",   # colour cycle with a colour
+                     "51 2c 00 00 ff 65 00 ff ff ff 00 00",   # 101 %
+                     "51 2c 00 00 ff 32 00 00 00 ff 00 00",   # [7..8] not ff ff
+                     "51 2c 04 02 3e 32 00 00 02 07 0e f5",   # rainbow gradient chunk
+                     "51 2c 00 00 ff 32 00 ff ff ff 00",      # cut short
+                     "51 38 00 00 05", "51 38 00 01 02", "51 3a 00 00 32",
+                     "50 03", "50 02 01", "51 28 00 00 00 64 ff 00 00 00 00 00"):
+            with self.subTest(command=hex_):
+                self.assertFalse(rb.is_allowed_write(bytes.fromhex(hex_), "keyboard"))
+
+    def make(self, awake=True, keep=True, save_echo=True):
+        """Fake Falchion on the Omni: keeps effect, sleep and warning like the real one; never reports a colour."""
+        state = {"effect": 0x03, "sleep": 0x02, "warn": 20}
+        sent = []
+
+        class Dev(FakeDevice):
+            def write(self, data):
+                data = bytes(data)
+                sent.append(data)
+                assert data[0] == 0x02, "keyboard traffic must use report ID 02"
+                cmd = data[1:]
+                if not awake:
+                    self.replies = [[0x02, 0xFF, 0xAA] + [0] * 61]
+                elif cmd[:2] == b"\x12\x01":
+                    self.replies = [settings_reply(rb.KEYBOARD_QUERY, {5: 71, 6: state["sleep"], 9: state["warn"], 10: 71}, rid=0x02)]
+                elif cmd[:2] == b"\x12\x00":
+                    self.replies = [settings_reply(cmd[:2], {9: state["effect"], 10: 1}, rid=0x02)]
+                elif cmd[:2] in (b"\x51\x2c", b"\x51\x38", b"\x51\x3a"):
+                    if keep:
+                        if cmd[:2] == b"\x51\x2c":
+                            state["effect"] = cmd[2]
+                        elif cmd[:2] == b"\x51\x38":
+                            state["sleep"] = cmd[4]
+                        else:
+                            state["warn"] = cmd[4]
+                    # the receiver answers ff aa first (provisional), then the echo
+                    self.replies = [[0x02, 0xFF, 0xAA] + [0] * 61, settings_reply(cmd[:2], {}, rid=0x02)]
+                elif cmd[:2] == b"\x50\x55":
+                    self.replies = [settings_reply(cmd[:2], {}, rid=0x02)] if save_echo else []
+                return len(data)
+
+        class Backend:
+            def enumerate(self, vid, pid):
+                return [{"path": b"omni", "product_id": pid, "usage_page": 0xFF00, "interface_number": 2}] \
+                    if pid == rb.PID_OMNI else []
+
+            def device(self):
+                return Dev([])
+
+        return Backend(), sent, state
+
+    def test_sleep_write_read_back_and_save(self):
+        backend, sent, state = self.make()
+        result = rb.set_keyboard_sleep(5, save=True, hid=backend)
+        self.assertEqual((result.status, result.saved), ("ok", True))
+        self.assertEqual((result.before, result.after), ({"sleep_minutes": 3}, {"sleep_minutes": 5}))
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 01", "12 01", "51 38", "12 01", "50 55"])
+        self.assertEqual(sent[2][:6].hex(" "), "02 51 38 00 00 03")
+
+    def test_warning_without_save(self):
+        backend, sent, state = self.make()
+        result = rb.set_keyboard_warning(10, hid=backend)
+        self.assertEqual((result.status, result.saved, state["warn"]), ("ok", False, 10))
+        self.assertNotIn("50 55", [p[1:3].hex(" ") for p in sent])
+
+    def test_light_checks_the_effect_and_says_the_colour_is_unchecked(self):
+        backend, sent, state = self.make()
+        result = rb.set_keyboard_light("static", 100, "#ff0000", hid=backend)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual((result.before, result.after), ({"light_mode": "reactive"}, {"light_mode": "static"}))
+        self.assertIn("cannot be read", result.message)
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 01", "12 00", "51 2c", "12 00"])
+
+    def test_mismatch_is_never_saved(self):
+        backend, sent, _ = self.make(keep=False)
+        result = rb.set_keyboard_sleep(5, save=True, hid=backend)
+        self.assertEqual((result.status, result.saved), ("mismatch", False))
+        self.assertNotIn("50 55", [p[1:3].hex(" ") for p in sent])
+
+    def test_unconfirmed_save_is_not_saved(self):
+        backend, _, _ = self.make(save_echo=False)
+        result = rb.set_keyboard_sleep(5, save=True, hid=backend)
+        self.assertFalse(result.saved)
+        self.assertIn("50 55", result.message)
+
+    def test_asleep_writes_nothing(self):
+        backend, sent, _ = self.make(awake=False)
+        result = rb.set_keyboard_light("static", 100, "#ff0000", hid=backend)
+        self.assertEqual(result.status, "asleep")
+        self.assertEqual([p[1:3].hex(" ") for p in sent], ["12 01"])
+
+    def test_dry_run_touches_no_device(self):
+        class NoBackend:
+            def enumerate(self, *a):
+                raise AssertionError("dry run must not enumerate")
+        result = rb.set_keyboard_sleep(None, save=True, dry_run=True, hid=NoBackend())
+        self.assertEqual(result.sent, ["02 51 38 00 00 ff … (Omni, 64 bytes)", "00 51 38 00 00 ff … (wired, 65 bytes)",
+                                       "02 50 55 … (Omni, 64 bytes)", "00 50 55 … (wired, 65 bytes)"])
+
+    def test_mouse_command_is_refused_on_the_keyboard_path(self):
+        backend, sent, _ = self.make()
+        for command in (rb.power_command(5, 20), lambda before: rb.power_command(5, 20)):
+            with self.assertRaises(ValueError):
+                rb.write_verified(command, "battery", lambda s: {}, lambda a, b: True, hid=backend, device="keyboard")
+        self.assertNotIn("51 37", [p[1:3].hex(" ") for p in sent])
 
 
 if __name__ == "__main__":

@@ -531,9 +531,9 @@ def planned_packets(s: squire.MouseSettings, pending: dict) -> list[str]:
     after = preview_settings(s, pending)
     for key in changes(s, pending):
         command = change_command(s, key, pending[key], after)
-        lines.append(squire.packet(report_id, command, length, write=True)[:len(command) + 1].hex(" ") + " …")
+        lines.append(squire.packet(report_id, command, length, write=True, device="mouse")[:len(command) + 1].hex(" ") + " …")
     if lines:
-        lines.append(squire.packet(report_id, squire.SAVE_COMMAND, length, write=True)[:3].hex(" ") + " …  (save)")
+        lines.append(squire.packet(report_id, squire.SAVE_COMMAND, length, write=True, device="mouse")[:3].hex(" ") + " …  (save)")
     return lines
 
 

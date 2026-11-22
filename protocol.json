@@ -872,6 +872,39 @@
         }
       ],
       "after": "Squire read afterwards: reactive, sleep 3 min, warning 20 % (12 01 again answered ff aa first, then the reply). AC also read the mouse once (03 12 00 02, 03 12 07)."
+    },
+    "squire_writes": {
+      "_comment": "Writes sent by Squire itself (squire.py, Linux hidraw via the Omni, 2026-11-22), each approved by the owner before the first send. Unsaved (no 50 55) unless noted.",
+      "writes": [
+        {
+          "name": "sleep 3 -> 5 min",
+          "function": "keyboard_sleep_command",
+          "args": [
+            5
+          ],
+          "packet": "02 51 38 00 00 03",
+          "reply": "02 51 38 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "read_back": "02 12 01 00 00 00 46 03 01 00 14 46 8a 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+          "expect": {
+            "sleep_minutes": 5,
+            "low_warning": 20
+          },
+          "notes": "Echoed at once (no ff aa first). 12 01 [6] 02 -> 03. Not saved."
+        },
+        {
+          "name": "sleep 5 -> 3 min (restore)",
+          "function": "keyboard_sleep_command",
+          "args": [
+            3
+          ],
+          "packet": "02 51 38 00 00 02",
+          "expect": {
+            "sleep_minutes": 3,
+            "low_warning": 20
+          },
+          "notes": "Read back 3 min. Not saved."
+        }
+      ]
     }
   }
 }
