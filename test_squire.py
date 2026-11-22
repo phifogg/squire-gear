@@ -1301,7 +1301,13 @@ class KeyboardWriteTests(unittest.TestCase):
                 packet = rb.packet(0x02, command, 64, write=True, device="keyboard")
                 self.assertEqual(packet[:len(head)], head)
                 self.assertEqual(set(packet[len(head):]), {0})
-                if "read_back" in w:
+                if "read_back" in w and w["function"] == "keyboard_light_command":
+                    s = rb.KeyboardSettings("k", "omni")
+                    rb.parse_keyboard_settings(s, "profile", bytes.fromhex(w["read_back"])[1:])
+                    self.assertEqual(s.light_mode, w["args"][0])
+                    rb.parse_keyboard_settings(s, "profile", bytes.fromhex(w["after_power_cycle"])[1:])
+                    self.assertEqual(s.light_mode, "raindrop")        # unsaved: lost after off/on
+                elif "read_back" in w:
                     s = rb.KeyboardSettings("k", "omni")
                     rb.parse_keyboard_settings(s, "battery", bytes.fromhex(w["read_back"])[1:])
                     self.assertEqual({k: getattr(s, k) for k in w["expect"]}, w["expect"])

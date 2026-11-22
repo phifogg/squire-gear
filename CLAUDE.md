@@ -324,7 +324,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       [--brightness --color --speed]` (static, breathing, color-cycle, reactive; only AC's speed values),
       `--set-kb-sleep MIN|never`, `--set-kb-warning 10..50` (10/20 confirmed, 30..50 assumed like the mouse, check AC), `--save` = 50 55; read back effect (12 00 [9]) / 12 01 [6], [9].
       Dry runs match the AC captures byte for byte (tests). Confirmed on the device via Omni (unsaved, restored):
-      sleep 3->5->3 min, warning 20->10->20 % (2026-11-22, keyboard_writes.squire_writes). Waiting for the owner's go per command before the first send.
+      sleep 3->5->3 min, warning 20->10->20 % (2026-11-22, keyboard_writes.squire_writes), lighting static red 50 %
+      (owner saw it on all keys; unsaved, so raindrop came back after off/on: RAM only, like the mouse). Waiting for the owner's go per command before the first send.
       Next (owner, 2026-11-22, on Linux): keyboard writes. Propose 51 2c (single-colour effects), 51 38 (sleep),
       51 3a (warning), 50 55 (save) with --dry-run, show the bytes before the first send, then approve one by one.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
