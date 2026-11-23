@@ -13,22 +13,39 @@ func batteryColor(for battery: Battery) -> Color {
 
 struct MenuBarLabel: View {
     @ObservedObject var store: BatteryStore
+    @AppStorage(BatteryStore.showPercentagesKey) private var showPercentages = true
 
     // MenuBarExtra only shows a single image or plain text: inline SF Symbols in Text are dropped and a
     // second HStack child is ignored. So the whole label is drawn into one template NSImage, which macOS
     // tints for light/dark mode.
+    // Two separate views with their own identity: switching the mode rebuilds the status item. Reusing one Image
+    // kept the old size, so the percentages came out squeezed and cut off after "shield only" was turned off.
     var body: some View {
-        Image(nsImage: rendered)
+        if showPercentages {
+            Image(nsImage: render(percentages)).id("percentages")
+        } else {
+            Image(nsImage: render(shield)).id("shield")
+        }
     }
 
-    private var rendered: NSImage {
-        let content = HStack(spacing: 8) {
+    private var percentages: some View {
+        HStack(spacing: 8) {
             part("keyboard", store.keyboard)
             part("computermouse", store.mouse)
         }
         .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(.black)   // template images use only the alpha channel
-        .fixedSize()
+    }
+
+    /// Icon-only mode: the Squire shield (16 x 16 path), blade cut out.
+    private var shield: some View {
+        MouseDrawing.shield.fill(style: FillStyle(eoFill: true)).frame(width: 16, height: 16)
+    }
+
+    private func render(_ view: some View) -> NSImage {
+        let content = view
+            .frame(height: 18)          // same height in both modes
+            .foregroundStyle(.black)    // template images use only the alpha channel
+            .fixedSize()
         let renderer = ImageRenderer(content: content)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         let image = renderer.nsImage ?? NSImage()
@@ -52,6 +69,7 @@ struct MenuBarLabel: View {
 struct PopoverView: View {
     @ObservedObject var store: BatteryStore
     @AppStorage(BatteryStore.notifyKey) private var notifyWhenLow = true
+    @AppStorage(BatteryStore.showPercentagesKey) private var showPercentages = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     // Hidden: hold Option while clicking the menu bar item to show the debug section.
     @State private var showDebug = NSEvent.modifierFlags.contains(.option)
@@ -70,6 +88,7 @@ struct PopoverView: View {
             Button("Settings…") { SettingsWindowController.shared.show() }
             Divider()
             Toggle("Notify when low", isOn: $notifyWhenLow)
+            Toggle("Show percentages in menu bar", isOn: $showPercentages)
             Toggle("Launch at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { enabled in
                     do {
@@ -93,6 +112,7 @@ struct PopoverView: View {
             HStack {
                 Button("Refresh now") { store.refresh() }.disabled(store.isRefreshing)
                 Spacer()
+                Button("About") { showAboutPanel() }
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
         }

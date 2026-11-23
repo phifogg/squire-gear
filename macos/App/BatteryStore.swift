@@ -10,6 +10,8 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
 
     static let pollInterval: TimeInterval = 60
     static let notifyKey = "notifyWhenLow"
+    /// Off: the menu bar shows only the Squire shield, no percentages.
+    static let showPercentagesKey = "showPercentages"
     private static let stateKey = "notificationState"
 
     @Published private(set) var keyboard: Battery?
@@ -27,7 +29,7 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
 
     func start() {
         guard timer == nil else { return }
-        UserDefaults.standard.register(defaults: [Self.notifyKey: true])
+        UserDefaults.standard.register(defaults: [Self.notifyKey: true, Self.showPercentagesKey: true])
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }

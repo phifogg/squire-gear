@@ -265,14 +265,15 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       hidden debug section (hold Option in the popover)
 - [ ] Widget (WidgetKit): shares values with the app through an App Group; the widget must not do USB itself.
       Needs a development team for the App Group.
-- [ ] Backlog (Swift app): About screen (version + build from the bundle, GitHub link, MIT license,
-      credits/disclaimer: G-Helper protocol facts, not affiliated with ASUS); reachable from the popover.
-      Maybe later a "check for updates" against the GitHub releases.
+- [ ] About + icon-only mode, branch `about-and-icon-mode` (2026-11-23, Mac and Linux; Mac confirmed by the owner incl. switching back and forth, Linux not tested yet):
+      "About" in the popover (standard About panel: version + build, GitHub link, MIT, credits/disclaimer) and
+      "About Squire" in the tray menu (Gtk.AboutDialog, text from squire_tray.about_info()); toggle "Show percentages
+      in menu bar" / "... in top bar" (default on; off = only the shield; Mac UserDefaults `showPercentages`,
+      Linux settings.json `show_percentages`). Mac label: each mode is its own view with its own .id and both render
+      18 pt high; one reused Image kept the shield's size and squeezed the percentages after switching back. Later maybe a "check for updates" against the GitHub releases.
 - [ ] Backlog (Swift app): battery history log (CSV in Application Support: time, percent, charging, mV per
       poll), to check whether the percentage steps down while the voltage drifts; later "time remaining".
       Observed: the keyboard stayed at 78 % for a day while mV went ~4088 -> ~4080.
-- [ ] Backlog (Swift app): optional icon-only menu bar mode (a single Squire icon instead of one entry
-      per device; setting in the popover, maybe tint/badge when a device is low)
 - [ ] Device configuration (0.3), Linux first, then macOS; see Direction. First step: branch `mouse-read`
   - [x] macOS settings window, same as Linux (branch `macos-settings-window`): reads, LED edit + Apply
   - [x] macOS reads confirmed on the device via Omni (`squire-probe --settings`, 2026-11-11); `--repeat 30` no crash
