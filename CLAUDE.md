@@ -265,7 +265,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       hidden debug section (hold Option in the popover)
 - [ ] Widget (WidgetKit): shares values with the app through an App Group; the widget must not do USB itself.
       Needs a development team for the App Group.
-- [ ] About + icon-only mode, branch `about-and-icon-mode` (2026-11-23, Mac and Linux; Mac confirmed by the owner incl. switching back and forth, Linux not tested yet):
+- [x] About + icon-only mode, branch `about-and-icon-mode` (2026-11-23, Mac and Linux; Mac confirmed by the owner incl. switching back and forth, Linux confirmed by the owner on Ubuntu 26.04 from the repo, 2026-11-24: About dialog, toggle off/on):
       "About" in the popover (standard About panel: version + build, GitHub link, MIT, credits/disclaimer) and
       "About Squire" in the tray menu (Gtk.AboutDialog, text from squire_tray.about_info()); toggle "Show percentages
       in menu bar" / "... in top bar" (default on; off = only the shield; Mac UserDefaults `showPercentages`,
@@ -274,6 +274,13 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] Backlog (Swift app): battery history log (CSV in Application Support: time, percent, charging, mV per
       poll), to check whether the percentage steps down while the voltage drifts; later "time remaining".
       Observed: the keyboard stayed at 78 % for a day while mV went ~4088 -> ~4080.
+- [ ] Backlog (owner, 2026-11-22): settings window lists only the devices that are connected (today both are always
+      listed, even when nothing is found); keep a hint when none is connected
+- [ ] Backlog (owner, 2026-11-22): animate the keyboard effects in the settings drawing (especially raindrop,
+      rainbow, ripple, starry night, ...), using the chosen speed / direction / colours; static effects stay a glow
+- [ ] Backlog (owner, 2026-11-22): refactoring: linux/squire_settings.py (~1800 lines) and macos/App/SettingsWindow.swift
+      have grown large with only two devices. Split per device (mouse page, keyboard page, shared apply bar / editors),
+      pure logic in its own module; do it before adding a third device. Ties in with the Rust-core decision.
 - [ ] Device configuration (0.3), Linux first, then macOS; see Direction. First step: branch `mouse-read`
   - [x] macOS settings window, same as Linux (branch `macos-settings-window`): reads, LED edit + Apply
   - [x] macOS reads confirmed on the device via Omni (`squire-probe --settings`, 2026-11-11); `--repeat 30` no crash
