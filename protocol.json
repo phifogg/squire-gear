@@ -228,6 +228,18 @@
           "receiver_firmware": null
         },
         "notes": "[4..6]=09 00 01 mouse firmware 01.00.09; [14..16]=00, no receiver. Profile, stage and count at the same indices as via the Omni."
+      },
+      {
+        "command": "profile",
+        "reply": "12 00 00 00 10 00 01 00 05 07 00 03 ff ff 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "profile": 1,
+          "dpi_stage": 3,
+          "dpi_stage_count": 4,
+          "firmware": "01.00.10",
+          "receiver_firmware": null
+        },
+        "notes": "Wired on Linux (Ubuntu 26.04, hidraw), 2026-11-24, after the AC firmware update: interface 0 is its own hidraw node with only ff01 (not skipped). [4..6]=10 00 01 = 01.00.10, [11]=03 stage 3 (1600 DPI). The other reads (12 04 00/02/03, 12 03 00..02, 12 06) and the battery 12 07 00 00 37 02 14 bf 0f 01 (55 %, power-off 3 min, warning 20 %, 4031 mV, charging) parse as via the Omni; the Omni path answered ff aa meanwhile."
       }
     ]
   },
@@ -620,6 +632,16 @@
           "iso": true
         },
         "notes": "Wired, same layout reply as via the Omni."
+      },
+      {
+        "command": "profile",
+        "reply": "12 00 00 00 13 00 05 00 06 03 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "expect": {
+          "firmware": "05.00.13",
+          "light_mode": "reactive",
+          "profile": 4
+        },
+        "notes": "Wired on Linux (Ubuntu 26.04, hidraw /dev/hidraw13 = pid 1b04 interface 1, only ff00), 2026-11-24: same format as on Windows, no report ID. [9]=03 reactive and [10]=04 profile 4 match what the owner saved via the Omni (profile 4, reactive). Battery 12 01 over the cable in the same session: 12 01 00 00 00 3e 02 01 01 14 3e a8 0f = 62 %, charging, sleep 3 min, warning 20 %, 0x0fa8 = 4008 mV; the Omni path answered ff aa meanwhile."
       }
     ],
     "sleep_captures": [

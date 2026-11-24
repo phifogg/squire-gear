@@ -42,8 +42,8 @@ Version 0.4.0. Tested on macOS with a Falchion RX Low Profile and a Keris II Ori
 Battery percentage and charging state are confirmed for both devices, connected through the
 Omni receiver and over a USB cable.
 
-Linux (since 0.2.1) is tested on Ubuntu 26.04 with GNOME, through the Omni receiver. The USB
-cable connection is not tested on Linux yet.
+Linux (since 0.2.1) is tested on Ubuntu 26.04 with GNOME, through the Omni receiver and over a
+USB cable (battery and settings reads for both devices).
 
 The warning level for the notification is read from the device's reply (20 % on both test
 devices). It is not yet confirmed that this level follows changes made in Armoury Crate; if a
@@ -62,8 +62,8 @@ Not tested yet:
 - Other ROG keyboards and mice. They may work if they use the same protocol, but the
   device IDs are not included.
 - Launch at login from a downloaded copy of the app.
-- Linux: wired keyboard and mouse, desktops other than GNOME (KDE Plasma should work, it
-  supports the same tray protocol).
+- Linux: changing settings over the USB cable, desktops other than GNOME (KDE Plasma should
+  work, it supports the same tray protocol).
 
 ## Installation
 

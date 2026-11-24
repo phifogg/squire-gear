@@ -12,7 +12,7 @@ Private working notes (log, contacts, plans) live in `CLAUDE.local.md` (git-igno
 - Mouse: ASUS ROG Keris II Origin (wired PID `0b05:1c0c`)
 - Both also via the ROG Omni receiver `0b05:1ace`
 - Confirmed on macOS: Omni and wired, both devices, Python and Swift. Linux (Ubuntu 26.04, GNOME 50): Omni,
-  both devices; wired not tested yet.
+  both devices; wired keyboard and mouse confirmed (2026-11-24).
 
 ## Layout
 ```
@@ -339,8 +339,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       polling, surface, lift-off): written, read back, matched, settings unchanged. 50 03 is echoed (LED, --save).
       A save now counts only when echoed. Linux window Apply confirmed by the owner, no errors: DPI value/colour,
       stage/count, polling + surface + lift-off in one Apply, power-off, "same effect on all zones" (2026-11-13).
-- [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
-      is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
+- [ ] Linux: KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
 - [x] Keyboard reads (Falchion RX LP), branch `keyboard-read`, PR #7 merged 2026-11-22: `--keyboard-settings` reads
       profile, layout, lighting effect, sleep, warning, firmware; read-only keyboard page with an own 65 % drawing in
       both windows (macOS confirmed on the Mac 2026-11-13). Windows session 2026-11-21: effect names (= G-Helper ids
@@ -393,6 +392,10 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       one-colour AC packet, the 7 presets). Written on Linux without a Swift compiler: CI (`swift test`) checks the
       core; the app target only builds in Xcode. Owner built the app on the Mac and tested it: works (2026-11-22).
       squire-probe has no keyboard writes.
+- [x] Linux wired keyboard + mouse (2026-11-24, Ubuntu 26.04, reads only): keyboard pid 1b04 iface 1 and mouse
+      pid 1c0c iface 0 are their own hidraw nodes with only ff00 / ff01 (the mixed ifaces are skipped); battery,
+      charging, --keyboard-settings and --settings read over the cable, same replies as on Windows/macOS
+      (protocol.json keyboard_settings.captures_wired, mouse_settings_wired). Writes over the cable not tried on Linux
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects
