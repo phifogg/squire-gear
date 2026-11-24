@@ -48,11 +48,13 @@ private func bytes(_ hex: String) -> [UInt8] { hex.split(separator: " ").compact
             let reply = bytes(capture["reply"] as! String)
             #expect(ReplyParser.echoIndex(in: reply, query: query.command.bytes) == 0)
             k.apply(query, reply)
+            let expect = capture["expect"] as! [String: Any]   // each capture against its own values, like Python
+            if let firmware = expect["firmware"] as? String { #expect(k.firmware == firmware) }
+            if let mode = expect["light_mode"] as? String { #expect(k.lightMode == mode) }
+            if let profile = expect["profile"] as? Int { #expect(k.profile == profile) }
         }
-        #expect(k.firmware == "05.00.13")
+        #expect(captures.count >= 3)
         #expect(k.receiverFirmware == nil)
-        #expect(k.lightMode == "raindrop")
-        #expect(k.profile == 1)
         #expect(k.layoutText == "CH-DE · ISO")
     }
 
