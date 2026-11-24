@@ -610,7 +610,8 @@ class RealWriteVectorTests(unittest.TestCase):
                 a = w["args"]
                 command = rb.led_command(a["zone"], a["mode"], a["brightness"], a["color"])
                 head = bytes.fromhex(w["packet"])
-                packet = rb.packet(0x03, command, 64, write=True, device="mouse")
+                wired = w.get("connection") == "wired"     # over the cable: no report ID (00), 65 bytes
+                packet = rb.packet(None if wired else 0x03, command, 65 if wired else 64, write=True, device="mouse")
                 self.assertEqual(packet[:len(head)], head)
                 self.assertEqual(set(packet[len(head):]), {0})
                 self.assertTrue(rb.led_matches(a, w["read_back"]))

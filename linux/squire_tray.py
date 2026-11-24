@@ -66,6 +66,23 @@ def panel_text(batteries: dict) -> str:
 PANEL_GUIDE = "  ".join(f"{symbol} 100%{BOLT}" for _, symbol, _ in DEVICES)  # widest label, keeps the width stable
 
 
+def panel_label_and_guide(batteries: dict, show_percentages: bool) -> tuple[str, str]:
+    """Label + width guide for the indicator; empty for the icon-only mode (only the shield in the top bar)."""
+    return (panel_text(batteries), PANEL_GUIDE) if show_percentages else ("", "")
+
+
+REPO_URL = "https://github.com/phifogg/squire-gear"
+ABOUT_COMMENTS = "Battery and settings for ASUS ROG keyboards and mice."
+ABOUT_CREDITS = ("Protocol facts from G-Helper (GPL-3.0), libratbag and captures of Armoury Crate; no code copied.\n"
+                 "Not affiliated with or endorsed by ASUS. ROG is a trademark of ASUSTeK Computer Inc.")
+
+
+def about_info() -> dict:
+    """Text for the About dialog (same as the Mac app's About panel)."""
+    return {"name": "Squire", "version": squire.__version__, "comments": ABOUT_COMMENTS,
+            "website": REPO_URL, "license": "MIT", "copyright": "© Daniel Draes", "credits": ABOUT_CREDITS}
+
+
 def icon_dir() -> str:
     """Folder with the top bar icon: linux/icons in the repository, icons/ next to the installed script."""
     return str(Path(__file__).resolve().parent / "icons")
@@ -90,10 +107,11 @@ def device_lines(b: Optional[Battery], fallback_name: str) -> list[str]:
 
 
 def load_settings(path: Path = SETTINGS_FILE) -> dict:
-    settings = {"notify_when_low": True}
+    settings = {"notify_when_low": True, "show_percentages": True}
     data = squire._load_state(path)
-    if isinstance(data.get("notify_when_low"), bool):
-        settings["notify_when_low"] = data["notify_when_low"]
+    for key in settings:
+        if isinstance(data.get(key), bool):
+            settings[key] = data[key]
     return settings
 
 
@@ -222,6 +240,21 @@ def run() -> int:
             except GLib.Error as error:
                 return f"unavailable ({error.message})"
 
+    about_dialog: list = []   # at most one open About dialog
+
+    def show_about() -> None:
+        if about_dialog:
+            about_dialog[0].present()
+            return
+        info = about_info()
+        dialog = Gtk.AboutDialog(program_name=info["name"], version=info["version"], comments=info["comments"],
+                                 website=info["website"], website_label="GitHub", copyright=info["copyright"],
+                                 license_type=Gtk.License.MIT_X11, logo_icon_name=APP_ID)
+        dialog.add_credit_section("Thanks", [info["credits"]])
+        dialog.connect("response", lambda d, _: (about_dialog.clear(), d.destroy()))
+        about_dialog.append(dialog)
+        dialog.present()
+
     class DeviceMenu:
         """The menu of the top bar entry, same items as the Mac popover."""
 
@@ -247,8 +280,11 @@ def run() -> int:
             self.notify_item.connect("toggled", self.on_notify)
             self.login_item = Gtk.CheckMenuItem(label="Launch at login")
             self.login_item.connect("toggled", self.on_login)
+            self.percent_item = Gtk.CheckMenuItem(label="Show percentages in top bar")
+            self.percent_item.connect("toggled", self.on_percentages)
             self.menu.append(self.notify_item)
             self.menu.append(self.login_item)
+            self.menu.append(self.percent_item)
             self.menu.append(Gtk.SeparatorMenuItem())
 
             debug = Gtk.Menu()
@@ -269,9 +305,12 @@ def run() -> int:
 
             self.refresh_item = Gtk.MenuItem(label="Refresh now")
             self.refresh_item.connect("activate", lambda _: app.refresh())
+            about_item = Gtk.MenuItem(label="About Squire")
+            about_item.connect("activate", lambda _: show_about())
             quit_item = Gtk.MenuItem(label="Quit")
             quit_item.connect("activate", lambda _: app.quit())
             self.menu.append(self.refresh_item)
+            self.menu.append(about_item)
             self.menu.append(quit_item)
             self.menu.show_all()
             self.updating = False
@@ -287,6 +326,7 @@ def run() -> int:
                     item.set_label(text)
                     item.set_visible(bool(text))
             self.notify_item.set_active(app.settings["notify_when_low"])
+            self.percent_item.set_active(app.settings["show_percentages"])
             self.login_item.set_active(AUTOSTART_FILE.exists())
             self.refresh_item.set_sensitive(not app.refreshing)
             self.debug_status.set_label(f"Notifications: {app.notification_status}")
@@ -297,6 +337,12 @@ def run() -> int:
         def on_notify(self, item) -> None:
             if not self.updating:
                 self.app.settings["notify_when_low"] = item.get_active()
+                save_settings(self.app.settings)
+                self.app.update_ui()
+
+        def on_percentages(self, item) -> None:
+            if not self.updating:
+                self.app.settings["show_percentages"] = item.get_active()
                 save_settings(self.app.settings)
                 self.app.update_ui()
 
@@ -359,7 +405,7 @@ def run() -> int:
             self.notifier.post(title, body, key=title)
 
         def update_ui(self) -> None:
-            self.indicator.set_label(panel_text(self.batteries), PANEL_GUIDE)
+            self.indicator.set_label(*panel_label_and_guide(self.batteries, self.settings["show_percentages"]))
             self.menu.update()
 
         def send_test_notification(self) -> None:

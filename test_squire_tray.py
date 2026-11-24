@@ -62,16 +62,23 @@ class SettingsTests(unittest.TestCase):
 
     def test_defaults_and_roundtrip(self):
         path = self.dir / "a" / "settings.json"
-        self.assertEqual(tray.load_settings(path), {"notify_when_low": True})
-        tray.save_settings({"notify_when_low": False}, path)
-        self.assertEqual(tray.load_settings(path), {"notify_when_low": False})
+        self.assertEqual(tray.load_settings(path), {"notify_when_low": True, "show_percentages": True})
+        tray.save_settings({"notify_when_low": False, "show_percentages": False}, path)
+        self.assertEqual(tray.load_settings(path), {"notify_when_low": False, "show_percentages": False})
+
+    def test_old_settings_file_keeps_percentages_on(self):
+        path = self.dir / "settings.json"
+        path.write_text('{"notify_when_low": false}')   # written before 0.4.1
+        self.assertEqual(tray.load_settings(path), {"notify_when_low": False, "show_percentages": True})
 
     def test_corrupt_settings_fall_back(self):
         path = self.dir / "settings.json"
-        path.write_text('{"notify_when_low": "no"}')
-        self.assertEqual(tray.load_settings(path), {"notify_when_low": True})
+        defaults = {"notify_when_low": True, "show_percentages": True}
+        path.write_text('{"notify_when_low": "no", "show_percentages": 0}')
+        self.assertEqual(tray.load_settings(path), defaults)
         path.write_text("garbage")
-        self.assertEqual(tray.load_settings(path), {"notify_when_low": True})
+        self.assertEqual(tray.load_settings(path), defaults)
+
 
     def test_launch_at_login_writes_and_removes_entry(self):
         path = self.dir / "autostart" / "squire-gear.desktop"
@@ -161,6 +168,25 @@ class PackagingTests(unittest.TestCase):
             depends = " ".join(self.config["overrides"][packager]["depends"])
             self.assertIn("appindicator", depends)
 
+
+class PanelModeTests(unittest.TestCase):
+    def test_percentages_shown_with_guide(self):
+        label, guide = tray.panel_label_and_guide({}, True)
+        self.assertEqual(label, tray.panel_text({}))
+        self.assertEqual(guide, tray.PANEL_GUIDE)
+
+    def test_icon_only_has_no_label(self):
+        self.assertEqual(tray.panel_label_and_guide({}, False), ("", ""))
+
+
+class AboutTests(unittest.TestCase):
+    def test_about_info(self):
+        info = tray.about_info()
+        self.assertEqual(info["version"], tray.squire.__version__)
+        self.assertEqual(info["license"], "MIT")
+        self.assertEqual(info["website"], "https://github.com/phifogg/squire-gear")
+        self.assertIn("G-Helper", info["credits"])
+        self.assertIn("Not affiliated", info["credits"])
 
 if __name__ == "__main__":
     unittest.main()

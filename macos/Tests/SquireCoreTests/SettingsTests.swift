@@ -98,8 +98,10 @@ private func json() throws -> [String: Any] {
             let led = LEDState(mode: LEDMode(name: args["mode"] as! String)!, brightness: args["brightness"] as! Int,
                                color: RGB(hex: args["color"] as! String)!)
             let command = try Command.setLED(LEDZone(rawValue: args["zone"] as! String)!, led)
-            let packet = try Packet.build(device: .mouse, reportID: 0x03, command: command, length: 64)
-            #expect(packet.count == 64)
+            let wired = write["connection"] as? String == "wired"   // over the cable: no report ID (00), 65 bytes
+            let packet = try Packet.build(device: .mouse, reportID: wired ? nil : 0x03, command: command,
+                                          length: wired ? 65 : 64)
+            #expect(packet.count == (wired ? 65 : 64))
             #expect(Array(packet.prefix(13)) == bytes(write["packet"] as! String), "\(write["name"]!)")
             #expect(packet.dropFirst(13).allSatisfy { $0 == 0 })
         }

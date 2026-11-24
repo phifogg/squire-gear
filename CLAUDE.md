@@ -12,7 +12,7 @@ Private working notes (log, contacts, plans) live in `CLAUDE.local.md` (git-igno
 - Mouse: ASUS ROG Keris II Origin (wired PID `0b05:1c0c`)
 - Both also via the ROG Omni receiver `0b05:1ace`
 - Confirmed on macOS: Omni and wired, both devices, Python and Swift. Linux (Ubuntu 26.04, GNOME 50): Omni,
-  both devices; wired not tested yet.
+  both devices; wired keyboard and mouse confirmed (2026-11-24).
 
 ## Layout
 ```
@@ -265,14 +265,22 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       hidden debug section (hold Option in the popover)
 - [ ] Widget (WidgetKit): shares values with the app through an App Group; the widget must not do USB itself.
       Needs a development team for the App Group.
-- [ ] Backlog (Swift app): About screen (version + build from the bundle, GitHub link, MIT license,
-      credits/disclaimer: G-Helper protocol facts, not affiliated with ASUS); reachable from the popover.
-      Maybe later a "check for updates" against the GitHub releases.
+- [x] About + icon-only mode, branch `about-and-icon-mode` (2026-11-23, Mac and Linux; Mac confirmed by the owner incl. switching back and forth, Linux confirmed by the owner on Ubuntu 26.04 from the repo, 2026-11-24: About dialog, toggle off/on):
+      "About" in the popover (standard About panel: version + build, GitHub link, MIT, credits/disclaimer) and
+      "About Squire" in the tray menu (Gtk.AboutDialog, text from squire_tray.about_info()); toggle "Show percentages
+      in menu bar" / "... in top bar" (default on; off = only the shield; Mac UserDefaults `showPercentages`,
+      Linux settings.json `show_percentages`). Mac label: each mode is its own view with its own .id and both render
+      18 pt high; one reused Image kept the shield's size and squeezed the percentages after switching back. Later maybe a "check for updates" against the GitHub releases.
 - [ ] Backlog (Swift app): battery history log (CSV in Application Support: time, percent, charging, mV per
       poll), to check whether the percentage steps down while the voltage drifts; later "time remaining".
       Observed: the keyboard stayed at 78 % for a day while mV went ~4088 -> ~4080.
-- [ ] Backlog (Swift app): optional icon-only menu bar mode (a single Squire icon instead of one entry
-      per device; setting in the popover, maybe tint/badge when a device is low)
+- [ ] Backlog (owner, 2026-11-22): settings window lists only the devices that are connected (today both are always
+      listed, even when nothing is found); keep a hint when none is connected
+- [ ] Backlog (owner, 2026-11-22): animate the keyboard effects in the settings drawing (especially raindrop,
+      rainbow, ripple, starry night, ...), using the chosen speed / direction / colours; static effects stay a glow
+- [ ] Backlog (owner, 2026-11-22): refactoring: linux/squire_settings.py (~1800 lines) and macos/App/SettingsWindow.swift
+      have grown large with only two devices. Split per device (mouse page, keyboard page, shared apply bar / editors),
+      pure logic in its own module; do it before adding a third device. Ties in with the Rust-core decision.
 - [ ] Device configuration (0.3), Linux first, then macOS; see Direction. First step: branch `mouse-read`
   - [x] macOS settings window, same as Linux (branch `macos-settings-window`): reads, LED edit + Apply
   - [x] macOS reads confirmed on the device via Omni (`squire-probe --settings`, 2026-11-11); `--repeat 30` no crash
@@ -331,8 +339,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       polling, surface, lift-off): written, read back, matched, settings unchanged. 50 03 is echoed (LED, --save).
       A save now counts only when echoed. Linux window Apply confirmed by the owner, no errors: DPI value/colour,
       stage/count, polling + surface + lift-off in one Apply, power-off, "same effect on all zones" (2026-11-13).
-- [ ] Linux: test wired keyboard + mouse (does the Keris iface 0 node mix input and vendor collections? then it
-      is skipped by design), KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
+- [ ] Linux: KDE Plasma, Waybar/Polybar module using `--json`, maybe a .deb
 - [x] Keyboard reads (Falchion RX LP), branch `keyboard-read`, PR #7 merged 2026-11-22: `--keyboard-settings` reads
       profile, layout, lighting effect, sleep, warning, firmware; read-only keyboard page with an own 65 % drawing in
       both windows (macOS confirmed on the Mac 2026-11-13). Windows session 2026-11-21: effect names (= G-Helper ids
@@ -385,6 +392,11 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       one-colour AC packet, the 7 presets). Written on Linux without a Swift compiler: CI (`swift test`) checks the
       core; the app target only builds in Xcode. Owner built the app on the Mac and tested it: works (2026-11-22).
       squire-probe has no keyboard writes.
+- [x] Linux wired keyboard + mouse (2026-11-24, Ubuntu 26.04, reads only): keyboard pid 1b04 iface 1 and mouse
+      pid 1c0c iface 0 are their own hidraw nodes with only ff00 / ff01 (the mixed ifaces are skipped); battery,
+      charging, --keyboard-settings and --settings read over the cable, same replies as on Windows/macOS
+      (protocol.json keyboard_settings.captures_wired, mouse_settings_wired). Write over the cable confirmed on Linux:
+      mouse logo LED via the CLI (static green, unsaved, owner saw it, restored; protocol.json mouse_writes.writes)
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects
