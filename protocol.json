@@ -277,6 +277,22 @@
           "color": "#ff0000"
         },
         "notes": "Restored the owner's setting. Read back matched."
+      },
+      {
+        "name": "logo static green 100 % over the cable (Linux)",
+        "connection": "wired",
+        "args": {"zone": "logo", "mode": "static", "brightness": 100, "color": "#00ff00"},
+        "packet": "00 51 28 00 00 00 64 00 ff 00 00 00 00",
+        "read_back": {"mode": "static", "brightness": 100, "color": "#00ff00"},
+        "notes": "Linux (Ubuntu 26.04, hidraw, pid 1c0c iface 0), 2026-11-24, CLI --set-led, unsaved (no 50 03): written as 65 bytes with 00 prefix, echoed as 51 28 00 00 00 64 00 ff 00 (no report ID), 12 03 00 read back matched. Owner saw the logo turn solid green. Before: breathing 72 % #ff0000."
+      },
+      {
+        "name": "logo breathing 72 % red over the cable (restore)",
+        "connection": "wired",
+        "args": {"zone": "logo", "mode": "breathing", "brightness": 72, "color": "#ff0000"},
+        "packet": "00 51 28 00 00 01 48 ff 00 00 00 00 00",
+        "read_back": {"mode": "breathing", "brightness": 72, "color": "#ff0000"},
+        "notes": "Restored the owner's setting over the cable, unsaved. Read back matched."
       }
     ],
     "save": {

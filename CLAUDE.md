@@ -395,7 +395,8 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [x] Linux wired keyboard + mouse (2026-11-24, Ubuntu 26.04, reads only): keyboard pid 1b04 iface 1 and mouse
       pid 1c0c iface 0 are their own hidraw nodes with only ff00 / ff01 (the mixed ifaces are skipped); battery,
       charging, --keyboard-settings and --settings read over the cable, same replies as on Windows/macOS
-      (protocol.json keyboard_settings.captures_wired, mouse_settings_wired). Writes over the cable not tried on Linux
+      (protocol.json keyboard_settings.captures_wired, mouse_settings_wired). Write over the cable confirmed on Linux:
+      mouse logo LED via the CLI (static green, unsaved, owner saw it, restored; protocol.json mouse_writes.writes)
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 
 ## Related projects

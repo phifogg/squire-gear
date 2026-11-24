@@ -43,7 +43,7 @@ Battery percentage and charging state are confirmed for both devices, connected 
 Omni receiver and over a USB cable.
 
 Linux (since 0.2.1) is tested on Ubuntu 26.04 with GNOME, through the Omni receiver and over a
-USB cable (battery and settings reads for both devices).
+USB cable (battery and settings reads for both devices, an LED write on the mouse).
 
 The warning level for the notification is read from the device's reply (20 % on both test
 devices). It is not yet confirmed that this level follows changes made in Armoury Crate; if a
@@ -62,8 +62,8 @@ Not tested yet:
 - Other ROG keyboards and mice. They may work if they use the same protocol, but the
   device IDs are not included.
 - Launch at login from a downloaded copy of the app.
-- Linux: changing settings over the USB cable, desktops other than GNOME (KDE Plasma should
-  work, it supports the same tray protocol).
+- Linux: desktops other than GNOME (KDE Plasma should work, it supports the same tray
+  protocol).
 
 ## Installation
 
