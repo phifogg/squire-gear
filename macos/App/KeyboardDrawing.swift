@@ -4,20 +4,40 @@ import SquireCore
 /// Top view of the Falchion RX LP (own neutral artwork, no ASUS marks): a 65 % board shaped by the layout the
 /// keyboard reports (ISO or ANSI). Same shapes and coordinates as keyboard_svg() in linux/squire_settings.py.
 /// The keyboard cannot report its colour: with `light` (what Squire saved, or an edit not sent yet) the keys glow in
-/// it, otherwise a lit effect shows as a neutral glow. Same as keyboard_glow() on Linux.
+/// it, otherwise a lit effect shows as a neutral glow. Same as keyboard_glow() on Linux. With `keys` (per-key colours,
+/// {key id: "#rrggbb"}) each key is drawn in its own colour instead; with `onPaint` a click or drag over a key reports
+/// its id (painting in the editor).
 struct KeyboardDrawing: View {
     let settings: KeyboardSettings
     var light: KeyboardLight? = nil
+    var keys: [UInt8: String]? = nil
+    var onPaint: ((UInt8) -> Void)? = nil
 
     static let unit: CGFloat = 36, gap: CGFloat = 4, pad: CGFloat = 18
     static let size = CGSize(width: 16 * unit + 2 * pad, height: 5 * unit + 2 * pad)   // 612 x 216
 
     var body: some View {
-        Canvas { context, _ in
+        let canvas = Canvas { context, _ in
             draw(&context)
         }
         .frame(width: Self.size.width, height: Self.size.height)
         .accessibilityLabel("Top view of the keyboard")
+        if let onPaint {
+            canvas
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                    if let id = KeyboardEditing.keyAt(settings, x: value.location.x, y: value.location.y) { onPaint(id) }
+                })
+        } else {
+            canvas
+        }
+    }
+
+    /// Fill and legend colour of a key lit by per-key colours; nil for an unlit (black) key.
+    private func keyColours(_ id: UInt8) -> (fill: Color, legend: Color)? {
+        guard let keys, let rgb = RGB(hex: keys[id] ?? ""), !rgb.isBlack else { return nil }
+        let light = 0.299 * Double(rgb.r) + 0.587 * Double(rgb.g) + 0.114 * Double(rgb.b) > 140
+        return (Color(rgb), light ? Color(hex: 0x1C2026) : .white)
     }
 
     /// Fill and opacity of the glow under the keys.
@@ -59,7 +79,7 @@ struct KeyboardDrawing: View {
         context.fill(Path(roundedRect: CGRect(x: 5, y: pad + u, width: 4, height: 3 * u), cornerRadius: 2),
                      with: .color(Color(hex: 0x3A404A)))
 
-        if let mode = settings.lightMode, mode != KeyboardLighting.off {
+        if keys == nil, let mode = settings.lightMode, mode != KeyboardLighting.off {
             let (shading, opacity) = glow(mode)
             if opacity > 0 {
                 var glow = context
@@ -70,13 +90,17 @@ struct KeyboardDrawing: View {
             }
         }
 
-        let keyFill = GraphicsContext.Shading.color(Color(hex: 0x14171B))
+        let unlitFill = GraphicsContext.Shading.color(Color(hex: 0x14171B))
         let keyStroke = GraphicsContext.Shading.color(Color(hex: 0x3A404A))
-        let legendColor = Color(hex: 0x9AA3AE)
+        let unlitLegend = Color(hex: 0x9AA3AE)
+        let ids = KeyboardLayout.ids(for: settings)
         for (r, row) in KeyboardLayout.rows(for: settings).enumerated() {
             var x = pad
-            for key in row {
+            for (i, key) in row.enumerated() {
                 let y = pad + CGFloat(r) * u, w = CGFloat(key.width) * u - g, h = u - g
+                let lit = keyColours(ids[r][i])
+                let keyFill = lit.map { GraphicsContext.Shading.color($0.fill) } ?? unlitFill
+                let legendColor = lit?.legend ?? unlitLegend
                 if key.legend == KeyboardLayout.isoEnter {
                     // one key over two rows: 1.5 units on top, 1.25 below (right-aligned)
                     let x2 = x + 0.25 * u, bottom = y + 2 * u - g

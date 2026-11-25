@@ -12,12 +12,18 @@ public struct Command: Equatable, Hashable, Sendable {
     public let isWrite: Bool
     /// How many leading bytes of the command the reply echoes (and is matched on).
     public let echoLength: Int
+    /// The reply that acknowledges a command that is not echoed (per-key colours: c0 81 <n> 00 -> c0 82 <n> 00).
+    public let reply: [UInt8]?
 
-    init(_ bytes: [UInt8], isWrite: Bool = false, echoLength: Int? = nil) {
+    init(_ bytes: [UInt8], isWrite: Bool = false, echoLength: Int? = nil, reply: [UInt8]? = nil) {
         self.bytes = bytes
         self.isWrite = isWrite
         self.echoLength = echoLength ?? bytes.count
+        self.reply = reply
     }
+
+    /// What the reply must start with: the acknowledgement, else the echoed command.
+    public var expectedReply: [UInt8] { reply ?? Array(bytes.prefix(echoLength)) }
 
     public static let keyboardBattery = Command([0x12, 0x01])
     public static let mouseBattery = Command([0x12, 0x07])

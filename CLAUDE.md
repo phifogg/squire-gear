@@ -426,6 +426,12 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       (linux/packaging/io.github.phifogg.Squire.Settings.desktop = its app id, also written by install.sh), so GNOME
       shows it in the dock / Alt+Tab with the shield and in the app grid (confirmed by the owner). Started from a
       VS Code terminal it shows the VS Code icon (GNOME goes by the systemd scope); test from the app grid.
+      macOS port (2026-11-25, written on Linux without a Swift compiler, not built yet): SquireCore KeyboardKeys.swift
+      (KeyboardDirect = c0 81 packets + allowlist, Command.reply = the c0 82 acknowledgement, KeyPresets = the same
+      keyboard-keys.json + Squire defaults, halves rounded up in both ports), KeyboardChange.keys (never saved),
+      KeyboardLayout ids + fixed legends, KeyboardEditing per-key logic; app: drawing paints on click/drag, effect
+      picker sorted with Per-key colors, KeyboardKeysEditor (brush, Fill / Off, presets in sections, Save as /
+      Delete). Tests: KeyboardKeysTests (protocol.json direct vectors, Python's default colours).
 - [ ] OpenRGB upstream (owner, 2026-11-25): OpenRGB (GPL-2.0, facts only both ways) knows the older Keris
       (195c..1a68) and the original Falchion (193c/193e), not the Keris II Origin 1c0c, Falchion RX LP 1b04 or the Omni
       1ace. Its packets match ours (`51 28` zone LEDs + `50 03`, keyboard `51 2c`, `12 00` firmware), so contribute

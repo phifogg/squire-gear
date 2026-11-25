@@ -31,6 +31,12 @@ final class SettingsStore: ObservableObject {
     /// report its colour or brightness; KeyboardLightMemory, shared with squire.py).
     @Published private(set) var keyboardEdits = KeyboardEdits()
     @Published private(set) var keyboardKnown: KeyboardLight?
+    /// Per-key colours this window last sent (the keyboard cannot report them), the brush colour a click paints,
+    /// the key preset last loaded or saved, and the user's presets (keyboard-keys.json, shared with squire.py).
+    @Published private(set) var keyboardKeysActive: [UInt8: String]?
+    @Published var keyboardBrush = "#ff0000"
+    @Published private(set) var keyboardPreset: String?
+    @Published private(set) var userKeyPresets: [String: [UInt8: String]] = KeyPresets.load()
 
     var preview: MouseSettings? { settings.map { SettingsEditing.preview($0, pending: pending, other: other) } }
     var changes: [SettingChange] { settings.map { SettingsEditing.changes($0, pending: pending, other: other) } ?? [] }
@@ -140,6 +146,78 @@ final class SettingsStore: ObservableObject {
         return settings.map { SettingsEditing.plannedPackets($0, pending: pending, other: other) } ?? []
     }
 
+    // MARK: per-key colours
+
+    /// Per-key colours are being edited, or were sent last and no effect is pending.
+    var perKeyMode: Bool {
+        keyboardEdits.keys != nil || (keyboardKeysActive != nil && keyboardEdits.light == nil)
+    }
+
+    /// The colours the editor works on: the pending edit, else what was sent last, else all keys off.
+    var currentKeys: [UInt8: String] {
+        keyboardEdits.keys ?? keyboard.map { KeyboardEditing.keysStart($0, active: keyboardKeysActive) } ?? [:]
+    }
+
+    /// What the drawing shows: per-key colours, or nil for the effect's glow.
+    var shownKeys: [UInt8: String]? {
+        KeyboardEditing.shownKeys(keyboardEdits, active: keyboardKeysActive, perKeyMode: perKeyMode)
+    }
+
+    var builtinKeyPresets: [String: [UInt8: String]] { KeyPresets.builtin(iso: keyboard?.iso) }
+
+    /// The effect row: an effect, or "Per-key colors".
+    func selectEffect(_ choice: String) {
+        guard let keyboard else { return }
+        if choice == KeyboardEditing.perKey {
+            if !perKeyMode { keyboardEdits = KeyboardEditing.selectPerKey(keyboard, keyboardEdits, active: keyboardKeysActive) }
+            return
+        }
+        let leaving = perKeyMode
+        keyboardEdits.keys = nil
+        editKeyboardLight { $0.effect = choice }
+        // leaving per-key colours: the effect is sent even if it is the one Squire knows
+        if leaving && keyboardEdits.light == nil && keyboardKeysActive != nil {
+            keyboardEdits.light = KeyboardEditing.lightStart(keyboard, known: keyboardKnown)
+        }
+    }
+
+    func paintKeys(_ changes: [UInt8: String]) {
+        guard let keyboard else { return }
+        let base = keyboardEdits.keys == nil ? currentKeys : [:]
+        keyboardEdits = KeyboardEditing.paint(keyboard, keyboardEdits, active: keyboardKeysActive,
+                                              base.merging(changes) { _, new in new })
+    }
+
+    func paintKey(_ id: UInt8) {
+        if currentKeys[id] != keyboardBrush.lowercased() { paintKeys([id: keyboardBrush]) }
+    }
+
+    func loadKeyPreset(_ name: String) {
+        guard let keyboard, let keys = userKeyPresets[name] ?? builtinKeyPresets[name] else { return }
+        keyboardPreset = name
+        paintKeys(KeyboardEditing.fullKeys(keyboard, keys))
+    }
+
+    /// Stores the current colours as a preset in Squire (never on the keyboard); nil, or the reason it failed.
+    func saveKeyPreset(_ name: String) -> String? {
+        do {
+            try KeyPresets.save(name, currentKeys)
+        } catch {
+            return "\(error)"
+        }
+        userKeyPresets = KeyPresets.load()
+        keyboardPreset = name.trimmingCharacters(in: .whitespaces)
+        show(toast: "Preset \u{201C}\(keyboardPreset ?? name)\u{201D} saved in Squire")
+        return nil
+    }
+
+    func deleteKeyPreset() {
+        guard let name = keyboardPreset, userKeyPresets[name] != nil else { return }
+        try? KeyPresets.delete(name)
+        userKeyPresets = KeyPresets.load()
+        keyboardPreset = nil
+    }
+
     // MARK: keyboard editing
 
     /// The lighting as the editor shows it: the pending edit, else what Squire saved, else the effect read.
@@ -167,32 +245,43 @@ final class SettingsStore: ObservableObject {
     }
 
     /// Same as the mouse: sleep, warning, then the lighting; every chunk echoed, read back, and one 50 55 with the
-    /// last write, only if all earlier ones matched.
+    /// last of them, only if all earlier ones matched. Per-key colours go last and are never saved.
     private func applyKeyboard() {
         let work = keyboardEdits.changes
         guard !work.isEmpty else { return }
         applying = true
         let demo = demo
+        let savedWork = work.filter(\.isSaved)
         DispatchQueue.global(qos: .userInitiated).async {
             var results: [(KeyboardChange, KeyboardWriteResult)] = []
-            for (i, change) in work.enumerated() {
+            for change in work {
                 let result = demo
-                    ? KeyboardWriteResult(status: .ok, saved: true, message: "demo")   // nothing is sent
-                    : HIDReader().writeKeyboard(change, save: i == work.count - 1).result
+                    ? KeyboardWriteResult(status: .ok, saved: change.isSaved, message: "demo")   // nothing is sent
+                    : HIDReader().writeKeyboard(change, save: change == savedWork.last).result
                 results.append((change, result))
                 if result.status != .ok { break }
             }
-            let saved = results.count == work.count && results.allSatisfy { $0.1.status == .ok }
-                && results.last?.1.saved == true
-            for i in results.indices { results[i].1.saved = saved }
-            DispatchQueue.main.async { self.keyboardApplyDone(results) }
+            let savedResults = results.filter { $0.0.isSaved }
+            let saved = savedResults.count == savedWork.count && savedResults.allSatisfy { $0.1.status == .ok }
+                && (savedWork.isEmpty || savedResults.last?.1.saved == true)
+            for i in results.indices where results[i].0.isSaved { results[i].1.saved = saved }
+            DispatchQueue.main.async { self.keyboardApplyDone(results, onlyKeys: savedWork.isEmpty) }
         }
     }
 
-    private func keyboardApplyDone(_ results: [(KeyboardChange, KeyboardWriteResult)]) {
+    private func keyboardApplyDone(_ results: [(KeyboardChange, KeyboardWriteResult)], onlyKeys: Bool) {
         applying = false
         var failed: [(KeyboardChange, KeyboardWriteResult)] = []
         for (change, result) in results {
+            if case .keys(let keys) = change {
+                if result.status == .ok {
+                    keyboardKeysActive = keys
+                    keyboardEdits.keys = nil
+                } else {
+                    failed.append((change, result))
+                }
+                continue
+            }
             guard result.status == .ok, result.saved else { failed.append((change, result)); continue }
             switch change {
             case .sleep(let minutes):
@@ -210,10 +299,14 @@ final class SettingsStore: ObservableObject {
                 }
                 keyboardKnown = light
                 keyboardEdits.light = nil
+                keyboardKeysActive = nil          // the effect replaces per-key colours (confirmed 2026-11-25)
+            case .keys:
+                break                             // handled above
             }
         }
         if failed.isEmpty {
-            show(toast: "Saved to the keyboard" + (demo ? " (demo, nothing sent)" : ""))
+            show(toast: (onlyKeys ? "Sent to the keyboard (not stored on it)" : "Saved to the keyboard")
+                 + (demo ? " (demo, nothing sent)" : ""))
             return
         }
         let texts: [WriteResult.Status: String] = [

@@ -233,7 +233,8 @@ public final class HIDReader {
                     for command in commands {
                         let written = exchange(device, target: target, command: command, log: &log)
                         result.sent.append(Self.describe(target: target, command: command, prefix: command.bytes.count + 1))
-                        if written.status == .error || (commands.count > 1 && written.status != .ok) {
+                        // several chunks, or a command that is acknowledged: each must be answered before the next
+                        if written.status == .error || ((commands.count > 1 || command.reply != nil) && written.status != .ok) {
                             result.message = written.status == .error ? written.raw
                                 : "chunk \(ReplyParser.hex(Array(command.bytes.prefix(4)))): \(written.status.rawValue); nothing saved"
                             return (result, log)
@@ -241,7 +242,7 @@ public final class HIDReader {
                     }
                     result.after = readKeyboard(device, target: target, query: change.readBack, log: &log)
                     result.status = result.after.map { change.matches($0, before: result.before) } == true ? .ok : .mismatch
-                    if result.status == .ok && save {
+                    if result.status == .ok && save && change.isSaved {
                         let saved = exchange(device, target: target, command: .keyboardSave, log: &log)
                         result.sent.append(Self.describe(target: target, command: .keyboardSave, prefix: 3))
                         // saved only when the keyboard echoes 50 55 (as squire.py)
@@ -325,8 +326,7 @@ public final class HIDReader {
     private func exchange(_ device: IOHIDDevice, target: Target, command: Command, log: inout [String]) -> Exchange {
         let sent = request(device, target: target, command: command, log: &log)
         if let error = sent.error { return Exchange(status: .error, raw: error) }
-        return ReplyParser.exchange(replies: sent.replies, echo: Array(command.bytes.prefix(command.echoLength)),
-                                    reportID: target.reportID)
+        return ReplyParser.exchange(replies: sent.replies, echo: command.expectedReply, reportID: target.reportID)
     }
 
     static let reportBufferSize = 65   // max input report is 64 bytes on all known devices

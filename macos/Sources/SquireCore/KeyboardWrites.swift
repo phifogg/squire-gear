@@ -269,6 +269,7 @@ extension Allowlist {
         if c.starts(with: [0x51, 0x3A]) {
             return c.count == 5 && c[2] == 0 && c[3] == 0 && Command.keyboardWarningLevels.contains(Int(c[4]))
         }
+        if c.starts(with: KeyboardDirect.write) { return KeyboardDirect.isAllowed(c) }   // KeyboardKeys.swift
         guard c.count >= 4, c[0] == 0x51, c[1] == 0x2C, let effect = KeyboardSettings.lightModes[c[2]],
               let table = L.speeds[effect] else { return false }
         let speeds = Set(table.map(\.1))
@@ -307,20 +308,31 @@ public enum KeyboardChange: Equatable, Hashable, Sendable {
     case sleep(Int?)          // minutes, nil = never
     case warning(Int)         // %, 0 = never
     case light(KeyboardLight)
+    /// Per-key colours {key id: "#rrggbb"} (KeyboardKeys.swift): never saved, the keyboard cannot store them.
+    case keys([UInt8: String])
 
     public func commands() throws -> [Command] {
         switch self {
         case .sleep(let minutes): return [try .keyboardSleep(minutes)]
         case .warning(let percent): return [try .keyboardWarning(percent)]
         case .light(let light): return try KeyboardLighting.commands(light)
+        case .keys(let keys): return try KeyboardDirect.commands(KeyboardDirect.colours(keys))
         }
     }
 
+    /// Whether Apply saves it (50 55). Per-key colours are not: 50 55 stores nothing (tested 2026-11-25).
+    public var isSaved: Bool {
+        if case .keys = self { return false }
+        return true
+    }
+
     /// The read that shows the value: nil = the battery query 12 01, else 12 00 (effect only: colour and brightness
-    /// cannot be read from this keyboard).
+    /// cannot be read from this keyboard; per-key colours not at all, only that the profile stayed).
     public var readBack: KeyboardQuery? {
-        if case .light = self { return .profile }
-        return nil
+        switch self {
+        case .light, .keys: return .profile
+        default: return nil
+        }
     }
 
     /// Does the keyboard (as read) show this value? For lighting only the effect is readable, and the profile must
@@ -338,6 +350,9 @@ public enum KeyboardChange: Equatable, Hashable, Sendable {
         case .light(let light):
             return k.lightMode == KeyboardLighting.effectRead(light.effect) && k.profile != nil
                 && (before.map { $0.profile == k.profile } ?? true)
+        case .keys:
+            // nothing to read back: only that the keyboard still answers on the same profile (squire.py does the same)
+            return k.profile != nil && (before.map { $0.profile == k.profile } ?? true)
         }
     }
 
@@ -346,6 +361,7 @@ public enum KeyboardChange: Equatable, Hashable, Sendable {
         case .sleep: return "Sleep"
         case .warning: return "Low-battery warning"
         case .light: return "Lighting"
+        case .keys: return "Per-key colors"
         }
     }
 }

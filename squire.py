@@ -1535,12 +1535,12 @@ KEY_GROUPS = {
 def _hue(h: float) -> str:
     import colorsys
     r, g, b = colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0)
-    return "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+    return "#%02x%02x%02x" % tuple(int(c * 255 + 0.5) for c in (r, g, b))   # halves up, like the Swift port
 
 
 def _blend(a: str, b: str, t: float) -> str:
     ca, cb = bytes.fromhex(a[1:]), bytes.fromhex(b[1:])
-    return "#" + bytes(round(x + (y - x) * t) for x, y in zip(ca, cb)).hex()
+    return "#" + bytes(int(x + (y - x) * t + 0.5) for x, y in zip(ca, cb)).hex()   # halves up, like the Swift port
 
 
 def builtin_key_presets(iso: Optional[bool] = None) -> dict:
