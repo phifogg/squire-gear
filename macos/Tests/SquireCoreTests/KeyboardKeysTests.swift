@@ -128,7 +128,7 @@ private let iso = KeyboardSettings(connection: .omni)
         #expect(try KeyPresets.delete("Mine", url: url))
         #expect(try !KeyPresets.delete("Mine", url: url))
         // a file written by squire.py, with one broken entry
-        try #"{"version": 1, "presets": {"ok": {"keys": {"01": "#ff0000"}}, "bad": {"keys": {"00": "#ff0000"}}}}"#
+        try ##"{"version": 1, "presets": {"ok": {"keys": {"01": "#ff0000"}}, "bad": {"keys": {"00": "#ff0000"}}}}"##
             .write(to: url, atomically: true, encoding: .utf8)
         #expect(KeyPresets.load(url) == ["ok": [0x01: "#ff0000"]])
     }
