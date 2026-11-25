@@ -12,7 +12,8 @@ struct SquireApp: App {
 
     /// Development aids: `--settings` opens the settings window at launch; `--screenshot PATH [ZONE|keyboard] [edit] [linked]`
     /// (`keyboard edit`: a sample lighting edit on the keyboard page, `keyboard keys`: a per-key preset; never sent)
-    /// also saves it as PNG and quits (`linked`: the edit with "Same effect on all zones" on); `--demo` shows the
+    /// also saves it as PNG and quits (`linked`: the edit with "Same effect on all zones" on; `clean`: no bytes shown,
+    /// for README pictures); `--demo` shows the
     /// protocol.json captures and sends nothing.
     private static func handleLaunchArguments() {
         let args = CommandLine.arguments
@@ -28,7 +29,7 @@ struct SquireApp: App {
                     store.keyboardZone = .light
                     store.selectEffect(KeyboardEditing.perKey)
                     store.loadKeyPreset("Fixed rainbow")
-                    store.showBytes = true
+                    store.showBytes = !args.contains("clean")
                 }
             }
             if args.contains("edit") {   // sample edit, never sent: static blue on the selected light
@@ -40,7 +41,7 @@ struct SquireApp: App {
                             $0.effect = "raindrop"; $0.mode = "double"; $0.color = "#3d8bff"; $0.color2 = "#ff00ff"
                             $0.background = "#1bff00"
                         }
-                        store.showBytes = true
+                        store.showBytes = !args.contains("clean")
                         return
                     }
                     store.device = .mouse
@@ -55,7 +56,7 @@ struct SquireApp: App {
                     } else if store.selected == .sensor {  // sample: snapping on, tuning -5°, lift-off high
                         store.editOther { $0.angleSnapping = true; $0.angleTuning = -5; $0.liftoff = "high" }
                     }
-                    store.showBytes = true
+                    store.showBytes = !args.contains("clean")
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {

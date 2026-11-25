@@ -3,23 +3,33 @@
 **A lightweight companion for ASUS ROG peripherals on macOS and Linux.**
 
 Squire shows the battery level of the **ASUS ROG Falchion RX Low Profile** keyboard and the
-**ASUS ROG Keris II Origin** mouse in the macOS menu bar or the Linux top bar, without Armoury Crate.
+**ASUS ROG Keris II Origin** mouse in the macOS menu bar or the Linux top bar, and lets you change
+their lighting and settings, without Armoury Crate.
 Like a squire looking after a knight's blades, it keeps an eye on your Falchion and Keris.
 
 ```
 ⌨ 78%⚡︎  🖱 77%
 ```
 
+![Squire's settings window on macOS: per-key colours on the Falchion RX Low Profile](docs/screenshots/keyboard-per-key.png)
+
+| Mouse: lights, DPI, sensor, power | Keyboard: lighting effects |
+|---|---|
+| ![Mouse settings: Keris II Origin with logo, scroll wheel and side light](docs/screenshots/mouse-settings.png) | ![Keyboard lighting: raindrop with two colours and a background colour](docs/screenshots/keyboard-lighting.png) |
+
+The Linux settings window has the same layout (GTK 4 and libadwaita).
+
 ## Features
 
 - Battery percentage and charging state for keyboard and mouse
 - Works through the **ROG Omni receiver**, so both devices can share one dongle, and over the
   **USB cable**; a device on the cable is picked up automatically
-- Menu bar item plus a popover with battery bars, connection and warning level
+- Menu bar item plus a popover with battery bars, connection and warning level; optionally only
+  the shield icon without percentages
 - **Low-battery notification:** one notification per device when it reaches the warning
   level configured on the device itself, reset after charging
 - Optional launch at login
-- **Mouse settings window** (Keris II Origin, new in 0.3): changes the three lights (logo,
+- **Mouse settings** (Keris II Origin, new in 0.3): changes the three lights (logo,
   scroll wheel, side: effect, brightness and colour, optionally the same on all three), the DPI
   stages (value, colour, active stage, number of stages), polling rate, surface (mouse pad
   preset), lift-off distance, angle snapping and tuning, the auto power-off time and the
@@ -30,24 +40,32 @@ Like a squire looking after a knight's blades, it keeps an eye on your Falchion 
   (one or two colours or random, background colour, gradient presets, direction, thickness), lighting
   off, the sleep time and the low-battery warning level (10-50 % or never). The keyboard cannot
   report its colour or brightness, so the window shows what Squire last saved to the active profile
+- **Per-key colours** (Falchion RX Low Profile, new in 0.4.1): give every key its own colour
+  by clicking or dragging over the keyboard drawing, fill all keys or turn them off, and keep your
+  layouts as presets in Squire (six built-in presets included). **The keyboard cannot store
+  per-key colours:** they stay until the keyboard is switched off or goes back to a lighting
+  effect, and while they are on, the keyboard's own profile switching is blocked. Squire does not
+  resend them in the background; load your preset and click **Apply** again after switching on
 - **Careful with your devices:** the battery display only reads. Squire writes only when you
-  click **Apply** in the settings window, only commands on a fixed allowlist per device (lights, DPI, sensor, power, save), reads every change back and saves it to the device only if it matched. It never touches
-  firmware or switches profiles.
+  click **Apply** in the settings window (or run a `--set-…` command), only commands on a fixed
+  allowlist per device (lights, per-key colours, DPI, sensor, power, save), reads every change back
+  where the device can report it and saves it only if it matched. It never touches firmware or
+  switches profiles.
 - Opens only vendor-defined HID collections, never the regular keyboard or mouse input
 - macOS: no Python, Homebrew or SwiftBar needed. Linux: only packages that Ubuntu ships by default
 
 ## Status
 
-Version 0.4.0. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
+Version 0.4.1. Tested on macOS with a Falchion RX Low Profile and a Keris II Origin.
 Battery percentage and charging state are confirmed for both devices, connected through the
 Omni receiver and over a USB cable.
 
 Linux (since 0.2.1) is tested on Ubuntu 26.04 with GNOME, through the Omni receiver and over a
 USB cable (battery and settings reads for both devices, an LED write on the mouse).
 
-The warning level for the notification is read from the device's reply (20 % on both test
-devices). It is not yet confirmed that this level follows changes made in Armoury Crate; if a
-reply carries no plausible level, 20 % is used.
+The warning level for the notification is read from the device, so it follows changes made in
+Squire or Armoury Crate. If a reply carries no plausible level, 20 % is used; a level of
+"never" turns the notification off.
 
 The settings window (new in 0.3) is tested with the Keris II Origin on Linux through the Omni
 receiver and on macOS through the Omni receiver and the USB cable. Every setting it offers is
@@ -56,6 +74,9 @@ confirmed on the device: written, read back and saved.
 The keyboard page (new in 0.4) is tested with the Falchion RX Low Profile through the Omni
 receiver on Linux and macOS. Every lighting effect and option, the sleep time and the
 low-battery warning are confirmed on the device; the bytes come from Armoury Crate captures.
+
+Per-key colours are confirmed on the device on Linux, through the Omni receiver and over the
+cable. The macOS version is built and tested without a device so far.
 
 Not tested yet:
 
@@ -86,8 +107,8 @@ xattr -dr com.apple.quarantine /Applications/Squire.app
 ```
 
 Squire has no Dock icon; look for it in the menu bar. Click it for the popover with
-**Notify when low**, **Launch at login**, **Refresh now** and **Quit**. It reads the devices
-every 60 seconds.
+**Settings…**, **Notify when low**, **Show percentages in menu bar**, **Launch at login**,
+**Refresh now**, **About** and **Quit**. It reads the devices every 60 seconds.
 
 You can verify the download against the `.sha256` file on the release page:
 `shasum -a 256 -c Squire-<version>.zip.sha256`.
@@ -120,7 +141,8 @@ open .build/xcode/Build/Products/Debug/Squire.app
 ```
 
 `swift run squire-probe` prints what IOKit sees and the parsed batteries without starting the
-app; `swift run squire-probe --settings` prints the mouse settings (it only reads). `swift test` runs the core tests.
+app; `--settings` and `--keyboard-settings` print the mouse and keyboard settings (it only
+reads). `swift test` runs the core tests.
 
 ### Linux
 
@@ -142,8 +164,9 @@ the top bar icon; Ubuntu enables it by default.
 
 #### From source
 
-Needs `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-ayatanaappindicator3-0.1` and `libnotify-bin`;
-Ubuntu Desktop has them installed, and the installer tells you if one is missing.
+Needs `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-ayatanaappindicator3-0.1` (top bar),
+`gir1.2-gtk-4.0`, `gir1.2-adw-1` (settings window) and `libnotify-bin`; Ubuntu Desktop has them
+installed, and the installer tells you if one is missing.
 
 ```sh
 git clone https://github.com/phifogg/squire-gear.git
@@ -158,10 +181,11 @@ user read the vendor interfaces of the Omni receiver and the wired devices witho
 keyboard and mouse input interfaces stay untouched.
 
 Squire shows one entry in the top bar, a small shield followed by both devices
-(`⌨ 78%  🖱 80%`), like the macOS menu bar. Its menu has battery bars, connection, warning level, **Notify when low**, **Launch at login**,
-**Refresh now** and **Quit**, plus a **Debug** submenu (notification service, last update, test
-notification). It reads the devices every 60 seconds. On GNOME the top bar icons need the
-AppIndicator extension, which Ubuntu enables by default.
+(`⌨ 78%  🖱 80%`), like the macOS menu bar. Its menu has battery bars, connection, warning
+level, **Settings…** (opens the settings window), **Notify when low**, **Launch at login**,
+**Show percentages in top bar**, a **Debug** submenu (notification service, last update, test
+notification), **Refresh now**, **About Squire** and **Quit**. It reads the devices every 60
+seconds.
 
 On Linux Squire talks to `/dev/hidraw*` directly and needs no `hidapi`. It only opens a hidraw
 node if every collection in its report descriptor is vendor-defined.
@@ -172,7 +196,8 @@ To uninstall the package: `sudo apt remove squire-gear` (or `sudo dnf remove squ
 To uninstall the `install.sh` version: turn off **Launch at login**, quit Squire, then
 
 ```sh
-rm -r ~/.local/share/squire-gear ~/.local/bin/squire ~/.local/share/applications/squire-gear.desktop
+rm -r ~/.local/share/squire-gear ~/.local/bin/squire ~/.local/share/applications/squire-gear.desktop \
+  ~/.local/share/applications/io.github.phifogg.Squire.Settings.desktop
 rm ~/.local/share/icons/hicolor/*/apps/squire-gear.png
 sudo rm /etc/udev/rules.d/70-squire-gear.rules
 ```
@@ -207,6 +232,20 @@ APP="$HOME/Library/Application Support/squire-gear"
 "$APP/venv/bin/python" "$APP/squire.py" --list     # list ASUS HID collections, sends nothing
 "$APP/venv/bin/python" "$APP/squire.py" --debug    # show raw replies
 "$APP/venv/bin/python" "$APP/squire.py" --notify   # also send the low-battery notification
+```
+
+Settings from the command line (shown for Linux; `squire --help` lists every option). Reads
+send only get requests; every `--set-…` command accepts `--dry-run`, which prints the bytes and
+sends nothing, and `--save` keeps a change on the device:
+
+```sh
+squire --settings                       # mouse: DPI, lights, sensor, power (reads only)
+squire --keyboard-settings              # keyboard: profile, layout, effect, sleep, warning (reads only)
+squire --set-led logo --mode static --color '#00ff00' --dry-run   # also --set-dpi, --set-power, ...
+squire --set-kb-light breathing --color '#3d8bff' --save
+squire --kb-presets                     # per-key presets, sends nothing
+squire --set-kb-keys @Gaming            # per-key colours from a preset (cannot be saved)
+squire --set-kb-keys all=000000         # all keys off
 ```
 
 ## Troubleshooting
@@ -257,7 +296,7 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 
 - A gradient editor for custom rainbow / ripple colours (CLI only so far)
 - Desktop widget (WidgetKit)
-- Optional icon-only menu bar mode
+- Battery history log
 - Notarized builds, depending on interest
 - Linux: Waybar/Polybar module using `--json`, a PPA for automatic updates
 - Other ROG devices (send `--list` / `--debug` output or `swift run squire-probe` output to help)
