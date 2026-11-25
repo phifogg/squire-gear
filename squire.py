@@ -317,6 +317,31 @@ KEYBOARD_DIRECT_WRITE = bytes([0xC0, 0x81])
 KEYBOARD_DIRECT_PER_PACKET = 14
 KEYBOARD_DIRECT_ACK = bytes([0xC0, 0x82])          # the keyboard answers c0 81 <n> 00 with c0 82 <n> 00 (2026-11-25)
 KEYBOARD_DIRECT_KEYS = tuple(col * 8 + row for col in range(15) for row in range(1, 6))   # 15 columns x rows 1..5 (01..75)
+# Key id of each key, row by row, left to right, as the settings windows draw them (KEYBOARD_ROWS there: same count per
+# row). From G-Helper AuraKeyboardLayouts.cs "FalchionRX" / "FalchionRXISO" (facts only). ISO Enter spans two rows and
+# has one id (6b), listed in both. Right column: Ins 71, Del 72, PgUp 73, PgDn 74 (Insert confirmed by the owner).
+_KB_ID_ROW0 = [0x01, 0x09, 0x11, 0x19, 0x21, 0x29, 0x31, 0x39, 0x41, 0x49, 0x51, 0x59, 0x61, 0x69, 0x71]
+_KB_ID_ROW4 = [0x05, 0x0D, 0x15, 0x35, 0x4D, 0x55, 0x5D, 0x65, 0x6D, 0x75]
+KEYBOARD_KEY_IDS = {
+    "iso": [_KB_ID_ROW0,
+            [0x02, 0x0A, 0x12, 0x1A, 0x22, 0x2A, 0x32, 0x3A, 0x42, 0x4A, 0x52, 0x5A, 0x62, 0x6B, 0x72],
+            [0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B, 0x33, 0x3B, 0x43, 0x4B, 0x53, 0x5B, 0x63, 0x6B, 0x73],
+            [0x04, 0x0C, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C, 0x44, 0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74],
+            _KB_ID_ROW4],
+    "ansi": [_KB_ID_ROW0,
+             [0x02, 0x0A, 0x12, 0x1A, 0x22, 0x2A, 0x32, 0x3A, 0x42, 0x4A, 0x52, 0x5A, 0x62, 0x6A, 0x72],
+             [0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B, 0x33, 0x3B, 0x43, 0x4B, 0x53, 0x5B, 0x6B, 0x73],
+             [0x04, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C, 0x44, 0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74],
+             _KB_ID_ROW4],
+}
+
+
+def keyboard_key_ids(iso: Optional[bool]) -> list:
+    """Every key id of the layout once, in drawing order (ISO unless the keyboard reported ANSI)."""
+    ids = []
+    for row in KEYBOARD_KEY_IDS["ansi" if iso is False else "iso"]:
+        ids += [key for key in row if key not in ids]
+    return ids
 # Effect -> {speed name: byte}: AC's fast / normal / slow, own values per effect, larger = slower (capture_4 block 3;
 # breathing and raindrop from capture_2 / 3). Static has no speed (ff).
 KEYBOARD_LIGHT_SPEEDS = {
@@ -1470,19 +1495,150 @@ def keyboard_direct_packets(keys: dict) -> list:
 
 def set_keyboard_keys(spec: str, save: bool = False, dry_run: bool = False, debug: bool = False,
                       hid=None) -> WriteResult:
-    """TEST: per-key colours (direct mode). Nothing to read back except the effect in 12 00 [9], which is reported.
-    Never saved: 50 55 after it was tested (2026-11-25, protocol.json keyboard_writes.direct) and stores nothing,
-    the profile keeps its effect, so sending it would only suggest otherwise."""
+    """--set-kb-keys: KEY=RRGGBB,..., all=RRGGBB or @PRESET (see set_keyboard_key_colours)."""
     if save:
         raise ValueError("per-key colours cannot be saved: the keyboard keeps them in RAM only (50 55 stores nothing)")
-    commands = keyboard_direct_packets(keyboard_keys_value(spec))
+    return set_keyboard_key_colours(keyboard_keys_spec(spec), dry_run=dry_run, debug=debug, hid=hid)
+
+
+def set_keyboard_key_colours(colours: dict, dry_run: bool = False, debug: bool = False, hid=None) -> WriteResult:
+    """Per-key colours {key id: (r, g, b)} (direct mode, c0 81). Each packet must be acknowledged (c0 82). Nothing to
+    read back except the effect in 12 00 [9], which is reported. Never saved: 50 55 after it was tested (2026-11-25,
+    protocol.json keyboard_writes.direct) and stores nothing, the profile keeps its effect."""
+    commands = keyboard_direct_packets(colours)
     result = write_verified(commands, "profile", lambda s: {"light_mode": s.light_mode, "profile": s.profile},
                             lambda after, before: bool(after and before) and after["profile"] == before["profile"],
-                            save, dry_run, debug, hid, device="keyboard")
+                            False, dry_run, debug, hid, device="keyboard")
     if result.status == "ok":
         result.message = (f"sent; effect now reads {result.after.get('light_mode')!r}; "
                           "key colours cannot be read back; lost at off/on")
     return result
+
+
+# --- Per-key setups ("key presets"), kept by Squire: the keyboard cannot store per-key colours (50 55 tested) ---
+KEY_PRESETS_VERSION = 1
+
+
+# Built-in key presets: common per-key looks, generated per layout (ISO / ANSI) from the key ids, read-only.
+# Key ids (KEYBOARD_KEY_IDS): column = id // 8 (0..14, left to right), row = id % 8 (1..5, top to bottom).
+KEY_GROUPS = {
+    "wasd": (0x12, 0x0B, 0x13, 0x1B),                          # W A S D
+    "arrows": (0x6C, 0x65, 0x6D, 0x75),                        # up, left, down, right
+    "nav": (0x71, 0x72, 0x73, 0x74),                           # Ins, Del, PgUp, PgDn
+    "home": (0x23, 0x3B),                                      # F and J
+    "game_mods": (0x35, 0x04, 0x05),                           # Space, left Shift, left Ctrl
+    # Esc, Tab, Caps, Shift, Ctrl, Win, Alt, Space, Alt, Fn, Ctrl, Backspace, Enter, ANSI backslash, right Shift
+    "modifiers": (0x01, 0x02, 0x03, 0x04, 0x05, 0x0D, 0x15, 0x35, 0x4D, 0x55, 0x5D, 0x69, 0x6B, 0x6A, 0x64),
+}
+
+
+def _hue(h: float) -> str:
+    import colorsys
+    r, g, b = colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0)
+    return "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+
+
+def _blend(a: str, b: str, t: float) -> str:
+    ca, cb = bytes.fromhex(a[1:]), bytes.fromhex(b[1:])
+    return "#" + bytes(round(x + (y - x) * t) for x, y in zip(ca, cb)).hex()
+
+
+def builtin_key_presets(iso: Optional[bool] = None) -> dict:
+    """{name: {key id: "#rrggbb"}} for the keys of this layout. Colours, not brightness: the keyboard has no
+    brightness in per-key mode, so dimmed keys are dark colours."""
+    ids = keyboard_key_ids(iso)
+    on = lambda group, colour, base: {k: (colour if k in KEY_GROUPS[group] else base[k]) for k in ids}  # noqa: E731
+    dim = {k: "#202020" for k in ids}
+    gaming = on("game_mods", "#ff8000", on("arrows", "#ff0000", on("wasd", "#ff0000", dim)))
+    white = {k: "#ffffff" for k in ids}
+    modifiers = on("arrows", "#0000ff", on("nav", "#0000ff", on("modifiers", "#0000ff", white)))   # LEDs: strong hues
+    return {
+        "Fixed rainbow": {k: _hue(k // 8 / 15) for k in ids},       # "fixed": not the rainbow effect
+        "Gaming": gaming,
+        "Typing": on("home", "#0000ff", {k: "#ff8c00" for k in ids}),
+        "Modifiers": modifiers,
+        "Ocean": {k: _blend("#0030ff", "#00ffc8", (k % 8 - 1) / 4) for k in ids},
+        "Fixed sunset": {k: _blend("#ff7a00", "#8a00ff", k // 8 / 14) for k in ids},
+    }
+
+
+def all_key_presets(iso: Optional[bool] = None, path: Optional[Path] = None) -> dict:
+    """The user's presets, then the built-in ones (a built-in name cannot be saved over)."""
+    return {**key_presets(path), **builtin_key_presets(iso)}
+
+
+def key_presets_file() -> Path:
+    return state_dir() / "keyboard-keys.json"
+
+
+def key_presets(path: Optional[Path] = None) -> dict:
+    """{name: {key id: "#rrggbb"}}; broken or missing entries are skipped, a broken file reads as empty."""
+    try:
+        data = json.loads((path or key_presets_file()).read_text())
+        stored = data["presets"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    presets = {}
+    for name, entry in (stored.items() if isinstance(stored, dict) else ()):
+        try:
+            keys = {int(k, 16): _rgb(v) for k, v in entry["keys"].items()}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+        if isinstance(name, str) and name.strip() and all(k in KEYBOARD_DIRECT_KEYS for k in keys):
+            presets[name] = keys
+    return presets
+
+
+def _write_key_presets(presets: dict, path: Optional[Path]) -> None:
+    path = path or key_presets_file()
+    data = {"version": KEY_PRESETS_VERSION,
+            "presets": {name: {"keys": {f"{k:02x}": v for k, v in sorted(keys.items())}}
+                        for name, keys in sorted(presets.items(), key=lambda item: item[0].casefold())}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(path)
+
+
+def save_key_preset(name: str, keys: dict, path: Optional[Path] = None) -> None:
+    """Store (or replace) a named per-key setup: {key id: "#rrggbb"}. Only Squire's file changes, never the keyboard."""
+    name = name.strip()
+    if not name:
+        raise ValueError("a preset needs a name")
+    if name.casefold() in (n.casefold() for n in builtin_key_presets()):
+        raise ValueError(f"{name!r} is a Squire default preset: choose another name")
+    keys = {key: _rgb(color) for key, color in keys.items()}
+    if not keys or any(key not in KEYBOARD_DIRECT_KEYS for key in keys):
+        raise ValueError("a preset needs at least one key, all within 01..75")
+    presets = key_presets(path)
+    presets[name] = keys
+    _write_key_presets(presets, path)
+
+
+def delete_key_preset(name: str, path: Optional[Path] = None) -> bool:
+    presets = key_presets(path)
+    if presets.pop(name, None) is None:
+        return False
+    _write_key_presets(presets, path)
+    return True
+
+
+def key_preset_colours(keys: dict, iso: Optional[bool] = None) -> dict:
+    """What a preset sends: every key of the layout, keys it does not name black, so the result does not depend on
+    what was lit before. {key id: (r, g, b)}."""
+    full = {key: "#000000" for key in keyboard_key_ids(iso)}
+    full.update(keys)
+    return {key: tuple(bytes.fromhex(color[1:])) for key, color in full.items()}
+
+
+def keyboard_keys_spec(spec: str, iso: Optional[bool] = None, path: Optional[Path] = None) -> dict:
+    """--set-kb-keys: "@NAME" is a stored preset (all keys, unnamed ones black), anything else keyboard_keys_value."""
+    if spec.startswith("@"):
+        presets = all_key_presets(iso, path)
+        if spec[1:] not in presets:
+            raise ValueError(f"no key preset {spec[1:]!r} (see --kb-presets)")
+        return key_preset_colours(presets[spec[1:]], iso)
+    return keyboard_keys_value(spec)
 
 
 def set_keyboard_sleep(minutes: Optional[int], save: bool = False, dry_run: bool = False, debug: bool = False,
@@ -1789,7 +1945,11 @@ def main() -> int:
                     help="keyboard effect speed (default: normal, or the effect's only speed)")
     ap.add_argument("--set-kb-keys", metavar="KEY=RRGGBB,...",
                     help="WRITE (test): per-key colours, hex key id = column * 8 + row, rows 1..5 (Esc 01, Q 0a) or all; "
-                         "lost at off/on, cannot be saved, nothing read back")
+                         "lost at off/on, cannot be saved, nothing read back; @NAME sends a key preset")
+    ap.add_argument("--save-kb-preset", metavar="NAME",
+                    help="store --set-kb-keys' colours as a key preset in Squire (sends nothing)")
+    ap.add_argument("--delete-kb-preset", metavar="NAME", help="delete a key preset (sends nothing)")
+    ap.add_argument("--kb-presets", action="store_true", help="list the key presets; sends nothing")
     ap.add_argument("--set-kb-sleep", metavar="MIN", help="WRITE: keyboard sleep after 1, 2, 3, 5, 10 min or never")
     ap.add_argument("--set-kb-warning", metavar="PCT",
                     help="WRITE: keyboard low-battery warning in %% (" + ", ".join(map(str, LOW_WARNING_LEVELS))
@@ -1809,6 +1969,27 @@ def main() -> int:
     try:
         if args.list:
             list_devices()
+            return 0
+        if args.kb_presets or args.save_kb_preset or args.delete_kb_preset:
+            try:
+                if args.save_kb_preset:
+                    if not args.set_kb_keys or args.set_kb_keys.startswith("@"):
+                        raise ValueError("--save-kb-preset needs --set-kb-keys KEY=RRGGBB,...")
+                    keys = {k: "#" + bytes(rgb).hex() for k, rgb in keyboard_keys_value(args.set_kb_keys).items()}
+                    save_key_preset(args.save_kb_preset, keys)
+                    print(f"saved key preset {args.save_kb_preset!r} ({len(keys)} keys); nothing sent")
+                elif args.delete_kb_preset:
+                    if not delete_key_preset(args.delete_kb_preset):
+                        raise ValueError(f"no key preset {args.delete_kb_preset!r}")
+                    print(f"deleted key preset {args.delete_kb_preset!r}")
+                else:
+                    for name, keys in key_presets().items():
+                        print(f"  {name}  ({len(keys)} keys)")
+                    for name in builtin_key_presets():
+                        print(f"  {name}  (Squire default)")
+            except (ValueError, OSError) as error:
+                print(f"refused: {error}", file=sys.stderr)
+                return 2
             return 0
         if args.list_surfaces:
             for sid in sorted(SURFACE_PARAMS, key=lambda i: (i == NO_SURFACE, surface_name(i))):

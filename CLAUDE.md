@@ -181,7 +181,7 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   original Falchion's row 0 does not exist here). Reply `c0 82 <n> 00` (not an echo); each packet must be acknowledged
   before the next. Confirmed via Omni and over the cable (protocol.json `keyboard_writes.direct`): single keys and
   all 75 ids. The effect animation stops, the other keys keep its last frame, 12 00 [9] still reports the saved effect
-  (not f1); profile switching on the keyboard is blocked meanwhile. RAM only: off/on brings the effect back, and
+  (not f1); profile switching on the keyboard is blocked meanwhile; an effect write (51 2c) ends it. RAM only: off/on brings the effect back, and
   `50 55` stores nothing (tested on profile 2, echoed, profile unchanged), so Squire refuses --save with it.
   CLI `--set-kb-keys KEY=RRGGBB,...|all=RRGGBB` only; Swift has none.
   Any new command, read or write, must be shown to the owner before it is sent,
@@ -410,9 +410,22 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 - [ ] Per-key colours (Falchion RX LP), branch `keyboard-direct` (2026-11-25): `c0 81` works via the Omni and over
       the cable (single keys, all keys; see Rules). Lost at off/on, cannot be saved (50 55 tested), blocks profile
-      switching. Open: does an effect write (51 2c) end it? Decide how Squire uses it (a host must resend it after
-      every off/on, which clashes with "no background writes"): e.g. a per-key editor in the window that writes on
-      Apply only, or keep it a CLI test. Swift port after that.
+      switching. Owner's decision (2026-11-25): a per-key editor in the window that sends only on Apply (no resend in
+      the background), plus key presets kept by Squire (state_dir()/keyboard-keys.json, {name: {key id: colour}};
+      a preset sends every key, unnamed ones black). Linux window done, not yet tried on the device: Effect row
+      "Per-key colors", click/drag paints with a brush colour, Fill / Off, preset list, Save as / Delete; Apply sends
+      saved changes first (50 55 with the last), then c0 81, never saved. CLI: `--set-kb-keys @NAME`,
+      `--save-kb-preset NAME`, `--delete-kb-preset NAME`, `--kb-presets`. Key ids per drawn key:
+      squire.KEYBOARD_KEY_IDS (G-Helper FalchionRX/ISO; ISO 69 keys, ANSI 68). Drawing legends fixed: Esc top left,
+      right column Ins / Del / PgUp / PgDn. An effect write (51 2c) ends per-key mode (confirmed wired 2026-11-25, protocol.json): the window
+      switches back by Apply. Window confirmed by the owner on the device, wired and via Omni (2026-11-25).
+      Squire default presets (squire.builtin_key_presets, read-only, per layout from the key ids, their names cannot be
+      saved over; shown as "Squire default"): Fixed rainbow, Gaming, Typing, Modifiers, Ocean, Fixed sunset. macOS port next.
+      Window polish (2026-11-25): effect row sorted by name, then Per-key colors, then Off; preset list shows
+      "Squire default" as a second line. The window has its own desktop entry
+      (linux/packaging/io.github.phifogg.Squire.Settings.desktop = its app id, also written by install.sh), so GNOME
+      shows it in the dock / Alt+Tab with the shield and in the app grid (confirmed by the owner). Started from a
+      VS Code terminal it shows the VS Code icon (GNOME goes by the systemd scope); test from the app grid.
 - [ ] OpenRGB upstream (owner, 2026-11-25): OpenRGB (GPL-2.0, facts only both ways) knows the older Keris
       (195c..1a68) and the original Falchion (193c/193e), not the Keris II Origin 1c0c, Falchion RX LP 1b04 or the Omni
       1ace. Its packets match ours (`51 28` zone LEDs + `50 03`, keyboard `51 2c`, `12 00` firmware), so contribute

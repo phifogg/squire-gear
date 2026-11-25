@@ -1532,6 +1532,18 @@
           "effect_before": "starry-night",
           "effect_after": "starry-night",
           "notes": "Save test (owner's request, 2026-11-25), profile 2 (starry night without background). 50 55 was echoed, but after off/on profile 2 shows plain starry night again: the keyboard does not store per-key colours, and the save left the profile unchanged. A host has to resend them after every off/on."
+        },
+        {
+          "name": "Esc red, then an effect (static green, unsaved), wired, profile 1",
+          "keys": "01=ff0000",
+          "connection": "wired",
+          "packet": "00 c0 81 01 00 01 ff 00 00",
+          "reply": "c0 82 01 00",
+          "then": "00 51 2c 00 00 ff 64 00 ff ff 00 ff 00",
+          "then_reply": "51 2c 00 00 ff 64 00 ff ff 00 ff 00",
+          "effect_before": "starry-night",
+          "effect_after": "static",
+          "notes": "Owner: the whole keyboard turned green, Esc included: an effect write ends per-key mode, no off/on needed. Not saved; off/on brought profile 1's effect back."
         }
       ]
     }

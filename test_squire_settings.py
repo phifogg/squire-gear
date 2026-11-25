@@ -443,6 +443,87 @@ class KeyboardPageTests(unittest.TestCase):
         self.assertEqual(ui.keyboard_zone_summary(k, "kb_layout"), "CH-DE · ISO")
 
 
+class PerKeyTests(unittest.TestCase):
+    """Per-key colours in the keyboard page: painting, presets and what Apply sends (never saved)."""
+    iso = squire.KeyboardSettings("k", "omni", layout_id=25, layout="CH-DE", iso=True, light_mode="starry-night",
+                                  sleep_minutes=3, low_warning=20)
+
+    def test_key_at_matches_the_drawing(self):
+        u, pad = ui.KB_UNIT, ui.KB_PAD
+        at = lambda col, row: ui.kb_key_at(self.iso, pad + col * u + 5, pad + row * u + 5)  # noqa: E731
+        self.assertEqual(at(0, 0), 0x01)                     # Esc
+        self.assertEqual(at(15, 0), 0x71)                    # Insert, top right (confirmed)
+        self.assertEqual(at(15, 4), 0x75)                    # bottom right
+        self.assertEqual(at(0, 4), 0x05)                     # left Ctrl
+        self.assertEqual(ui.kb_key_at(self.iso, pad + 13.6 * u, pad + 1.5 * u), 0x6B)   # ISO Enter, top half
+        self.assertEqual(ui.kb_key_at(self.iso, pad + 14.2 * u, pad + 2.5 * u), 0x6B)   # and its lower half
+        self.assertIsNone(ui.kb_key_at(self.iso, 2, 2))                                 # frame
+        self.assertIsNone(ui.kb_key_at(self.iso, pad + u - 2, pad + 5))                 # gap between keys
+        for layout in ("iso", "ansi"):
+            for r, row in enumerate(ui.KEYBOARD_ROWS[layout]):
+                with self.subTest(layout=layout, row=r):
+                    self.assertEqual(len(row), len(squire.KEYBOARD_KEY_IDS[layout][r]))
+
+    def test_legends_follow_the_key_ids(self):
+        root = ET.fromstring(ui.keyboard_svg(self.iso))
+        legends = [t.text for t in root.iter("{http://www.w3.org/2000/svg}text")]
+        self.assertEqual(legends[0], "Esc")
+        for legend in ("Ins", "Del", "PgUp", "PgDn"):
+            self.assertIn(legend, legends)
+        self.assertNotIn("End", legends)
+
+    def test_select_paint_and_drop(self):
+        pending = ui.kb_edit_light(self.iso, {}, None, effect="static")
+        pending = ui.kb_select_per_key(self.iso, pending, None, "#000000")
+        self.assertNotIn("kb_light", pending)                       # one or the other is sent
+        self.assertEqual(set(pending["kb_keys"].values()), {"#000000"})
+        self.assertEqual(len(pending["kb_keys"]), 69)
+        pending = ui.kb_paint(self.iso, pending, None, {0x01: "#FF0000"})
+        self.assertEqual(pending["kb_keys"][0x01], "#ff0000")
+        active = dict(pending["kb_keys"])
+        # after Apply: painting back to what was sent drops the edit
+        changed = ui.kb_paint(self.iso, {}, active, {0x09: "#00ff00"})
+        self.assertEqual(changed["kb_keys"][0x09], "#00ff00")
+        self.assertEqual(ui.kb_paint(self.iso, changed, active, {0x09: "#000000"}), {})
+        self.assertEqual(ui.kb_shown_keys({}, active, True), active)
+        self.assertIsNone(ui.kb_shown_keys({}, active, False))
+
+    def test_apply_saves_first_then_sends_keys_unsaved(self):
+        pending = ui.kb_edit(self.iso, {}, "kb_sleep", 5)
+        pending = ui.kb_select_per_key(self.iso, pending, None, "#000000")
+        pending = ui.kb_paint(self.iso, pending, None, {0x01: "#ff0000"})
+        self.assertEqual(ui.kb_changes(pending), ["kb_sleep", "kb_keys"])
+        self.assertEqual(ui.kb_saved_changes(pending), ["kb_sleep"])
+        lines = ui.kb_planned_packets(self.iso, pending)
+        self.assertEqual([line[:11] for line in lines],
+                         ["02 51 38 00", "02 50 55 … ", "02 c0 81 0e", "02 c0 81 0e", "02 c0 81 0e", "02 c0 81 0e",
+                          "02 c0 81 0d"])
+        self.assertTrue(lines[2].startswith("02 c0 81 0e 00 01 ff 00 00 02 00 00 00"))
+        self.assertTrue(lines[-1].endswith("(per-key colors, not saved)"))
+        only_keys = {"kb_keys": pending["kb_keys"]}
+        self.assertNotIn("50 55", " ".join(ui.kb_planned_packets(self.iso, only_keys)))
+        self.assertIn("until it is switched off", ui.kb_apply_status(only_keys))
+        self.assertIn("not saved", ui.kb_apply_status(pending))
+        for command in ui.kb_commands("kb_keys", pending["kb_keys"]):
+            self.assertTrue(squire.is_allowed_write(command, "keyboard"))
+
+    def test_effect_choices_sorted_by_name(self):
+        names = [ui.keyboard_effect_name(e) for e in ui.KB_EFFECT_CHOICES]
+        self.assertEqual(names[-2:], ["Per-key colors", "Off"])
+        self.assertEqual(names[:-2], sorted(names[:-2], key=str.casefold))
+        self.assertEqual(set(ui.KB_EFFECT_CHOICES), set(ui.KB_EFFECTS) | {ui.KB_PER_KEY})
+
+    def test_drawing_with_key_colours(self):
+        keys = ui.kb_full_keys(self.iso, {0x01: "#ff0000", 0x71: "#ffff00"})
+        svg = ui.keyboard_svg(self.iso, None, keys)
+        ET.fromstring(svg)
+        self.assertIn('style="fill:#ff0000"', svg)
+        self.assertIn("on-light", svg)                       # yellow key: dark legend
+        self.assertIn("on-color", svg)                       # red key: white legend
+        self.assertNotIn("kb-glow)", svg)                    # no effect glow over per-key colours
+        self.assertEqual(ui.kb_key_style("#000000"), ("", ""))
+
+
 class KeyboardDrawingTests(unittest.TestCase):
     def keys(self, svg):
         root = ET.fromstring(svg)     # also checks that it is valid XML
