@@ -213,7 +213,7 @@ final class SettingsStore: ObservableObject {
 
     func deleteKeyPreset() {
         guard let name = keyboardPreset, userKeyPresets[name] != nil else { return }
-        try? KeyPresets.delete(name)
+        _ = try? KeyPresets.delete(name)
         userKeyPresets = KeyPresets.load()
         keyboardPreset = nil
     }

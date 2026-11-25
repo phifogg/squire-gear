@@ -426,7 +426,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       (linux/packaging/io.github.phifogg.Squire.Settings.desktop = its app id, also written by install.sh), so GNOME
       shows it in the dock / Alt+Tab with the shield and in the app grid (confirmed by the owner). Started from a
       VS Code terminal it shows the VS Code icon (GNOME goes by the systemd scope); test from the app grid.
-      macOS port (2026-11-25, written on Linux without a Swift compiler, not built yet): SquireCore KeyboardKeys.swift
+      macOS port (2026-11-25, written on Linux; built on the Mac the same day, swift test green, --demo per-key editor
+      checked: 5 c0 81 packets for ISO match squire.keyboard_direct_packets; Apply on the device not tried yet;
+      `--demo --screenshot PATH keyboard keys` shows the editor with "Fixed rainbow"): SquireCore KeyboardKeys.swift
       (KeyboardDirect = c0 81 packets + allowlist, Command.reply = the c0 82 acknowledgement, KeyPresets = the same
       keyboard-keys.json + Squire defaults, halves rounded up in both ports), KeyboardChange.keys (never saved),
       KeyboardLayout ids + fixed legends, KeyboardEditing per-key logic; app: drawing paints on click/drag, effect
