@@ -408,7 +408,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       (protocol.json keyboard_settings.captures_wired, mouse_settings_wired). Write over the cable confirmed on Linux:
       mouse logo LED via the CLI (static green, unsaved, owner saw it, restored; protocol.json mouse_writes.writes)
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
-- [ ] Per-key colours (Falchion RX LP), branch `keyboard-direct` (2026-11-25): `c0 81` works via the Omni and over
+- [x] Per-key colours (Falchion RX LP), branch `keyboard-direct`, PR #11 merged, released in 0.4.1 (2026-11-25): `c0 81` works via the Omni and over
       the cable (single keys, all keys; see Rules). Lost at off/on, cannot be saved (50 55 tested), blocks profile
       switching. Owner's decision (2026-11-25): a per-key editor in the window that sends only on Apply (no resend in
       the background), plus key presets kept by Squire (state_dir()/keyboard-keys.json, {name: {key id: colour}};
@@ -427,7 +427,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       shows it in the dock / Alt+Tab with the shield and in the app grid (confirmed by the owner). Started from a
       VS Code terminal it shows the VS Code icon (GNOME goes by the systemd scope); test from the app grid.
       macOS port (2026-11-25, written on Linux; built on the Mac the same day, swift test green, --demo per-key editor
-      checked: 5 c0 81 packets for ISO match squire.keyboard_direct_packets; Apply on the device not tried yet;
+      checked: 5 c0 81 packets for ISO match squire.keyboard_direct_packets; Apply confirmed on the device by the owner the same day;
       `--demo --screenshot PATH keyboard keys` shows the editor with "Fixed rainbow"): SquireCore KeyboardKeys.swift
       (KeyboardDirect = c0 81 packets + allowlist, Command.reply = the c0 82 acknowledgement, KeyPresets = the same
       keyboard-keys.json + Squire defaults, halves rounded up in both ports), KeyboardChange.keys (never saved),

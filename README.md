@@ -75,8 +75,8 @@ The keyboard page (new in 0.4) is tested with the Falchion RX Low Profile throug
 receiver on Linux and macOS. Every lighting effect and option, the sleep time and the
 low-battery warning are confirmed on the device; the bytes come from Armoury Crate captures.
 
-Per-key colours are confirmed on the device on Linux, through the Omni receiver and over the
-cable. The macOS version is built and tested without a device so far.
+Per-key colours are confirmed on the device on Linux (through the Omni receiver and over the
+cable) and on macOS.
 
 Not tested yet:
 
