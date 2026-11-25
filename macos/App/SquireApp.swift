@@ -11,7 +11,7 @@ struct SquireApp: App {
     }
 
     /// Development aids: `--settings` opens the settings window at launch; `--screenshot PATH [ZONE|keyboard] [edit] [linked]`
-    /// (`keyboard edit`: a sample lighting edit on the keyboard page, never sent)
+    /// (`keyboard edit`: a sample lighting edit on the keyboard page, `keyboard keys`: a per-key preset; never sent)
     /// also saves it as PNG and quits (`linked`: the edit with "Same effect on all zones" on); `--demo` shows the
     /// protocol.json captures and sends nothing.
     private static func handleLaunchArguments() {
@@ -22,6 +22,15 @@ struct SquireApp: App {
             guard let i = args.firstIndex(of: "--screenshot"), i + 1 < args.count else { return }
             if i + 2 < args.count, let zone = SettingsZone(rawValue: args[i + 2]) { SettingsStore.shared.selected = zone }
             if i + 2 < args.count, args[i + 2] == "keyboard" { SettingsStore.shared.device = .keyboard }
+            if args.contains("keys") {   // sample per-key edit, never sent: the "Fixed rainbow" default preset
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    let store = SettingsStore.shared
+                    store.keyboardZone = .light
+                    store.selectEffect(KeyboardEditing.perKey)
+                    store.loadKeyPreset("Fixed rainbow")
+                    store.showBytes = true
+                }
+            }
             if args.contains("edit") {   // sample edit, never sent: static blue on the selected light
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     let store = SettingsStore.shared

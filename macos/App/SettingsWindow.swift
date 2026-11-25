@@ -393,7 +393,9 @@ struct KeyboardStageView: View {
             }
             .offset(x: 32, y: 24)
 
-            KeyboardDrawing(settings: preview, light: light)
+            let painting = store.perKeyMode && lightSelected
+            KeyboardDrawing(settings: preview, light: light, keys: store.shownKeys,
+                            onPaint: painting ? { (id: UInt8) in store.paintKey(id) } : nil)
                 .offset(x: d.x, y: d.y)
 
             // the keys are the lighting zone: one outline over all of them, with a callout above
@@ -403,12 +405,15 @@ struct KeyboardStageView: View {
             }
             .stroke(lightSelected ? Color.accentColor : Color.primary.opacity(0.45),
                     style: StrokeStyle(lineWidth: 1, dash: lightSelected ? [] : [3, 3]))
-            Hotspot(selected: lightSelected, tinted: false) { store.keyboardZone = .light }
-                .frame(width: size.width - 2 * pad + 8, height: size.height - 2 * pad + 8)
-                .help("Lighting")
-                .accessibilityLabel("Lighting")
-                .offset(x: d.x + pad - 4, y: d.y + pad - 4)
-            KeyboardZoneCard(zone: .light, value: KeyboardEditing.lightSummary(preview, light: light),
+            if !painting {   // while painting, clicks on the keys paint them
+                Hotspot(selected: lightSelected, tinted: false) { store.keyboardZone = .light }
+                    .frame(width: size.width - 2 * pad + 8, height: size.height - 2 * pad + 8)
+                    .help("Lighting")
+                    .accessibilityLabel("Lighting")
+                    .offset(x: d.x + pad - 4, y: d.y + pad - 4)
+            }
+            KeyboardZoneCard(zone: .light, value: store.perKeyMode ? "Per-key colors"
+                                 : KeyboardEditing.lightSummary(preview, light: light),
                              selected: lightSelected, width: 170) {
                 store.keyboardZone = .light
             }
@@ -475,7 +480,8 @@ struct KeyboardInspectorView: View {
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(zone.title).font(.headline)
-                    Text(zone == .light ? "The keyboard reports its effect but not its color or brightness"
+                    Text(zone == .light ? (store.perKeyMode ? KeyboardEditing.perKeyNote
+                                           : "The keyboard reports its effect but not its color or brightness")
                          : zone == .power ? "Battery" : "Shown only")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -504,12 +510,19 @@ struct KeyboardLightEditor: View {
                 InfoRow("On the keyboard", KeyboardSettings.effectTitle(mode),
                         subtitle: "Squire cannot write this effect yet; pick one below to replace it")
             }
-            Picker("Effect", selection: Binding(get: { editing ? light.effect : "" },
-                                                set: { effect in store.editKeyboardLight { $0.effect = effect } })) {
-                if !editing { Text("–").tag("") }
-                ForEach(KeyboardLighting.effects, id: \.self) { Text(KeyboardSettings.effectTitle($0)).tag($0) }
+            let perKey = store.perKeyMode
+            Picker("Effect", selection: Binding(get: { perKey ? KeyboardEditing.perKey : editing ? light.effect : "" },
+                                                set: { choice in store.selectEffect(choice) })) {
+                if !editing && !perKey { Text("–").tag("") }
+                ForEach(KeyboardEditing.effectChoices, id: \.self) {
+                    Text(KeyboardEditing.effectChoiceTitle($0)).tag($0)
+                }
             }
-            if editing { rows(light) }
+            if perKey {
+                KeyboardKeysEditor(store: store, settings: settings)
+            } else if editing {
+                rows(light)
+            }
         }
     }
 
@@ -602,6 +615,85 @@ struct KeyboardLightEditor: View {
             LEDColorWell(color: RGB(hex: hex ?? "#ffffff") ?? RGB(0xFF, 0xFF, 0xFF)) { rgb in set(rgb.hex) }
                 .frame(width: 44, height: 24)
         }
+    }
+}
+
+/// Per-key colours (c0 81): brush colour, fill / off, key presets kept by Squire (same rows as the Linux window).
+/// Clicks and drags on the drawing paint keys with the brush.
+struct KeyboardKeysEditor: View {
+    @ObservedObject var store: SettingsStore
+    let settings: KeyboardSettings
+    @State private var naming = false
+    @State private var name = ""
+    @State private var confirmDelete = false
+    @State private var saveError: String?
+
+    var body: some View {
+        if store.keyboardKeysActive != nil && store.keyboardEdits.keys == nil {
+            InfoRow("On the keyboard", "Per-key colors",
+                    subtitle: "Sent from this window; Squire cannot tell whether the keyboard still shows them")
+        }
+        LabeledContent {
+            LEDColorWell(color: RGB(hex: store.keyboardBrush) ?? RGB(0xFF, 0, 0)) { rgb in store.keyboardBrush = rgb.hex }
+                .frame(width: 44, height: 24)
+        } label: {
+            Text("Brush color")
+            Text("Click or drag over keys in the drawing to paint them")
+        }
+        LabeledContent {
+            HStack {
+                Button("Fill") { fill(store.keyboardBrush) }
+                Button("Off") { fill("#000000") }
+            }
+        } label: {
+            Text("All keys")
+            Text("Paint every key with the brush color, or turn all off")
+        }
+        let builtin = KeyPresets.builtinNames
+        let own = KeyPresets.names(store.userKeyPresets)
+        Picker(selection: Binding(get: { store.keyboardPreset ?? "" },
+                                  set: { if !$0.isEmpty { store.loadKeyPreset($0) } })) {
+            Text("–").tag("")
+            if !own.isEmpty {
+                Section("Yours") { ForEach(own, id: \.self) { Text($0).tag($0) } }
+            }
+            Section("Squire defaults") { ForEach(builtin, id: \.self) { Text($0).tag($0) } }
+        } label: {
+            Text("Preset")
+            Text("Squire defaults, or your own saved on this computer")
+        }
+        LabeledContent("Manage presets") {
+            HStack {
+                Button("Save as…") {
+                    name = store.keyboardPreset.flatMap { builtin.contains($0) ? nil : $0 } ?? ""
+                    naming = true
+                }
+                Button("Delete", role: .destructive) { confirmDelete = true }
+                    .disabled(store.keyboardPreset.map { store.userKeyPresets[$0] == nil } ?? true)
+            }
+        }
+        .alert("Save key preset", isPresented: $naming) {
+            TextField("Name", text: $name)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { saveError = store.saveKeyPreset(name) }
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+        } message: {
+            Text("Stored by Squire on this computer, not on the keyboard. The same name replaces a preset.")
+        }
+        .alert("Not saved", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "")
+        }
+        .confirmationDialog("Delete \u{201C}\(store.keyboardPreset ?? "")\u{201D}?", isPresented: $confirmDelete) {
+            Button("Delete", role: .destructive) { store.deleteKeyPreset() }
+        } message: {
+            Text("Only the preset in Squire is deleted.")
+        }
+    }
+
+    private func fill(_ colour: String) {
+        store.paintKeys(Dictionary(uniqueKeysWithValues: KeyboardLayout.keyIDs(iso: settings.iso).map { ($0, colour) }))
     }
 }
 

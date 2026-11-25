@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Squire Settings
+Comment=Lighting, DPI and power settings of ROG keyboard and mouse
+Exec=squire-settings
+Icon=squire-gear
+Terminal=false
+StartupNotify=true
+Categories=Settings;HardwareSettings;
+Keywords=keyboard;mouse;lighting;RGB;DPI;ROG;ASUS;

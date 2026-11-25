@@ -1259,6 +1259,192 @@ class PerDeviceAllowlistTests(unittest.TestCase):
         self.assertFalse(rb.is_allowed_write(bytes.fromhex("51 37 00 00 03 00 14"), "keyboard"))
 
 
+class KeyboardDirectTests(unittest.TestCase):
+    """Per-key colours (test, branch keyboard-direct): G-Helper's Falchion RX facts, not confirmed yet."""
+
+    def test_one_key_packet(self):
+        commands = rb.keyboard_direct_packets(rb.keyboard_keys_value("01=ff0000"))
+        self.assertEqual(commands, [bytes.fromhex("c0 81 01 00 01 ff 00 00")])
+        self.assertEqual(rb.packet(0x02, commands[0], 64, write=True, device="keyboard"),
+                         bytes.fromhex("02 c0 81 01 00 01 ff 00 00").ljust(64, b"\0"))
+        self.assertEqual(rb.packet(None, commands[0], 65, write=True, device="keyboard")[:9],
+                         bytes.fromhex("00 c0 81 01 00 01 ff 00 00"))
+
+    def test_keys_sorted_and_all_in_15_key_packets(self):
+        commands = rb.keyboard_direct_packets(rb.keyboard_keys_value("0a=00ff00,09=0000ff"))
+        self.assertEqual(commands, [bytes.fromhex("c0 81 02 00 09 00 00 ff 0a 00 ff 00")])
+        commands = rb.keyboard_direct_packets(rb.keyboard_keys_value("all=010203"))
+        self.assertEqual([c[2] for c in commands], [14, 14, 14, 14, 14, 5])
+        self.assertEqual(sum(c[2] for c in commands), 75)
+        self.assertTrue(all(rb.is_allowed_write(c, "keyboard") for c in commands))
+        for c in commands:                       # fits the Omni's 64-byte report with its ID
+            self.assertEqual(len(rb.packet(0x02, c, 64, write=True, device="keyboard")), 64)
+
+    def test_allowlist(self):
+        ok = bytes.fromhex("c0 81 01 00 74 ff ff ff")
+        self.assertTrue(rb.is_allowed_write(ok, "keyboard"))
+        self.assertFalse(rb.is_allowed_write(ok, "mouse"))
+        self.assertFalse(rb.is_allowed_write(bytes.fromhex("c0 81 0f 00" + "01 ff ff ff" * 15), "keyboard"))
+        for bad in ("c0 81 01 00 00 ff ff ff",          # row 0 is not on the RX LP
+                    "c0 81 01 00 06 ff ff ff",          # row 6 does not exist
+                    "c0 81 01 00 79 ff ff ff",          # column 15 (65 %: 0..14)
+                    "c0 81 02 00 00 ff ff ff",          # count does not match
+                    "c0 81 00 00",                      # no keys
+                    "c0 81 01 01 00 ff ff ff"):         # byte [3] not 00
+            with self.subTest(bad=bad):
+                self.assertFalse(rb.is_allowed_write(bytes.fromhex(bad), "keyboard"))
+        with self.assertRaises(ValueError):
+            rb.packet(0x03, ok, 64, write=True, device="keyboard")
+
+    def test_bad_specs_refused(self):
+        for spec in ("", "00=ff0000", "06=ff0000", "00", "00=red", "zz=ff0000"):
+            with self.subTest(spec=spec), self.assertRaises(ValueError):
+                rb.keyboard_keys_value(spec)
+
+    def test_sends_confirmed_on_the_device(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["keyboard_writes"]["direct"]["writes"]
+        for w in data:
+            if "packets" in w:                       # several packets, each acknowledged
+                with self.subTest(name=w["name"]):
+                    built = [rb.packet(0x02, c, 64, write=True, device="keyboard")
+                             for c in rb.keyboard_direct_packets(rb.keyboard_keys_value(w["keys"]))]
+                    self.assertEqual([p[:len(bytes.fromhex(h))].hex(" ") for p, h in zip(built, w["packets"])],
+                                     w["packets"])
+                    self.assertEqual(len(built), len(w["packets"]))
+                    self.assertEqual([r[3:].replace(" 82 ", " 81 ") for r in w["replies"]],
+                                     [p[3:14] for p in w["packets"]])
+                continue
+            with self.subTest(name=w["name"]):
+                head = bytes.fromhex(w["packet"])
+                command = head[1:]
+                self.assertEqual(rb.is_allowed_write(command, "keyboard"), not w["keys"].startswith("00="))
+                if w["keys"].startswith("00="):
+                    continue                         # row 0 does not exist on the RX LP
+                wired = w.get("connection") == "wired"
+                built = rb.packet(None if wired else 0x02, rb.keyboard_direct_packets(rb.keyboard_keys_value(w["keys"]))[0],
+                                  65 if wired else 64, write=True, device="keyboard")
+                self.assertEqual(built[:len(head)], head)
+                self.assertEqual(set(built[len(head):]), {0})
+
+    def test_each_packet_waits_for_its_acknowledgement(self):
+        self.assertEqual(rb.reply_expected(bytes.fromhex("c0 81 0e 00 01 ff 00 00")), bytes.fromhex("c0 82 0e 00"))
+        self.assertIsNone(rb.reply_expected(bytes.fromhex("51 2c 00 00")))
+        target = next(t for t in rb.TARGETS if t.device == "keyboard" and t.pid == rb.PID_OMNI)
+
+        class Dev:
+            def __init__(self, replies):
+                self.replies, self.written = list(replies), []
+            def write(self, data):
+                self.written.append(bytes(data))
+                return len(data)
+            def read(self, n, timeout):
+                self.assertTimeout(timeout)
+                return self.replies.pop(0) if self.replies and self.written else b""
+            def assertTimeout(self, timeout):
+                assert timeout > 0
+
+        command = bytes.fromhex("c0 81 01 00 01 ff 00 00")
+        ack = bytes.fromhex("02 c0 82 01 00").ljust(64, b"\0")
+        self.assertEqual(rb.exchange(Dev([ack]), target, command, write=True).status, "ok")
+        echo_only = bytes.fromhex("02 c0 81 01 00").ljust(64, b"\0")
+        self.assertEqual(rb.exchange(Dev([echo_only]), target, command, write=True).status, "no-response")
+
+    def test_never_saved(self):
+        self.assertEqual(rb.set_keyboard_keys("01=ff0000", dry_run=True).sent[-1][:5], "00 c0")
+        with self.assertRaises(ValueError):          # 50 55 stores nothing (protocol.json keyboard_writes.direct)
+            rb.set_keyboard_keys("01=ff0000", save=True, dry_run=True)
+
+    def test_dry_run_sends_nothing(self):
+        class NoBackend:
+            def enumerate(self, *a):
+                raise AssertionError("dry run must not enumerate")
+        result = rb.set_keyboard_keys("01=ff0000", dry_run=True, hid=NoBackend())
+        self.assertEqual(result.status, "dry-run")
+        self.assertEqual(result.sent, ["02 c0 81 01 00 01 ff 00 00 … (Omni, 64 bytes)",
+                                       "00 c0 81 01 00 01 ff 00 00 … (wired, 65 bytes)"])
+
+
+class KeyPresetTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "keyboard-keys.json"
+
+    def test_key_ids_per_layout(self):
+        iso, ansi = rb.keyboard_key_ids(True), rb.keyboard_key_ids(False)
+        self.assertEqual((len(iso), len(ansi)), (69, 68))
+        self.assertEqual(rb.keyboard_key_ids(None), iso)               # unknown layout: ISO
+        for ids in (iso, ansi):
+            self.assertEqual(len(set(ids)), len(ids))
+            self.assertTrue(set(ids) <= set(rb.KEYBOARD_DIRECT_KEYS))
+        # confirmed on the device: Esc 01, LCtrl 05, 1 = 09, Q = 0a, Insert 71 (top right), 75 bottom right
+        rows = rb.KEYBOARD_KEY_IDS["iso"]
+        self.assertEqual((rows[0][0], rows[4][0], rows[0][1], rows[1][1], rows[0][-1], rows[4][-1]),
+                         (0x01, 0x05, 0x09, 0x0A, 0x71, 0x75))
+        self.assertEqual(rows[1][13], rows[2][13])                       # ISO Enter: one key over two rows
+
+    def test_save_list_delete(self):
+        self.assertEqual(rb.key_presets(self.path), {})
+        rb.save_key_preset(" Mine ", {0x01: "#FF0000", 0x0A: "#00ff00"}, self.path)
+        rb.save_key_preset("Work", {0x71: "#0000ff"}, self.path)
+        self.assertEqual(rb.key_presets(self.path), {"Mine": {0x01: "#ff0000", 0x0A: "#00ff00"},
+                                                     "Work": {0x71: "#0000ff"}})
+        rb.save_key_preset("Work", {0x72: "#ffffff"}, self.path)          # replaces
+        self.assertEqual(rb.key_presets(self.path)["Work"], {0x72: "#ffffff"})
+        self.assertTrue(rb.delete_key_preset("Work", self.path))
+        self.assertFalse(rb.delete_key_preset("Work", self.path))
+        self.assertEqual(list(rb.key_presets(self.path)), ["Mine"])
+        stored = json.loads(self.path.read_text())
+        self.assertEqual(stored, {"version": 1, "presets": {"Mine": {"keys": {"01": "#ff0000", "0a": "#00ff00"}}}})
+
+    def test_refused_and_broken(self):
+        for name, keys in (("", {1: "#ff0000"}), ("x", {}), ("x", {0x00: "#ff0000"}), ("x", {1: "red"})):
+            with self.subTest(name=name, keys=keys), self.assertRaises(ValueError):
+                rb.save_key_preset(name, keys, self.path)
+        self.path.write_text("not json")
+        self.assertEqual(rb.key_presets(self.path), {})
+        self.path.write_text(json.dumps({"presets": {"ok": {"keys": {"01": "#ff0000"}},
+                                                     "bad id": {"keys": {"00": "#ff0000"}},
+                                                     "bad colour": {"keys": {"01": "red"}}}}))
+        self.assertEqual(rb.key_presets(self.path), {"ok": {1: "#ff0000"}})
+
+    def test_preset_sends_every_key_unnamed_black(self):
+        rb.save_key_preset("Esc", {0x01: "#ff0000"}, self.path)
+        colours = rb.keyboard_keys_spec("@Esc", True, self.path)
+        self.assertEqual(set(colours), set(rb.keyboard_key_ids(True)))
+        self.assertEqual(colours[0x01], (0xFF, 0, 0))
+        self.assertEqual(colours[0x09], (0, 0, 0))
+        packets = rb.keyboard_direct_packets(colours)
+        self.assertEqual([c[2] for c in packets], [14, 14, 14, 14, 13])
+        self.assertTrue(all(rb.is_allowed_write(c, "keyboard") for c in packets))
+        with self.assertRaises(ValueError):
+            rb.keyboard_keys_spec("@missing", True, self.path)
+        self.assertEqual(rb.keyboard_keys_spec("01=00ff00", True, self.path), {1: (0, 0xFF, 0)})
+
+
+class BuiltinKeyPresetTests(unittest.TestCase):
+    def test_every_key_of_the_layout_allowed_and_read_only(self):
+        for iso, count in ((True, 69), (False, 68)):
+            presets = rb.builtin_key_presets(iso)
+            self.assertEqual(list(presets), ["Fixed rainbow", "Gaming", "Typing", "Modifiers", "Ocean", "Fixed sunset"])
+            for name, keys in presets.items():
+                with self.subTest(iso=iso, name=name):
+                    self.assertEqual(len(keys), count)
+                    for packet in rb.keyboard_direct_packets(rb.key_preset_colours(keys, iso)):
+                        self.assertTrue(rb.is_allowed_write(packet, "keyboard"))
+        gaming = rb.builtin_key_presets(True)["Gaming"]
+        self.assertEqual({gaming[k] for k in rb.KEY_GROUPS["wasd"] + rb.KEY_GROUPS["arrows"]}, {"#ff0000"})
+        self.assertEqual(rb.builtin_key_presets(True)["Typing"][0x23], "#0000ff")      # F
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "keyboard-keys.json"
+            with self.assertRaises(ValueError):
+                rb.save_key_preset("gaming", {1: "#ff0000"}, path)                     # a built-in name
+            rb.save_key_preset("Mine", {1: "#ff0000"}, path)
+            self.assertEqual(list(rb.all_key_presets(True, path))[:2], ["Mine", "Fixed rainbow"])
+            self.assertEqual(rb.keyboard_keys_spec("@Ocean", True, path)[0x01],
+                             tuple(bytes.fromhex(rb.builtin_key_presets(True)["Ocean"][0x01][1:])))
+
+
 class KeyboardWriteTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

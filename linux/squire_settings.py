@@ -157,7 +157,7 @@ def demo_keyboard() -> "squire.KeyboardSettings":
 
 
 KEYBOARD_EFFECT_NAMES = {"host-driven": "Controlled by an app", "starry-night": "Starry night",
-                         "color-cycle": "Color cycle", "off": "Off"}
+                         "color-cycle": "Color cycle", "off": "Off", "per-key": "Per-key colors"}
 
 
 def same_effect(light: Optional[dict], mode: Optional[str]) -> bool:
@@ -203,23 +203,23 @@ def keyboard_groups(k: "squire.KeyboardSettings") -> list[tuple[str, list[tuple[
 # --- keyboard drawing (own neutral artwork, no ASUS marks): a 65 % low-profile board, 16 units wide ---
 # Rows as (legend, width in units); "" = a key without a legend. ISO rows follow the CH-DE layout the owner's
 # keyboard reports (12 12 id 25); ANSI rows are the US shape. The ISO Enter spans rows 2 and 3.
-_KB_ROW0 = [("§", 1), ("1", 1), ("2", 1), ("3", 1), ("4", 1), ("5", 1), ("6", 1), ("7", 1), ("8", 1), ("9", 1),
-            ("0", 1), ("'", 1), ("^", 1), ("⌫", 2), ("Del", 1)]
+_KB_ROW0 = [("Esc", 1), ("1", 1), ("2", 1), ("3", 1), ("4", 1), ("5", 1), ("6", 1), ("7", 1), ("8", 1), ("9", 1),
+            ("0", 1), ("'", 1), ("^", 1), ("⌫", 2), ("Ins", 1)]
 _KB_ROW4 = [("Ctrl", 1.25), ("❖", 1.25), ("Alt", 1.25), ("", 6.25), ("Alt", 1), ("Fn", 1), ("Ctrl", 1),
             ("←", 1), ("↓", 1), ("→", 1)]
 KEYBOARD_ROWS = {
     "iso": [
         _KB_ROW0,
-        [("Tab", 1.5)] + [(c, 1) for c in "QWERTZUIOPü¨"] + [("ISO-ENTER", 1.5), ("PgUp", 1)],
-        [("Caps", 1.75)] + [(c, 1) for c in "ASDFGHJKLöä$"] + [("ISO-ENTER-LOW", 1.25), ("PgDn", 1)],
-        [("⇧", 1.25), ("<", 1)] + [(c, 1) for c in "YXCVBNM,.-"] + [("⇧", 1.75), ("↑", 1), ("End", 1)],
+        [("Tab", 1.5)] + [(c, 1) for c in "QWERTZUIOPü¨"] + [("ISO-ENTER", 1.5), ("Del", 1)],
+        [("Caps", 1.75)] + [(c, 1) for c in "ASDFGHJKLöä$"] + [("ISO-ENTER-LOW", 1.25), ("PgUp", 1)],
+        [("⇧", 1.25), ("<", 1)] + [(c, 1) for c in "YXCVBNM,.-"] + [("⇧", 1.75), ("↑", 1), ("PgDn", 1)],
         _KB_ROW4,
     ],
     "ansi": [
-        [("`", 1)] + _KB_ROW0[1:11] + [("-", 1), ("=", 1), ("⌫", 2), ("Del", 1)],
-        [("Tab", 1.5)] + [(c, 1) for c in "QWERTYUIOP[]"] + [("\\", 1.5), ("PgUp", 1)],
-        [("Caps", 1.75)] + [(c, 1) for c in "ASDFGHJKL;'"] + [("Enter", 2.25), ("PgDn", 1)],
-        [("⇧", 2.25)] + [(c, 1) for c in "ZXCVBNM,./"] + [("⇧", 1.75), ("↑", 1), ("End", 1)],
+        [("Esc", 1)] + _KB_ROW0[1:11] + [("-", 1), ("=", 1), ("⌫", 2), ("Ins", 1)],
+        [("Tab", 1.5)] + [(c, 1) for c in "QWERTYUIOP[]"] + [("\\", 1.5), ("Del", 1)],
+        [("Caps", 1.75)] + [(c, 1) for c in "ASDFGHJKL;'"] + [("Enter", 2.25), ("PgUp", 1)],
+        [("⇧", 2.25)] + [(c, 1) for c in "ZXCVBNM,./"] + [("⇧", 1.75), ("↑", 1), ("PgDn", 1)],
         _KB_ROW4,
     ],
 }
@@ -262,32 +262,63 @@ def keyboard_gradient_stops(light: Optional[dict]) -> list[tuple[float, str]]:
     return [(0, "#ff5a5a"), (0.5, "#3ccf7a"), (1, "#3d8bff")]
 
 
-def keyboard_svg(k: "squire.KeyboardSettings", light: Optional[dict] = None) -> str:
-    """Top view of the keyboard, glowing in the lighting colour when Squire knows it (keyboard_glow)."""
+def kb_layout(k: "squire.KeyboardSettings") -> str:
+    return "ansi" if k.iso is False else "iso"
+
+
+def kb_key_style(color: Optional[str]) -> tuple[str, str]:
+    """(key attribute, legend class) for a key lit in `color` by per-key colours; black or None is an unlit key."""
+    if not color or color == "#000000":
+        return "", ""
+    r, g, b = bytes.fromhex(color[1:])
+    light = (0.299 * r + 0.587 * g + 0.114 * b) > 140             # light key: dark legend, else white
+    return f' style="fill:{color}"', " on-light" if light else " on-color"
+
+
+def kb_key_at(k: "squire.KeyboardSettings", x: float, y: float) -> Optional[int]:
+    """The key id under (x, y) in drawing coordinates (keyboard_svg), or None between keys."""
+    rows, ids = KEYBOARD_ROWS[kb_layout(k)], squire.KEYBOARD_KEY_IDS[kb_layout(k)]
+    u, g, pad = KB_UNIT, KB_GAP, KB_PAD
+    r = int((y - pad) // u)
+    if not 0 <= r < len(rows) or (y - pad) - r * u > u - g:
+        return None
+    left = pad
+    for i, (_legend, width) in enumerate(rows[r]):
+        if left <= x < left + width * u - g:
+            return ids[r][i]
+        left += width * u
+    return None
+
+
+def keyboard_svg(k: "squire.KeyboardSettings", light: Optional[dict] = None, keys: Optional[dict] = None) -> str:
+    """Top view of the keyboard, glowing in the lighting colour when Squire knows it (keyboard_glow), or with each
+    key in its own colour (`keys` = {key id: "#rrggbb"}, per-key colours)."""
     from xml.sax.saxutils import escape
-    rows = KEYBOARD_ROWS["ansi" if k.iso is False else "iso"]
-    fill, opacity = keyboard_glow(k, light)
+    rows = KEYBOARD_ROWS[kb_layout(k)]
+    ids = squire.KEYBOARD_KEY_IDS[kb_layout(k)]
+    fill, opacity = keyboard_glow(k, light) if keys is None else ("none", 0.0)
     stops = "".join(f'<stop offset="{pos}" stop-color="{color}"/>' for pos, color in keyboard_gradient_stops(light))
     u, g, pad = KB_UNIT, KB_GAP, KB_PAD
-    keys = []
+    shapes = []
     for r, row in enumerate(rows):
         x = pad
-        for legend, width in row:
+        for i, (legend, width) in enumerate(row):
             y, w, h = pad + r * u, width * u - g, u - g
+            style, on = kb_key_style(keys.get(ids[r][i])) if keys is not None else ("", "")
             if legend == "ISO-ENTER":
                 # one key over two rows: 1.5 units on top, 1.25 below (right-aligned)
                 x2 = x + 0.25 * u
                 d = (f"M{x + 3} {y} H{x + w - 3} Q{x + w} {y} {x + w} {y + 3} V{y + 2 * u - g - 3} "
                      f"Q{x + w} {y + 2 * u - g} {x + w - 3} {y + 2 * u - g} H{x2 + 3} Q{x2} {y + 2 * u - g} {x2} "
                      f"{y + 2 * u - g - 3} V{y + h} H{x + 3} Q{x} {y + h} {x} {y + h - 3} V{y + 3} Q{x} {y} {x + 3} {y} Z")
-                keys.append(f'<path d="{d}" class="key"/>')
-                keys.append(f'<text x="{x + w / 2 + 4}" y="{y + u - 2}" class="legend">↵</text>')
+                shapes.append(f'<path d="{d}" class="key"{style}/>')
+                shapes.append(f'<text x="{x + w / 2 + 4}" y="{y + u - 2}" class="legend{on}">↵</text>')
             elif legend != "ISO-ENTER-LOW":
-                keys.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" class="key"/>')
+                shapes.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" class="key"{style}/>')
                 if legend:
-                    size = "small" if len(legend) > 2 else ""
-                    keys.append(f'<text x="{x + w / 2}" y="{y + h / 2 + 4}" class="legend {size}">'
-                                f'{escape(legend)}</text>')
+                    size = " small" if len(legend) > 2 else ""
+                    shapes.append(f'<text x="{x + w / 2}" y="{y + h / 2 + 4}" class="legend{size}{on}">'
+                                  f'{escape(legend)}</text>')
             x += width * u
     glow = (f'<rect x="{pad - 4}" y="{pad - 4}" width="{16 * u - g + 8}" height="{5 * u - g + 8}" rx="8" '
             f'fill="{fill}" opacity="{opacity}" filter="url(#kb-glow)"/>') if opacity else ""
@@ -300,12 +331,14 @@ def keyboard_svg(k: "squire.KeyboardSettings", light: Optional[dict] = None) -> 
 .key {{ fill: #14171b; stroke: #3a404a; stroke-width: 1; }}
 .legend {{ fill: #9aa3ae; font: 11px sans-serif; text-anchor: middle; }}
 .legend.small {{ font-size: 8px; }}
+.legend.on-light {{ fill: #1c2026; }}
+.legend.on-color {{ fill: #ffffff; }}
 </style>
 </defs>
 <rect x="1" y="1" width="{KB_W - 2}" height="{KB_H - 2}" rx="12" fill="url(#kb-body)" stroke="#3a404a" stroke-width="1.5"/>
 <rect x="5" y="{pad + u}" width="4" height="{3 * u}" rx="2" fill="#3a404a"/>
 {glow}
-{chr(10).join(keys)}
+{chr(10).join(shapes)}
 </svg>"""
 
 
@@ -346,8 +379,17 @@ KB_DIRECTION_NAMES = {"right": "Left to right", "left": "Right to left", "down":
 KB_SPEED_NAMES = {"fast": "Fast", "normal": "Normal", "slow": "Slow", "none": "None"}
 KB_THICKNESS_NAMES = {"low": "Low", "normal": "Normal", "strong": "Strong"}
 KB_MODE_NAMES = {"single": "One color", "double": "Two colors", "random": "Random", "scale": "Color scale"}
-KB_KEYS = ("kb_sleep", "kb_warning", "kb_light")           # Apply order; the light last (it is the one saved)
-KB_CHANGE_TITLES = {"kb_sleep": "Sleep", "kb_warning": "Low-battery warning", "kb_light": "Lighting"}
+# Apply order: the saved ones first (the last of them carries the save), per-key colours after them, never saved
+KB_KEYS = ("kb_sleep", "kb_warning", "kb_light", "kb_keys")
+KB_SAVED_KEYS = ("kb_sleep", "kb_warning", "kb_light")
+KB_CHANGE_TITLES = {"kb_sleep": "Sleep", "kb_warning": "Low-battery warning", "kb_light": "Lighting",
+                    "kb_keys": "Per-key colors"}
+KB_PER_KEY = "per-key"                                      # the effect row's choice for per-key colours
+# The effect row: effects by name, then per-key colours, then off
+KB_EFFECT_CHOICES = sorted((e for e in KB_EFFECTS if e != squire.KEYBOARD_OFF),
+                           key=lambda e: KEYBOARD_EFFECT_NAMES.get(e, e).casefold()) + [KB_PER_KEY, squire.KEYBOARD_OFF]
+KB_PER_KEY_NOTE = ("The keyboard cannot store per-key colors: they are lost when it is switched off, and its own "
+                   "profile switching is blocked until then. Save them as a preset in Squire to reuse them.")
 
 
 def kb_light_start(k: "squire.KeyboardSettings", known: Optional[dict]) -> dict:
@@ -404,6 +446,52 @@ def kb_changes(pending: dict) -> list[str]:
     return [key for key in KB_KEYS if key in pending]
 
 
+def kb_saved_changes(pending: dict) -> list[str]:
+    """The changes Apply saves (50 55 once, with the last of them); per-key colours are not among them."""
+    return [key for key in KB_SAVED_KEYS if key in pending]
+
+
+def kb_full_keys(k: "squire.KeyboardSettings", keys: dict) -> dict:
+    """Every key of the layout, {key id: "#rrggbb"}; keys not in `keys` black."""
+    return {key: keys.get(key, "#000000") for key in squire.keyboard_key_ids(k.iso)}
+
+
+def kb_keys_start(k: "squire.KeyboardSettings", active: Optional[dict], brush: str = "#000000") -> dict:
+    """Per-key colours before any edit: what this window last sent, else every key off (black)."""
+    return kb_full_keys(k, active) if active else {key: brush for key in squire.keyboard_key_ids(k.iso)}
+
+
+def kb_select_per_key(k: "squire.KeyboardSettings", pending: dict, active: Optional[dict], brush: str) -> dict:
+    """Choosing "Per-key colors" replaces a pending effect (one or the other is sent)."""
+    pending = {key: v for key, v in pending.items() if key != "kb_light"}
+    pending.setdefault("kb_keys", kb_keys_start(k, active, brush))
+    return pending
+
+
+def kb_paint(k: "squire.KeyboardSettings", pending: dict, active: Optional[dict], changes: dict) -> dict:
+    """Set some keys ({key id: "#rrggbb"}); the edit is dropped when it is back to what was last sent."""
+    keys = dict(pending.get("kb_keys") or kb_keys_start(k, active, "#000000"))
+    keys.update({key: squire._rgb(color) for key, color in changes.items() if key in keys})
+    pending = {key: v for key, v in pending.items() if key != "kb_light"}
+    if active and keys == kb_full_keys(k, active):
+        pending.pop("kb_keys", None)
+    else:
+        pending["kb_keys"] = keys
+    return pending
+
+
+def kb_key_colours(value: dict) -> dict:
+    """{key id: "#rrggbb"} -> what set_keyboard_key_colours sends, {key id: (r, g, b)}."""
+    return {key: tuple(bytes.fromhex(color[1:])) for key, color in value.items()}
+
+
+def kb_shown_keys(pending: dict, active: Optional[dict], per_key: bool) -> Optional[dict]:
+    """The per-key colours the drawing shows, or None (the effect's glow)."""
+    if "kb_keys" in pending:
+        return pending["kb_keys"]
+    return active if per_key and "kb_light" not in pending else None
+
+
 def kb_command(key: str, value) -> bytes:
     if key == "kb_sleep":
         return squire.keyboard_sleep_command(value)
@@ -413,13 +501,17 @@ def kb_command(key: str, value) -> bytes:
 
 
 def kb_commands(key: str, value) -> list:
-    """Every packet one change sends (a gradient is three, quicksand two)."""
+    """Every packet one change sends (a gradient is three, quicksand two, per-key colours up to five)."""
+    if key == "kb_keys":
+        return squire.keyboard_direct_packets(kb_key_colours(value))
     if key == "kb_light":
         return squire.keyboard_light_packets(squire.keyboard_light_from(value))
     return [kb_command(key, value)]
 
 
 def kb_write(key: str, value, save: bool) -> "squire.WriteResult":
+    if key == "kb_keys":
+        return squire.set_keyboard_key_colours(kb_key_colours(value))      # never saved
     if key == "kb_sleep":
         return squire.set_keyboard_sleep(value, save=save)
     if key == "kb_warning":
@@ -435,13 +527,18 @@ def kb_planned_packets(k: "squire.KeyboardSettings", pending: dict) -> list[str]
     report_id = 0x02 if k.connection == "omni" else None
     length = 64 if k.connection == "omni" else 65
     lines = []
-    for key in kb_changes(pending):
+    for key in kb_saved_changes(pending):
         for command in kb_commands(key, pending[key]):
             lines.append(squire.packet(report_id, command, length, write=True,
                                        device="keyboard")[:len(command) + 1].hex(" ") + " …")
     if lines:
         lines.append(squire.packet(report_id, squire.KEYBOARD_SAVE_COMMAND, length, write=True,
                                    device="keyboard")[:3].hex(" ") + " …  (save)")
+    if "kb_keys" in pending:
+        for command in kb_commands("kb_keys", pending["kb_keys"]):
+            lines.append(squire.packet(report_id, command, length, write=True,
+                                       device="keyboard")[:len(command) + 1].hex(" ") + " …")
+        lines[-1] += "  (per-key colors, not saved)"
     return lines
 
 
@@ -450,7 +547,10 @@ def kb_apply_status(pending: dict) -> str:
     if not keys:
         return "Showing the values read from the keyboard. Nothing is sent until you click Apply."
     names = ", ".join(KB_CHANGE_TITLES[key] for key in keys)
-    return f"Not sent yet: {names}. Apply writes it to the keyboard, reads it back and saves it."
+    if keys == ["kb_keys"]:
+        return f"Not sent yet: {names}. Apply sends them; the keyboard keeps them until it is switched off."
+    tail = " Per-key colors are sent but not saved." if "kb_keys" in keys else ""
+    return f"Not sent yet: {names}. Apply writes it to the keyboard, reads it back and saves it.{tail}"
 
 
 def kb_preview(k: "squire.KeyboardSettings", pending: dict, known: Optional[dict]):
@@ -794,6 +894,9 @@ def run(argv: list[str]) -> int:
             self.kb_known: Optional[dict] = None   # the lighting Squire last saved to the active profile
             self.kb_background: Optional[str] = None   # last background colour, kept while the switch is off
             self.kb_value_labels: dict = {}
+            self.kb_keys_active: Optional[dict] = None   # per-key colours this window last sent (not readable)
+            self.kb_brush = "#ff0000"                     # colour a click on a key paints
+            self.kb_preset: Optional[str] = None          # key preset last loaded or saved
 
             split = Adw.NavigationSplitView(min_sidebar_width=240, max_sidebar_width=280)
             split.set_sidebar(self.build_sidebar())
@@ -900,9 +1003,15 @@ def run(argv: list[str]) -> int:
                 self.device_list.select_row(self.device_rows["keyboard"])
                 GLib.timeout_add(400, self.capture)
                 return False
-            if zone == "keyboard" and "edit" in SCREENSHOT[2:] and "kb_light" not in self.kb_pending:
+            if zone == "keyboard" and "edit" in SCREENSHOT[2:] and not {"kb_light", "kb_keys"} & set(self.kb_pending):
                 self.kb_selected = "kb_light"
-                if "rainbow" in SCREENSHOT[2:]:
+                if "perkey" in SCREENSHOT[2:]:                                              # not sent
+                    self.kb_pending = kb_select_per_key(self.keyboard, self.kb_pending, None, "#000000")
+                    self.kb_preset = "Fixed rainbow"                 # shows a long preset name
+                    self.kb_pending = kb_paint(self.keyboard, self.kb_pending, None, {
+                        0x01: "#ff0000", 0x1A: "#ff8000", 0x12: "#ff8000", 0x22: "#ff8000", 0x13: "#ff8000",
+                        0x71: "#3d8bff", 0x75: "#ffff00", 0x6D: "#ffff00", 0x65: "#ffff00", 0x6C: "#ffff00"})
+                elif "rainbow" in SCREENSHOT[2:]:
                     self.on_kb_light(effect="rainbow", gradient="sunset", direction="left")   # not sent
                 elif "raindrop" in SCREENSHOT[2:]:
                     self.on_kb_light(effect="raindrop", mode="double", color="#3d8bff", color2="#ff00ff",
@@ -910,7 +1019,7 @@ def run(argv: list[str]) -> int:
                 else:
                     self.on_kb_light(effect="static", brightness=80, color="#3d8bff")   # sample edit, not sent
                 self.render()
-                self.bytes_toggle.set_active(True)
+                self.bytes_toggle.set_active("perkey" not in SCREENSHOT[2:])   # per-key: show the editor rows
                 GLib.timeout_add(600, self.capture)
                 return False
             if zone and zone != "keyboard" and zone != self.selected:
@@ -1027,7 +1136,7 @@ def run(argv: list[str]) -> int:
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             box.append(Gtk.Label(label=KB_ZONE_TITLES[zone], xalign=0, css_classes=["heading"]))
             preview, light = kb_preview(k, self.kb_pending, self.kb_known)
-            value = Gtk.Label(label=keyboard_zone_summary(preview, zone, light), xalign=0,
+            value = Gtk.Label(label=self.kb_summary(preview, zone, light), xalign=0,
                               css_classes=["dim-label", "caption"], wrap=True)
             self.kb_value_labels[zone] = value
             box.append(value)
@@ -1047,20 +1156,37 @@ def run(argv: list[str]) -> int:
             fixed.put(title, 32, 24)
 
             x, y = (STAGE_W - KB_W) // 2, 230
-            drawing = Gtk.Picture.new_for_paintable(texture(keyboard_svg(*kb_preview(k, self.kb_pending, self.kb_known))))
+            per_key = self.kb_per_key_mode()
+            drawing = Gtk.Picture.new_for_paintable(texture(keyboard_svg(
+                *kb_preview(k, self.kb_pending, self.kb_known),
+                kb_shown_keys(self.kb_pending, self.kb_keys_active, per_key))))
             self.kb_drawing = drawing
             drawing.set_size_request(KB_W, KB_H)
             drawing.set_can_shrink(True)
             drawing.set_alternative_text("Top view of the keyboard")
             fixed.put(drawing, x, y)
+            painting = per_key and self.kb_selected == "kb_light"
+            if painting:
+                # click or drag over the keys to paint them
+                drag = Gtk.GestureDrag()
+                drag.connect("drag-begin", lambda _g, px, py: self.on_kb_drawing_drag(drawing, px, py))
+
+                def on_update(g, dx, dy):
+                    ok, sx, sy = g.get_start_point()
+                    if ok:
+                        self.on_kb_drawing_drag(drawing, sx + dx, sy + dy)
+                drag.connect("drag-update", on_update)
+                drawing.add_controller(drag)
+                drawing.set_cursor(Gdk.Cursor.new_from_name("crosshair"))
             # the keys are the lighting zone: one hotspot over all of them, with a callout above
-            spot = Gtk.Button(css_classes=["squire-hotspot", "outline-only"]
+            spot = None if painting else Gtk.Button(css_classes=["squire-hotspot", "outline-only"]
                               + (["selected"] if self.kb_selected == "kb_light" else []),
                               tooltip_text="Lighting")
-            spot.update_property([Gtk.AccessibleProperty.LABEL], ["Lighting"])
-            spot.set_size_request(KB_W - 2 * KB_PAD + 8, KB_H - 2 * KB_PAD + 8)
-            spot.connect("clicked", lambda _b: self.select_keyboard("kb_light"))
-            fixed.put(spot, x + KB_PAD - 4, y + KB_PAD - 4)
+            if spot is not None:
+                spot.update_property([Gtk.AccessibleProperty.LABEL], ["Lighting"])
+                spot.set_size_request(KB_W - 2 * KB_PAD + 8, KB_H - 2 * KB_PAD + 8)
+                spot.connect("clicked", lambda _b: self.select_keyboard("kb_light"))
+                fixed.put(spot, x + KB_PAD - 4, y + KB_PAD - 4)
             line = Gtk.Box(css_classes=["squire-vline"] + (["selected"] if self.kb_selected == "kb_light" else []))
             line.set_size_request(1, 34)
             fixed.put(line, STAGE_W // 2, y - 20)
@@ -1107,13 +1233,29 @@ def run(argv: list[str]) -> int:
             if k.light_mode not in squire.KEYBOARD_LIGHT_SPEEDS:
                 group.add(row("On the keyboard", keyboard_effect_name(k.light_mode),
                               "Squire cannot write this effect yet; pick one below to replace it"))
-            names = Gtk.StringList.new([keyboard_effect_name(e) for e in KB_EFFECTS])
+            names = Gtk.StringList.new([keyboard_effect_name(e) for e in KB_EFFECT_CHOICES])
             effect = Adw.ComboRow(title="Effect", model=names)
             editing = "kb_light" in self.kb_pending or k.light_mode in squire.KEYBOARD_LIGHT_SPEEDS
-            effect.set_selected(KB_EFFECTS.index(light["effect"]) if editing else Gtk.INVALID_LIST_POSITION)
-            effect.connect("notify::selected", lambda r, _p: self.on_kb_effect(KB_EFFECTS[r.get_selected()])
-                           if r.get_selected() < len(KB_EFFECTS) else None)
+            per_key = self.kb_per_key_mode()
+            effect.set_selected(KB_EFFECT_CHOICES.index(KB_PER_KEY) if per_key
+                                else KB_EFFECT_CHOICES.index(light["effect"]) if editing
+                                else Gtk.INVALID_LIST_POSITION)
+
+            def on_effect(r, _p):
+                i = r.get_selected()
+                if i >= len(KB_EFFECT_CHOICES):
+                    return
+                if KB_EFFECT_CHOICES[i] == KB_PER_KEY:
+                    self.on_kb_per_key()
+                else:
+                    self.on_kb_effect(KB_EFFECT_CHOICES[i])
+            effect.connect("notify::selected", on_effect)
             group.add(effect)
+            if per_key:
+                group.set_description(KB_PER_KEY_NOTE)
+                self.build_kb_keys_editor(group, k)
+                page.add(group)
+                return
             if editing and light["effect"] == squire.KEYBOARD_OFF:
                 group.add(row("Off", "Black at 4 %", "How Armoury Crate turns the keyboard lighting off"))
             elif editing:
@@ -1174,6 +1316,152 @@ def run(argv: list[str]) -> int:
                 if len(speeds) > 1:
                     self.add_kb_choice(group, "Speed", speeds, KB_SPEED_NAMES, light["speed"], "speed")
             page.add(group)
+
+        def kb_summary(self, preview, zone, light) -> str:
+            if zone == "kb_light" and self.kb_per_key_mode():
+                return "Per-key colors"      # that the keyboard cannot store them: the inspector says so
+            return keyboard_zone_summary(preview, zone, light)
+
+        def kb_per_key_mode(self) -> bool:
+            """Per-key colours are being edited, or were sent last and no effect is pending."""
+            return "kb_keys" in self.kb_pending or (self.kb_keys_active is not None
+                                                    and "kb_light" not in self.kb_pending)
+
+        def kb_current_keys(self) -> dict:
+            return self.kb_pending.get("kb_keys") or kb_keys_start(self.keyboard, self.kb_keys_active)
+
+        def build_kb_keys_editor(self, group, k):
+            if self.kb_keys_active is not None and "kb_keys" not in self.kb_pending:
+                group.add(row("On the keyboard", "Per-key colors",
+                              "Sent from this window; Squire cannot tell whether the keyboard still shows them"))
+            brush = Adw.ActionRow(title="Brush color", subtitle="Click or drag over keys in the drawing to paint them")
+            button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
+            rgba = Gdk.RGBA()
+            rgba.parse(self.kb_brush)
+            button.set_rgba(rgba)
+
+            def on_brush(btn, _p):
+                c = btn.get_rgba()
+                self.kb_brush = "#%02x%02x%02x" % (round(c.red * 255), round(c.green * 255), round(c.blue * 255))
+            button.connect("notify::rgba", on_brush)
+            brush.add_suffix(button)
+            group.add(brush)
+
+            fill = Adw.ActionRow(title="All keys", subtitle="Paint every key with the brush color, or turn all off")
+            for label, color in (("Fill", None), ("Off", "#000000")):
+                b = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
+                b.connect("clicked", lambda _b, c=color: self.on_kb_paint(
+                    {key: c or self.kb_brush for key in squire.keyboard_key_ids(k.iso)}))
+                fill.add_suffix(b)
+            group.add(fill)
+
+            presets = squire.all_key_presets(k.iso)
+            names = list(presets)
+            builtin = set(squire.builtin_key_presets(k.iso))
+            # the chosen name goes below the title; in the list, Squire's defaults get a small second line
+            choose = Adw.ComboRow(title="Preset", use_subtitle=True,
+                                  tooltip_text="Squire defaults, or your own saved on this computer",
+                                  model=Gtk.StringList.new(["–"] + names))
+            factory = Gtk.SignalListItemFactory()
+
+            def on_setup(_f, item):
+                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                box.append(Gtk.Label(xalign=0))
+                box.append(Gtk.Label(xalign=0, label="Squire default", css_classes=["caption", "dim-label"]))
+                item.set_child(box)
+
+            def on_bind(_f, item):
+                name = item.get_item().get_string()
+                box = item.get_child()
+                box.get_first_child().set_label(name)
+                box.get_last_child().set_visible(name in builtin)
+            factory.connect("setup", on_setup)
+            factory.connect("bind", on_bind)
+            choose.set_list_factory(factory)
+            choose.set_selected(names.index(self.kb_preset) + 1 if self.kb_preset in names else 0)
+
+            def on_preset(r, _p):
+                i = r.get_selected()
+                if 0 < i <= len(names) and names[i - 1] != self.kb_preset:
+                    self.kb_preset = names[i - 1]
+                    self.on_kb_paint(kb_full_keys(k, presets[self.kb_preset]))
+            choose.connect("notify::selected", on_preset)
+            group.add(choose)
+
+            manage = Adw.ActionRow(title="Manage presets")
+            save = Gtk.Button(label="Save as…", valign=Gtk.Align.CENTER)
+            save.connect("clicked", lambda _b: self.save_kb_preset())
+            manage.add_suffix(save)
+            delete = Gtk.Button(label="Delete", valign=Gtk.Align.CENTER, css_classes=["destructive-action"],
+                                sensitive=self.kb_preset in names and self.kb_preset not in builtin)
+            delete.connect("clicked", lambda _b: self.delete_kb_preset())
+            manage.add_suffix(delete)
+            group.add(manage)
+
+        def on_kb_per_key(self):
+            if self.kb_per_key_mode():
+                return      # the combo was set by render(), not by the user
+            self.kb_pending = kb_select_per_key(self.keyboard, self.kb_pending, self.kb_keys_active, "#000000")
+            self.render()
+
+        def on_kb_paint(self, changes):
+            current = {} if "kb_keys" in self.kb_pending else self.kb_current_keys()
+            self.kb_pending = kb_paint(self.keyboard, self.kb_pending, self.kb_keys_active, {**current, **changes})
+            self.update_preview()
+
+        def on_kb_drawing_drag(self, picture, x, y):
+            """Paint the key under the pointer (drawing coordinates follow the picture's scale and centring)."""
+            w, h = picture.get_width(), picture.get_height()
+            scale = min(w / KB_W, h / KB_H) if w and h else 1
+            x, y = (x - (w - KB_W * scale) / 2) / scale, (y - (h - KB_H * scale) / 2) / scale
+            key = kb_key_at(self.keyboard, x, y)
+            if key is not None and self.kb_current_keys().get(key) != self.kb_brush:
+                self.on_kb_paint({key: self.kb_brush})
+
+        def save_kb_preset(self):
+            dialog = Adw.AlertDialog(heading="Save key preset",
+                                     body="Stored by Squire on this computer, not on the keyboard. "
+                                          "The same name replaces a preset.")
+            own = self.kb_preset not in squire.builtin_key_presets(self.keyboard.iso)
+            entry = Gtk.Entry(text=self.kb_preset if self.kb_preset and own else "", placeholder_text="Name",
+                              activates_default=True)
+            dialog.set_extra_child(entry)
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("save", "Save")
+            dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response("save")
+
+            def on_response(_d, response):
+                name = entry.get_text().strip()
+                if response != "save" or not name:
+                    return
+                try:
+                    squire.save_key_preset(name, self.kb_current_keys())
+                except (ValueError, OSError) as error:
+                    self.toasts.add_toast(Adw.Toast(title=f"Not saved: {error}"))
+                    return
+                self.kb_preset = name
+                self.toasts.add_toast(Adw.Toast(title=f"Preset \u201c{name}\u201d saved in Squire"))
+                self.render()
+            dialog.connect("response", on_response)
+            dialog.present(self)
+
+        def delete_kb_preset(self):
+            name = self.kb_preset
+            if not name:
+                return
+            dialog = Adw.AlertDialog(heading=f"Delete \u201c{name}\u201d?", body="Only the preset in Squire is deleted.")
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("delete", "Delete")
+            dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+
+            def on_response(_d, response):
+                if response == "delete":
+                    squire.delete_key_preset(name)
+                    self.kb_preset = None
+                    self.render()
+            dialog.connect("response", on_response)
+            dialog.present(self)
 
         def add_kb_choice(self, group, title, values, names, current, field, subtitle=""):
             """A combo row for one lighting field. Rows that change which other rows exist re-render."""
@@ -1247,6 +1535,14 @@ def run(argv: list[str]) -> int:
         def on_kb_effect(self, effect):
             current = (self.kb_pending.get("kb_light") or kb_light_start(self.keyboard, self.kb_known))["effect"]
             editing = "kb_light" in self.kb_pending or self.keyboard.light_mode in squire.KEYBOARD_LIGHT_SPEEDS
+            if self.kb_per_key_mode():
+                # leaving per-key colours: the effect is sent even if it is the one Squire knows
+                self.kb_pending.pop("kb_keys", None)
+                self.on_kb_light(effect=effect)
+                if "kb_light" not in self.kb_pending and self.kb_keys_active is not None:
+                    self.kb_pending["kb_light"] = dict(kb_light_start(self.keyboard, self.kb_known))
+                self.render()
+                return
             if effect == current and editing:
                 return      # the combo was set by render(), not by the user
             self.on_kb_light(effect=effect)
@@ -1585,9 +1881,10 @@ def run(argv: list[str]) -> int:
                 return
             preview, light = kb_preview(k, self.kb_pending, self.kb_known)
             if getattr(self, "kb_drawing", None) is not None:
-                self.kb_drawing.set_paintable(texture(keyboard_svg(preview, light)))
+                self.kb_drawing.set_paintable(texture(keyboard_svg(
+                    preview, light, kb_shown_keys(self.kb_pending, self.kb_keys_active, self.kb_per_key_mode()))))
             for zone, label in self.kb_value_labels.items():
-                label.set_label(keyboard_zone_summary(preview, zone, light))
+                label.set_label(self.kb_summary(preview, zone, light))
             if getattr(self, "apply_label", None) is not None:
                 dirty = bool(kb_changes(self.kb_pending))
                 self.apply_label.set_label("Applying…" if self.applying else kb_apply_status(self.kb_pending))
@@ -1614,23 +1911,27 @@ def run(argv: list[str]) -> int:
             self.update_preview()
             work = {key: self.kb_pending[key] for key in keys}
 
+            saved_keys = kb_saved_changes(work)
+
             def worker():
-                # same rule as the mouse: write each change, save (50 55) once with the last, only if all matched
+                # same rule as the mouse: write each change, save (50 55) once with the last saved one, only if all
+                # matched; per-key colours go last and are never saved (the keyboard cannot store them)
                 results = {}
-                for i, key in enumerate(keys):
+                for key in keys:
                     if DEMO:
-                        results[key] = squire.WriteResult("ok", saved=True, message="demo")
+                        results[key] = squire.WriteResult("ok", saved=key != "kb_keys", message="demo")
                         continue
                     try:
-                        results[key] = kb_write(key, work[key], save=i == len(keys) - 1)
+                        results[key] = kb_write(key, work[key], save=bool(saved_keys) and key == saved_keys[-1])
                     except Exception as error:  # keep the window alive
                         results[key] = squire.WriteResult("error", message=str(error))
                     if results[key].status != "ok":
                         break
-                saved = len(results) == len(keys) and all(r.status == "ok" for r in results.values()) \
-                    and results[keys[-1]].saved
-                for r in results.values():
-                    r.saved = saved
+                saved = all(key in results and results[key].status == "ok" for key in saved_keys) \
+                    and (not saved_keys or results[saved_keys[-1]].saved)
+                for key, r in results.items():
+                    if key != "kb_keys":
+                        r.saved = saved
                 GLib.idle_add(self.apply_keyboard_done, results, work)
 
             threading.Thread(target=worker, name="squire-write", daemon=True).start()
@@ -1640,6 +1941,13 @@ def run(argv: list[str]) -> int:
             self.refresh_button.set_sensitive(True)
             failed = []
             for key, result in results.items():
+                if key == "kb_keys":
+                    if result.status == "ok":
+                        self.kb_keys_active = work[key]
+                        self.kb_pending.pop(key, None)
+                    else:
+                        failed.append((key, result))
+                    continue
                 if result.status == "ok" and result.saved:
                     value = work[key]
                     if key == "kb_sleep":
@@ -1649,6 +1957,7 @@ def run(argv: list[str]) -> int:
                     else:
                         self.keyboard.light_mode = value["effect"]
                         self.kb_known = kb_light_sent(value)   # set_keyboard_light remembered it as well
+                        self.kb_keys_active = None             # the effect replaces per-key colours
                     self.kb_pending.pop(key, None)
                 else:
                     failed.append((key, result))
@@ -1664,7 +1973,8 @@ def run(argv: list[str]) -> int:
                 dialog.add_response("ok", "OK")
                 dialog.present(self)
             else:
-                self.toasts.add_toast(Adw.Toast(title="Saved to the keyboard" + (" (demo, nothing sent)" if DEMO else "")))
+                title = "Sent to the keyboard (not stored on it)" if list(work) == ["kb_keys"] else "Saved to the keyboard"
+                self.toasts.add_toast(Adw.Toast(title=title + (" (demo, nothing sent)" if DEMO else "")))
             self.render()
             return False
 
@@ -1758,6 +2068,7 @@ def run(argv: list[str]) -> int:
 
         def do_activate(self):
             if self.window is None:
+                Gtk.Window.set_default_icon_name("squire-gear")   # X11; Wayland takes it from the .desktop entry
                 self.window = Window(self)
             self.window.present()
 

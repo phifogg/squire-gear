@@ -68,6 +68,10 @@ contents:
   - src: linux/packaging/squire-gear.desktop
     dst: /usr/share/applications/squire-gear.desktop
     file_info: {mode: 0644}
+  # the settings window's own entry (= its app id), so it has an icon in the dock and Alt+Tab
+  - src: linux/packaging/io.github.phifogg.Squire.Settings.desktop
+    dst: /usr/share/applications/io.github.phifogg.Squire.Settings.desktop
+    file_info: {mode: 0644}
   - src: linux/70-squire-gear.rules
     dst: /usr/lib/udev/rules.d/70-squire-gear.rules
     file_info: {mode: 0644}

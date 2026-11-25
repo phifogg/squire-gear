@@ -15,15 +15,21 @@ public struct KeyboardEdits: Equatable, Sendable {
     public var sleep: KeyboardSleep?
     public var warning: Int?            // %, 0 = never
     public var light: KeyboardLight?    // as edited (kept fields included); sent normalised
+    /// Per-key colours {key id: "#rrggbb"}, every key of the layout; one of `light` and `keys` is pending, not both.
+    public var keys: [UInt8: String]?
     public init() {}
 
-    public var isEmpty: Bool { sleep == nil && warning == nil && light == nil }
+    public var isEmpty: Bool { sleep == nil && warning == nil && light == nil && keys == nil }
 
-    /// Apply order: sleep, warning, lighting last (it is the one saved).
+    /// Apply order: sleep, warning, lighting (the last of these is saved), then per-key colours (never saved).
     public var changes: [KeyboardChange] {
         [sleep.map { KeyboardChange.sleep($0.minutes) }, warning.map { KeyboardChange.warning($0) },
-         light.flatMap { try? KeyboardLighting.normalized($0) }.map { KeyboardChange.light($0) }].compactMap { $0 }
+         light.flatMap { try? KeyboardLighting.normalized($0) }.map { KeyboardChange.light($0) },
+         keys.map { KeyboardChange.keys($0) }].compactMap { $0 }
     }
+
+    /// The changes Apply saves (50 55 once, with the last of them).
+    public var savedChanges: [KeyboardChange] { changes.filter(\.isSaved) }
 }
 
 public enum KeyboardEditing {
@@ -129,8 +135,12 @@ public enum KeyboardEditing {
         guard !changes.isEmpty else {
             return "Showing the values read from the keyboard. Nothing is sent until you click Apply."
         }
-        return "Not sent yet: \(changes.map(\.title).joined(separator: ", ")). "
-            + "Apply writes it to the keyboard, reads it back and saves it."
+        let names = changes.map(\.title).joined(separator: ", ")
+        if edits.savedChanges.isEmpty {
+            return "Not sent yet: \(names). Apply sends them; the keyboard keeps them until it is switched off."
+        }
+        return "Not sent yet: \(names). Apply writes it to the keyboard, reads it back and saves it."
+            + (edits.keys != nil ? " Per-key colors are sent but not saved." : "")
     }
 
     /// Exactly what Apply will send, for "Show bytes".
@@ -138,19 +148,96 @@ public enum KeyboardEditing {
         let omni = k.connection != .wired
         let reportID: UInt8? = omni ? 0x02 : nil
         let length = omni ? 64 : 65
-        var lines: [String] = []
-        for change in edits.changes {
-            for command in (try? change.commands()) ?? [] {
-                guard let bytes = try? Packet.build(device: .keyboard, reportID: reportID, command: command, length: length)
-                else { continue }
-                lines.append(ReplyParser.hex(Array(bytes.prefix(command.bytes.count + 1))) + " …")
+        func packets(_ change: KeyboardChange) -> [String] {
+            ((try? change.commands()) ?? []).compactMap { command in
+                (try? Packet.build(device: .keyboard, reportID: reportID, command: command, length: length))
+                    .map { ReplyParser.hex(Array($0.prefix(command.bytes.count + 1))) + " …" }
             }
         }
+        var lines = edits.savedChanges.flatMap(packets)
         if !lines.isEmpty,
            let bytes = try? Packet.build(device: .keyboard, reportID: reportID, command: .keyboardSave, length: length) {
             lines.append(ReplyParser.hex(Array(bytes.prefix(3))) + " …  (save)")
         }
+        if let keys = edits.keys {
+            let perKey = packets(.keys(keys))
+            lines += perKey
+            if !perKey.isEmpty { lines[lines.count - 1] += "  (per-key colors, not saved)" }
+        }
         return lines
+    }
+
+    // MARK: per-key colours (same as kb_* in linux/squire_settings.py)
+
+    /// The effect row: effects by name, then per-key colours, then off.
+    public static let perKey = "per-key"
+    public static let effectChoices: [String] =
+        KeyboardLighting.effects.filter { $0 != KeyboardLighting.off }
+            .sorted { KeyboardSettings.effectTitle($0).localizedCaseInsensitiveCompare(KeyboardSettings.effectTitle($1))
+                      == .orderedAscending } + [perKey, KeyboardLighting.off]
+
+    public static func effectChoiceTitle(_ choice: String) -> String {
+        choice == perKey ? "Per-key colors" : KeyboardSettings.effectTitle(choice)
+    }
+
+    public static let perKeyNote = "The keyboard cannot store per-key colors: they are lost when it is switched off, "
+        + "and its own profile switching is blocked until then. Save them as a preset in Squire to reuse them."
+
+    /// Every key of the layout; keys not in `keys` off (black).
+    public static func fullKeys(_ k: KeyboardSettings, _ keys: [UInt8: String]) -> [UInt8: String] {
+        KeyPresets.full(keys, iso: k.iso)
+    }
+
+    /// Per-key colours before any edit: what this window last sent, else every key off.
+    public static func keysStart(_ k: KeyboardSettings, active: [UInt8: String]?) -> [UInt8: String] {
+        fullKeys(k, active ?? [:])
+    }
+
+    /// Choosing "Per-key colors" replaces a pending effect (one or the other is sent).
+    public static func selectPerKey(_ k: KeyboardSettings, _ edits: KeyboardEdits, active: [UInt8: String]?)
+        -> KeyboardEdits {
+        var e = edits
+        e.light = nil
+        if e.keys == nil { e.keys = keysStart(k, active: active) }
+        return e
+    }
+
+    /// Set some keys; the edit is dropped when it is back to what was last sent.
+    public static func paint(_ k: KeyboardSettings, _ edits: KeyboardEdits, active: [UInt8: String]?,
+                             _ changes: [UInt8: String]) -> KeyboardEdits {
+        var keys = edits.keys ?? keysStart(k, active: active)
+        for (key, colour) in changes where keys[key] != nil {
+            if let hex = KeyboardLighting.rgbHex(colour) { keys[key] = hex }
+        }
+        var e = edits
+        e.light = nil
+        if let active, keys == fullKeys(k, active) {
+            e.keys = nil
+        } else {
+            e.keys = keys
+        }
+        return e
+    }
+
+    /// The per-key colours the drawing shows, or nil (the effect's glow).
+    public static func shownKeys(_ edits: KeyboardEdits, active: [UInt8: String]?, perKeyMode: Bool)
+        -> [UInt8: String]? {
+        if let keys = edits.keys { return keys }
+        return perKeyMode && edits.light == nil ? active : nil
+    }
+
+    /// The key id under a point in drawing coordinates (KeyboardDrawing / keyboard_svg), or nil between keys.
+    public static func keyAt(_ k: KeyboardSettings?, x: Double, y: Double,
+                             unit: Double = 36, gap: Double = 4, pad: Double = 18) -> UInt8? {
+        let rows = KeyboardLayout.rows(for: k), ids = KeyboardLayout.ids(for: k)
+        let r = Int(((y - pad) / unit).rounded(.down))
+        guard rows.indices.contains(r), (y - pad) - Double(r) * unit <= unit - gap else { return nil }
+        var left = pad
+        for (i, key) in rows[r].enumerated() {
+            if x >= left && x < left + key.width * unit - gap { return ids[r][i] }
+            left += key.width * unit
+        }
+        return nil
     }
 
     // Names shown in the editor (same as the Linux window).

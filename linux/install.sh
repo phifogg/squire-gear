@@ -75,6 +75,19 @@ Terminal=false
 Categories=Utility;
 Keywords=battery;keyboard;mouse;ROG;ASUS;
 EOF
+# the settings window's own entry (= its app id), so it has an icon in the dock and Alt+Tab
+cat > "$DATA/applications/io.github.phifogg.Squire.Settings.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Squire Settings
+Comment=Lighting, DPI and power settings of ROG keyboard and mouse
+Exec=/usr/bin/python3 "$APP_DIR/squire_settings.py"
+Icon=squire-gear
+Terminal=false
+StartupNotify=true
+Categories=Settings;HardwareSettings;
+Keywords=keyboard;mouse;lighting;RGB;DPI;ROG;ASUS;
+EOF
 update-desktop-database -q "$DATA/applications" 2>/dev/null || true
 
 # An existing autostart entry points to the old location if it was enabled from the repository.
