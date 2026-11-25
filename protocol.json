@@ -1455,6 +1455,85 @@
           "notes": "Owner: keys may glow a little longer than at normal. Then restored and saved: reactive normal #f6f5f4 75 % (0f, then 50 55, echoed)."
         }
       ]
+    },
+    "direct": {
+      "_comment": "Per-key colours (direct mode) sent by Squire (squire.py --set-kb-keys, Linux hidraw via the Omni, 2026-11-25, branch keyboard-direct), each approved by the owner before the send. Never saved. Bytes from G-Helper AsusKeyboard.cs SetLedColors + AuraKeyboardLayouts.cs FalchionRX(ISO) (GPL-3.0, facts only) and OpenRGB AsusAuraKeyboardController (GPL-2.0, original Falchion). Reply is c0 82 <n> 00 (not an echo of c0 81), then nothing more. 12 00 [9] keeps reporting the saved effect (06 starry night), not f1.",
+      "writes": [
+        {
+          "name": "key id 00 red (original Falchion's Esc)",
+          "keys": "00=ff0000",
+          "packet": "02 c0 81 01 00 00 ff 00 00",
+          "reply": "02 c0 82 01 00",
+          "effect_before": "starry-night",
+          "effect_after": "starry-night",
+          "notes": "Owner: the starry night animation stopped, no key lit. 00 is not a key on the RX LP: its rows start at 1 (G-Helper FalchionRX). Not allowed any more."
+        },
+        {
+          "name": "Esc red",
+          "keys": "01=ff0000",
+          "packet": "02 c0 81 01 00 01 ff 00 00",
+          "reply": "02 c0 82 01 00",
+          "effect_before": "starry-night",
+          "effect_after": "starry-night",
+          "notes": "Owner: Esc is red, the other keys keep the last starry night frame (no animation)."
+        },
+        {
+          "name": "five keys: LCtrl green, 1 white, Q magenta, top right blue, bottom right yellow",
+          "keys": "05=00ff00,09=ffffff,0a=ff00ff,71=0000ff,75=ffff00",
+          "packet": "02 c0 81 05 00 05 00 ff 00 09 ff ff ff 0a ff 00 ff 71 00 00 ff 75 ff ff 00",
+          "reply": "02 c0 82 05 00",
+          "effect_before": "starry-night",
+          "effect_after": "starry-night",
+          "notes": "Owner: LCtrl, 1, Q and the bottom right key as expected, Esc still red. Top right (71) not judged: blue is the starry night background."
+        },
+        {
+          "name": "top right orange",
+          "keys": "71=ff8000",
+          "packet": "02 c0 81 01 00 71 ff 80 00",
+          "reply": "02 c0 82 01 00",
+          "effect_before": "starry-night",
+          "effect_after": "starry-night",
+          "notes": "Owner: Insert (top right key of the CH-DE ISO 65 % layout) is orange."
+        },
+        {
+          "name": "all keys #00ff40",
+          "keys": "all=00ff40",
+          "packets": [
+            "02 c0 81 0e 00 01 00 ff 40 02 00 ff 40 03 00 ff 40 04 00 ff 40 05 00 ff 40 09 00 ff 40 0a 00 ff 40 0b 00 ff 40 0c 00 ff 40 0d 00 ff 40 11 00 ff 40 12 00 ff 40 13 00 ff 40 14 00 ff 40",
+            "02 c0 81 0e 00 15 00 ff 40 19 00 ff 40 1a 00 ff 40 1b 00 ff 40 1c 00 ff 40 1d 00 ff 40 21 00 ff 40 22 00 ff 40 23 00 ff 40 24 00 ff 40 25 00 ff 40 29 00 ff 40 2a 00 ff 40 2b 00 ff 40",
+            "02 c0 81 0e 00 2c 00 ff 40 2d 00 ff 40 31 00 ff 40 32 00 ff 40 33 00 ff 40 34 00 ff 40 35 00 ff 40 39 00 ff 40 3a 00 ff 40 3b 00 ff 40 3c 00 ff 40 3d 00 ff 40 41 00 ff 40 42 00 ff 40",
+            "02 c0 81 0e 00 43 00 ff 40 44 00 ff 40 45 00 ff 40 49 00 ff 40 4a 00 ff 40 4b 00 ff 40 4c 00 ff 40 4d 00 ff 40 51 00 ff 40 52 00 ff 40 53 00 ff 40 54 00 ff 40 55 00 ff 40 59 00 ff 40",
+            "02 c0 81 0e 00 5a 00 ff 40 5b 00 ff 40 5c 00 ff 40 5d 00 ff 40 61 00 ff 40 62 00 ff 40 63 00 ff 40 64 00 ff 40 65 00 ff 40 69 00 ff 40 6a 00 ff 40 6b 00 ff 40 6c 00 ff 40 6d 00 ff 40",
+            "02 c0 81 05 00 71 00 ff 40 72 00 ff 40 73 00 ff 40 74 00 ff 40 75 00 ff 40"
+          ],
+          "replies": ["02 c0 82 0e 00", "02 c0 82 0e 00", "02 c0 82 0e 00", "02 c0 82 0e 00", "02 c0 82 0e 00", "02 c0 82 05 00"],
+          "effect_before": "starry-night",
+          "effect_after": "starry-night",
+          "notes": "Owner: all keys green. 75 ids (15 columns x rows 1..5), 14 per packet, each acknowledged before the next; ids without a key do no harm."
+        },
+        {
+          "name": "Esc red, wired",
+          "keys": "01=ff0000",
+          "connection": "wired",
+          "packet": "00 c0 81 01 00 01 ff 00 00",
+          "reply": "c0 82 01 00",
+          "effect_before": "starry-night",
+          "effect_after": "starry-night",
+          "notes": "Over the cable (pid 1b04 iface 1, 65 bytes, reply without report ID). Owner: Esc red. Before that: keyboard off/on after the Omni tests brought starry night back (unsaved, RAM only). While per-key colours are active, switching profiles on the keyboard does not work."
+        },
+        {
+          "name": "Esc red + save, wired, profile 2",
+          "keys": "01=ff0000",
+          "connection": "wired",
+          "packet": "00 c0 81 01 00 01 ff 00 00",
+          "reply": "c0 82 01 00",
+          "save": "00 50 55",
+          "save_reply": "50 55",
+          "effect_before": "starry-night",
+          "effect_after": "starry-night",
+          "notes": "Save test (owner's request, 2026-11-25), profile 2 (starry night without background). 50 55 was echoed, but after off/on profile 2 shows plain starry night again: the keyboard does not store per-key colours, and the save left the profile unchanged. A host has to resend them after every off/on."
+        }
+      ]
     }
   }
 }

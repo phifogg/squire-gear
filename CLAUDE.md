@@ -174,6 +174,16 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   raindrop, gradient direction 00..08 (all four diagonals seen: 01 down-right, 03 down-left, 05 up-left, 07
   up-right) + thickness [8] 00/01/02 + AC's 7 presets + custom stops (2..7, positions 1..100 ascending), quicksand
   [6] 00/01 + [7] 02/06, off = `51 2c 00 00 ff 04 00 ff ff 00 00 00` (AC's mouse `51 36` is never sent).
+  Per-key colours (test, branch `keyboard-direct`, each send approved by the owner 2026-11-25; bytes from G-Helper
+  AsusKeyboard.cs SetLedColors + AuraKeyboardLayouts.cs FalchionRX(ISO), OpenRGB has the same packet for the original
+  Falchion): `c0 81 <n> 00` + n x `<key id> <r g b>`, n 1..14 (15 would overflow the Omni's 64 bytes), key id =
+  column * 8 + row, columns 0..14, rows 1..5 (Esc 01, LCtrl 05, 1 = 09, Q = 0a, Insert 71, bottom right 75; the
+  original Falchion's row 0 does not exist here). Reply `c0 82 <n> 00` (not an echo); each packet must be acknowledged
+  before the next. Confirmed via Omni and over the cable (protocol.json `keyboard_writes.direct`): single keys and
+  all 75 ids. The effect animation stops, the other keys keep its last frame, 12 00 [9] still reports the saved effect
+  (not f1); profile switching on the keyboard is blocked meanwhile. RAM only: off/on brings the effect back, and
+  `50 55` stores nothing (tested on profile 2, echoed, profile unchanged), so Squire refuses --save with it.
+  CLI `--set-kb-keys KEY=RRGGBB,...|all=RRGGBB` only; Swift has none.
   Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
@@ -398,6 +408,29 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       (protocol.json keyboard_settings.captures_wired, mouse_settings_wired). Write over the cable confirmed on Linux:
       mouse logo LED via the CLI (static green, unsaved, owner saw it, restored; protocol.json mouse_writes.writes)
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
+- [ ] Per-key colours (Falchion RX LP), branch `keyboard-direct` (2026-11-25): `c0 81` works via the Omni and over
+      the cable (single keys, all keys; see Rules). Lost at off/on, cannot be saved (50 55 tested), blocks profile
+      switching. Open: does an effect write (51 2c) end it? Decide how Squire uses it (a host must resend it after
+      every off/on, which clashes with "no background writes"): e.g. a per-key editor in the window that writes on
+      Apply only, or keep it a CLI test. Swift port after that.
+- [ ] OpenRGB upstream (owner, 2026-11-25): OpenRGB (GPL-2.0, facts only both ways) knows the older Keris
+      (195c..1a68) and the original Falchion (193c/193e), not the Keris II Origin 1c0c, Falchion RX LP 1b04 or the Omni
+      1ace. Its packets match ours (`51 28` zone LEDs + `50 03`, keyboard `51 2c`, `12 00` firmware), so contribute
+      the devices: first check GitLab for an open MR/issue, then (1) wired Keris II Origin (zones logo/wheel/side,
+      modes 0/1/2/4/6 as confirmed in protocol.json), (2) wired Falchion RX LP, (3) the Omni last (shared receiver,
+      report IDs 02/03 on one interface; talk to the maintainers first). OpenRGB also has `51 29` (per-LED direct
+      mode): never sent by Squire, not approved.
+- [ ] Coexist with OpenRGB (owner, 2026-11-25): squire.device_lock / DeviceLock do not cover OpenRGB, so once it
+      supports these devices its requests could interleave with Squire's. Show a hint when OpenRGB is running or
+      its SDK port 6742 is open (at the latest when the upstream support lands).
+- [ ] Local API for Home Assistant & co. (owner, 2026-11-25; the pattern exists elsewhere: OpenRGB SDK TCP 6742,
+      OpenRazer and ratbagd on D-Bus, Razer Chroma REST, SteelSeries GameSense HTTP). In this order:
+  - [ ] MQTT with HA discovery: keyboard + mouse battery % and charging as HA sensors, read-only, fits the
+        read-only rule; can start as a small script on top of `--json`
+  - [ ] OpenRGB-SDK-compatible server (lighting): HA's OpenRGB integration, the OpenRGB app and openrgb-python
+        would work unchanged. Writes from a client break "writes only on an explicit click": needs a new rule
+        from the owner first; decide with the Rust core
+  - [ ] Maybe a D-Bus service on Linux (like ratbagd / OpenRazer), only if other Linux apps want Squire's data
 
 ## Related projects
 - falchion-light (Linux lighting, wired): https://github.com/ChipGillespie/falchion-light.
@@ -405,6 +438,9 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - G-Helper (GPL-3.0, Windows): https://github.com/seerge/g-helper
 - rogdriver (Zig, Linux): https://github.com/rahulrajaram/rogdriver
 - SwiftBar: https://github.com/swiftbar/SwiftBar
+- OpenRGB (GPL-2.0, C++, Linux/Windows/macOS): https://gitlab.com/CalcProgrammer1/OpenRGB (GitHub mirror
+  CalcProgrammer1/OpenRGB). ASUS packets in `Controllers/AsusAuraUSBController/`; SDK protocol in
+  `Documentation/OpenRGBSDK.md` (TCP 6742, lighting only). Upstream device support planned, see Roadmap.
 - OpenLogi (MIT/Apache-2.0, Rust + GPUI, macOS/Linux/Windows): https://github.com/AprilNEA/OpenLogi. The same idea
   for Logitech (HID++): an alternative to Options+. Different protocol, so it is a source of UX and process ideas,
   not of bytes. Worth borrowing: quick settings in the menu bar without opening the window (DPI preset, lights),

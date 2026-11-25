@@ -305,6 +305,18 @@ KEYBOARD_SAVE_COMMAND = bytes([0x50, 0x55])      # the keyboard's save (the mous
 KEYBOARD_LIGHT_WRITE = bytes([0x51, 0x2C])       # 51 2c <effect> 00 <speed> <brightness %> <mode> ff ff <r g b> ...
 KEYBOARD_SLEEP_WRITE = bytes([0x51, 0x38])       # 51 38 00 00 <power-off code>, read back 12 01 [6]
 KEYBOARD_WARNING_WRITE = bytes([0x51, 0x3A])     # 51 3a 00 00 <%>, read back 12 01 [9]
+# Per-key colours ("direct mode"), TEST ONLY (branch keyboard-direct, 2026-11-25). Sources, facts only: G-Helper
+# (GPL-3.0) AsusKeyboard.cs SetLedColors + AuraKeyboardLayouts.cs "FalchionRX"/"FalchionRXISO" (its model
+# FalchionRXLowProfileOmni = our keyboard via the Omni, report ID 02); OpenRGB (GPL-2.0) has the same packet for the
+# original Falchion. c0 81 <n> 00 then n x <key id> <r g b>, no init packet. At most 14 keys per packet: 15 would be 65
+# bytes with the report ID, one over the Omni's 64 (G-Helper). Key id = column * 8 + row, rows 1..5 on the RX / RX LP
+# (Esc 01, Tab 02, Caps 03, LShift 04, LCtrl 05, 1 = 09, Q = 0a); the original Falchion starts at row 0 (OpenRGB),
+# which is why 00 lit nothing (2026-11-25: the keyboard replied c0 82 01 00 and starry night stopped, no key lit).
+# Nothing can be read back and it is never saved (no 50 55 after it).
+KEYBOARD_DIRECT_WRITE = bytes([0xC0, 0x81])
+KEYBOARD_DIRECT_PER_PACKET = 14
+KEYBOARD_DIRECT_ACK = bytes([0xC0, 0x82])          # the keyboard answers c0 81 <n> 00 with c0 82 <n> 00 (2026-11-25)
+KEYBOARD_DIRECT_KEYS = tuple(col * 8 + row for col in range(15) for row in range(1, 6))   # 15 columns x rows 1..5 (01..75)
 # Effect -> {speed name: byte}: AC's fast / normal / slow, own values per effect, larger = slower (capture_4 block 3;
 # breathing and raindrop from capture_2 / 3). Static has no speed (ff).
 KEYBOARD_LIGHT_SPEEDS = {
@@ -566,6 +578,10 @@ def is_allowed_keyboard_write(command: bytes) -> bool:
         return len(command) == 5 and command[2:4] == b"\0\0" and command[4] in POWER_OFF_CODES.values()
     if command[:2] == KEYBOARD_WARNING_WRITE:
         return len(command) == 5 and command[2:4] == b"\0\0" and command[4] in KEYBOARD_WARNING_LEVELS
+    if command[:2] == KEYBOARD_DIRECT_WRITE and len(command) >= 4:
+        n = command[2]
+        return (1 <= n <= KEYBOARD_DIRECT_PER_PACKET and command[3] == 0 and len(command) == 4 + 4 * n
+                and all(command[4 + 4 * i] in KEYBOARD_DIRECT_KEYS for i in range(n)))
     if command[:2] == KEYBOARD_LIGHT_WRITE and len(command) >= 4:
         effect = KEYBOARD_LIGHT_MODES.get(command[2])
         if effect not in KEYBOARD_LIGHT_SPEEDS:
@@ -597,6 +613,13 @@ def is_allowed_keyboard_write(command: bytes) -> bool:
             return len(command[4:]) <= 16 and _stops_ok(command[4:])
         return False
     return False
+
+
+def reply_expected(command: bytes) -> Optional[bytes]:
+    """The reply that acknowledges a command that is not echoed: per-key colours c0 81 <n> 00 -> c0 82 <n> 00."""
+    if command[:2] == KEYBOARD_DIRECT_WRITE and len(command) >= 4:
+        return KEYBOARD_DIRECT_ACK + command[2:4]
+    return None
 
 
 def is_allowed_write(command: bytes, device: str) -> bool:
@@ -714,8 +737,9 @@ class Exchange:
 
 def exchange(dev, target: Target, command: bytes, debug: bool = False, match: Optional[int] = None,
              write: bool = False) -> Exchange:
-    """Send one allowlisted command and wait for the reply that echoes it (first `match` bytes)."""
-    echo = command[:match or len(command)]
+    """Send one allowlisted command and wait for the reply that echoes it (first `match` bytes), or for its
+    acknowledgement where the device answers with other bytes (reply_expected: per-key colours)."""
+    echo = reply_expected(command) or command[:match or len(command)]
     # drain stale input (bounded, short timeout)
     for _ in range(MAX_READS):
         if not dev.read(65, DRAIN_TIMEOUT_MS):
@@ -1415,6 +1439,52 @@ def set_keyboard_light(effect: str, brightness: int, color: Optional[str] = "#ff
     return result
 
 
+def keyboard_keys_value(spec: str) -> dict:
+    """Parse "all=ff0000" or "00=ff0000,08=00ff00" (hex key ids, see KEYBOARD_DIRECT_KEYS) into {key id: (r, g, b)}."""
+    keys = {}
+    for part in (p.strip() for p in spec.split(",") if p.strip()):
+        name, sep, colour = part.partition("=")
+        if not sep:
+            raise ValueError(f"expected KEY=RRGGBB, got {part!r}")
+        rgb = tuple(bytes.fromhex(_rgb(colour)[1:]))
+        ids = KEYBOARD_DIRECT_KEYS if name.strip().lower() == "all" else (int(name, 16),)
+        for key in ids:
+            if key not in KEYBOARD_DIRECT_KEYS:
+                raise ValueError(f"key id {key:02x} is outside the 15 x 5 matrix (01..75)")
+            keys[key] = rgb
+    if not keys:
+        raise ValueError("no keys given")
+    return keys
+
+
+def keyboard_direct_packets(keys: dict) -> list:
+    """c0 81 <n> 00 + n x <id> <r g b>, at most 14 keys per packet, in key id order."""
+    items = sorted(keys.items())
+    commands = []
+    for start in range(0, len(items), KEYBOARD_DIRECT_PER_PACKET):
+        chunk = items[start:start + KEYBOARD_DIRECT_PER_PACKET]
+        body = b"".join(bytes([key, *rgb]) for key, rgb in chunk)
+        commands.append(KEYBOARD_DIRECT_WRITE + bytes([len(chunk), 0]) + body)
+    return commands
+
+
+def set_keyboard_keys(spec: str, save: bool = False, dry_run: bool = False, debug: bool = False,
+                      hid=None) -> WriteResult:
+    """TEST: per-key colours (direct mode). Nothing to read back except the effect in 12 00 [9], which is reported.
+    Never saved: 50 55 after it was tested (2026-11-25, protocol.json keyboard_writes.direct) and stores nothing,
+    the profile keeps its effect, so sending it would only suggest otherwise."""
+    if save:
+        raise ValueError("per-key colours cannot be saved: the keyboard keeps them in RAM only (50 55 stores nothing)")
+    commands = keyboard_direct_packets(keyboard_keys_value(spec))
+    result = write_verified(commands, "profile", lambda s: {"light_mode": s.light_mode, "profile": s.profile},
+                            lambda after, before: bool(after and before) and after["profile"] == before["profile"],
+                            save, dry_run, debug, hid, device="keyboard")
+    if result.status == "ok":
+        result.message = (f"sent; effect now reads {result.after.get('light_mode')!r}; "
+                          "key colours cannot be read back; lost at off/on")
+    return result
+
+
 def set_keyboard_sleep(minutes: Optional[int], save: bool = False, dry_run: bool = False, debug: bool = False,
                        hid=None) -> WriteResult:
     """Sleep after 1/2/3/5/10 min (None = never), read back from 12 01 [6]."""
@@ -1523,7 +1593,7 @@ def write_verified(command, read_name, extract, matches, save: bool = False, dry
                         # is not taken for it
                         ex = exchange(dev, target, c, debug, match=4 if len(commands) > 1 else 2, write=True)
                         result.sent.append(sent(target, c)[:len(c) + 1].hex(" "))
-                        if ex.status == "error" or (len(commands) > 1 and ex.status != "ok"):
+                        if ex.status == "error" or ((len(commands) > 1 or reply_expected(c)) and ex.status != "ok"):
                             result.message = ex.raw or f"chunk {c[:4].hex(' ')}: {ex.status}; nothing saved"
                             return result
                     result.after = read_value(dev, target)
@@ -1717,6 +1787,9 @@ def main() -> int:
     ap.add_argument("--background", help="#rrggbb or none: keyboard background (starry night, current, raindrop)")
     ap.add_argument("--speed", choices=["fast", "normal", "slow", "none"],
                     help="keyboard effect speed (default: normal, or the effect's only speed)")
+    ap.add_argument("--set-kb-keys", metavar="KEY=RRGGBB,...",
+                    help="WRITE (test): per-key colours, hex key id = column * 8 + row, rows 1..5 (Esc 01, Q 0a) or all; "
+                         "lost at off/on, cannot be saved, nothing read back")
     ap.add_argument("--set-kb-sleep", metavar="MIN", help="WRITE: keyboard sleep after 1, 2, 3, 5, 10 min or never")
     ap.add_argument("--set-kb-warning", metavar="PCT",
                     help="WRITE: keyboard low-battery warning in %% (" + ", ".join(map(str, LOW_WARNING_LEVELS))
@@ -1744,7 +1817,8 @@ def main() -> int:
         writes = [w for w in (args.set_led, args.set_power, args.set_angle_snapping,
                               args.set_angle_tuning is not None or None, args.set_liftoff, args.set_polling,
                               args.set_surface, args.set_dpi, args.set_dpi_stage, args.set_dpi_count,
-                              args.set_kb_light, args.set_kb_sleep, args.set_kb_warning) if w]
+                              args.set_kb_light, args.set_kb_sleep, args.set_kb_warning,
+                              args.set_kb_keys) if w]
         if len(writes) > 1:
             print("refused: one write per call", file=sys.stderr)
             return 2
@@ -1775,6 +1849,8 @@ def main() -> int:
                                                 args.speed, args.gradient, args.direction, thickness=args.thickness,
                                                 mode=args.color_mode, color2=args.color2, background=background,
                                                 **options)
+                elif args.set_kb_keys:
+                    result = set_keyboard_keys(args.set_kb_keys, **options)
                 elif args.set_kb_sleep:
                     off = args.set_kb_sleep
                     result = set_keyboard_sleep(None if off == "never" else int(off) if off.isdigit() else -1, **options)
@@ -1801,7 +1877,7 @@ def main() -> int:
                 if result.after is not None:
                     print(f"  after:  {result.after}")
                 if result.saved:
-                    print("  saved (keyboard 50 55)" if args.set_kb_light or args.set_kb_sleep or args.set_kb_warning
+                    print("  saved (keyboard 50 55)" if args.set_kb_light or args.set_kb_sleep or args.set_kb_warning or args.set_kb_keys
                           else "  saved in the mouse (50 03)")
             if args.save and result.status == "ok" and not result.saved:
                 return 1
