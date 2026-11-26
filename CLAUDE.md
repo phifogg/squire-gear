@@ -41,9 +41,10 @@ macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project
                        (KeyboardEditing.swift),
                        low-battery rules (Swift Testing tests, read protocol.json)
   Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, readKeyboardSettings, write,
-                       writeKeyboard;
+                       writeKeyboard; BluetoothReader (CoreBluetooth, GATT 180F/2A19 battery level only);
                        DeviceLock = same flock file as squire.device_lock
-  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings / --keyboard-settings (read-only)
+  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings / --keyboard-settings (read-only),
+                       --bluetooth (battery level over BLE; Info.plist embedded via -sectcreate, CoreBluetooth needs it)
   App/                 SwiftUI MenuBarExtra app (BatteryStore, Views), settings window (SettingsWindow,
                        SettingsStore, MouseDrawing, KeyboardDrawing; same layout as the Linux window), Assets
   scripts/             build-release.sh (universal, ad-hoc signed zip), make-icon.swift
@@ -55,6 +56,7 @@ python3 -m unittest -v                         # Python tests, no hardware
 cd macos && swift test                         # Swift core tests (macOS only)
 cd macos && swift run squire-probe             # what IOKit sees + parsed batteries
 cd macos && swift run squire-probe --settings  # mouse DPI / LEDs / sensor / power, read-only
+cd macos && swift run squire-probe --bluetooth # battery level of devices paired over Bluetooth (GATT 2A19 only)
 Squire.app/Contents/MacOS/Squire --demo --settings          # settings window with protocol.json captures, sends nothing
 Squire.app/Contents/MacOS/Squire --demo --screenshot PATH [ZONE] [edit] [linked]   # saves a PNG and quits (sidebar stays blank;
                                                # `screencapture -o -l<window id>` shows it, needs Screen Recording)
@@ -186,6 +188,13 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   CLI `--set-kb-keys KEY=RRGGBB,...|all=RRGGBB` only; Swift has none.
   Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
+- **Bluetooth** (owner, 2026-11-26, macOS only so far): paired directly, the devices are `0b05:1b08` (keyboard) and
+  `0b05:1c0f` (mouse) with HID-over-GATT input collections only (no vendor page, so no 12 xx). Squire reads only the
+  standard GATT Battery Level (180F / 2A19) of peripherals macOS already holds connected: never scans, pairs or
+  subscribes. No charging flag or warning level over Bluetooth. The vendor service FFF0 (FFF1 write, FFF2 / FFF4
+  read+notify) is probably the command channel; never send anything there until the bytes are known (capture of
+  Armoury Crate over Bluetooth on Windows). The CBCentralManager (Bluetooth permission prompt) is only created when
+  IOKit lists one of the Bluetooth PIDs. HID values (Omni, cable) win over Bluetooth (`Bluetooth.merge`).
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
   *every* top-level collection in its report descriptor is vendor-defined (Omni iface 3 mixes them: skipped).
@@ -407,6 +416,10 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       charging, --keyboard-settings and --settings read over the cable, same replies as on Windows/macOS
       (protocol.json keyboard_settings.captures_wired, mouse_settings_wired). Write over the cable confirmed on Linux:
       mouse logo LED via the CLI (static green, unsaved, owner saw it, restored; protocol.json mouse_writes.writes)
+- [ ] Bluetooth, branch `bluetooth-battery` (2026-11-26): battery level over BLE (GATT 2A19) in the macOS menu bar,
+      popover ("Bluetooth · level only") and settings sidebar; `squire-probe --bluetooth` reads both devices on the
+      Mac (60 % / 52 %, protocol.json `bluetooth`). App tried by the owner on the Mac (menu bar, popover, settings window shows a Bluetooth page instead of "not found"). Linux: BlueZ exposes 2A19 as
+      org.bluez.Battery1 (D-Bus), not done. Later: settings over FFF0 once captured.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 - [x] Per-key colours (Falchion RX LP), branch `keyboard-direct`, PR #11 merged, released in 0.4.1 (2026-11-25): `c0 81` works via the Omni and over
       the cable (single keys, all keys; see Rules). Lost at off/on, cannot be saved (50 55 tested), blocks profile

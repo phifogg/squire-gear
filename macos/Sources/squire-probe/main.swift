@@ -6,6 +6,7 @@ import SquireHID
 // Sends only read commands (12 ..) to vendor-defined collections; never writes.
 // --settings: read the mouse settings (DPI, LEDs, sensor, power), like `squire.py --settings`.
 // --keyboard-settings: read the keyboard settings (profile, layout, effect), like `squire.py --keyboard-settings`.
+// --bluetooth: battery level over Bluetooth LE (standard GATT 180F / 2A19 only; no HID report is sent).
 // --repeat N: read N times in one process (what the app does every 60 s). Used to catch lifetime bugs
 // in the IOKit callbacks that a single read never triggers.
 if let index = CommandLine.arguments.firstIndex(of: "--repeat"),
@@ -18,6 +19,18 @@ if let index = CommandLine.arguments.firstIndex(of: "--repeat"),
         while done.wait(timeout: .now() + 0.01) == .timedOut { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
         print("\(i)/\(count): " + r.batteries.map { "\($0.device.rawValue) \($0.percent.map { "\($0)%" } ?? "– (\($0.status.rawValue))")" }.joined(separator: ", "))
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))   // let late callbacks arrive
+    }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--bluetooth") {
+    // The reader blocks its caller while CoreBluetooth calls back on its own queue.
+    let r = BluetoothReader().read(timeout: 10)
+    r.diagnostics.forEach { print($0) }
+    print("---")
+    if r.batteries.isEmpty { print("No ROG device connected over Bluetooth.") }
+    for b in r.batteries {
+        print("\(b.name): \(b.percent.map { "\($0)%" } ?? "–") (bluetooth, \(b.status.rawValue), raw \(b.raw))")
     }
     exit(0)
 }

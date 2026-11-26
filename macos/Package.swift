@@ -15,8 +15,13 @@ let package = Package(
         .target(name: "SquireHID", dependencies: ["SquireCore"],
                 swiftSettings: [.swiftLanguageMode(.v5)]),   // C callbacks + run loop, no concurrency model
         // Spike / debugging tool: prints what IOKit sees and the parsed battery.
+        // Info.plist embedded: CoreBluetooth (--bluetooth) terminates a binary without NSBluetoothAlwaysUsageDescription.
         .executableTarget(name: "squire-probe", dependencies: ["SquireCore", "SquireHID"],
-                          swiftSettings: [.swiftLanguageMode(.v5)]),
+                          exclude: ["Info.plist"],
+                          swiftSettings: [.swiftLanguageMode(.v5)],
+                          linkerSettings: [.unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT",
+                                                         "-Xlinker", "__info_plist",
+                                                         "-Xlinker", "Sources/squire-probe/Info.plist"])]),
         .testTarget(name: "SquireCoreTests", dependencies: ["SquireCore"]),
     ]
 )

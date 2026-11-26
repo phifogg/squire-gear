@@ -1,7 +1,7 @@
 /// Battery state of one peripheral, as reported by the device.
 public struct Battery: Equatable, Sendable {
     public enum Device: String, Sendable { case keyboard, mouse }
-    public enum Connection: String, Sendable { case omni, wired }
+    public enum Connection: String, Sendable { case omni, wired, bluetooth }
     public enum Status: String, Sendable { case ok, asleep, noResponse = "no-response", error }
 
     public var device: Device

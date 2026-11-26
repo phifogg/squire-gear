@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.phifogg.squire-probe</string>
+	<key>CFBundleName</key>
+	<string>squire-probe</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>squire-probe reads the battery level of ROG devices connected over Bluetooth.</string>
+</dict>
+</plist>

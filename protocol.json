@@ -1547,5 +1547,23 @@
         }
       ]
     }
+  },
+  "bluetooth": {
+    "_comment": "Bluetooth LE, both devices paired directly with the Mac (no Omni), macOS, 2026-11-26. HID-over-GATT carries only the normal input collections (usage pages 01/07/08/09/0c, no vendor page), so no 12 xx query is possible. Squire reads only the standard Battery Level (180F / 2A19, approved by the owner 2026-11-26). The vendor service FFF0 is listed but never used (bytes unknown). No charging flag, no warning level.",
+    "devices": {
+      "keyboard": {"name": "ROG FALCHION RX LOW PROFILE", "vendor_id": "0b05", "product_id": "1b08"},
+      "mouse": {"name": "ROG KERIS II ORIGIN", "vendor_id": "0b05", "product_id": "1c0f"}
+    },
+    "gatt": {
+      "180F": {"2A19": "read, notify"},
+      "180A": {"2A29": "read", "2A24": "read", "2A25": "read", "2A27": "read", "2A26": "read", "2A28": "read", "2A50": "read"},
+      "FFF0": {"FFF1": "write", "FFF2": "read, notify", "FFF4": "read, notify"}
+    },
+    "captures": [
+      {"device": "mouse", "characteristic": "2A19", "value": "34", "expect": {"percent": 52}},
+      {"device": "keyboard", "characteristic": "2A19", "value": "3c", "expect": {"percent": 60}},
+      {"device": "mouse", "characteristic": "2A26", "value": "30 78 30 31 30 30 31 30 78 a6", "notes": "'0x010010x' + one stray byte: firmware 01.00.10, as over HID. Not parsed by Squire."},
+      {"device": "keyboard", "characteristic": "2A26", "value": "30 78 30 35 30 30 31 33 78 42 01 20", "notes": "'0x050013xB' + stray bytes: firmware 05.00.13, as over HID. Not parsed by Squire."}
+    ]
   }
 }

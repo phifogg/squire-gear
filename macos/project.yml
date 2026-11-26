@@ -37,6 +37,8 @@ targets:
         LSUIElement: true               # menu bar only, no Dock icon
         LSMinimumSystemVersion: "13.0"
         NSHumanReadableCopyright: "MIT License, Daniel Draes"
+        # asked only when a keyboard or mouse is paired over Bluetooth (BluetoothReader.pairedDevicesPresent)
+        NSBluetoothAlwaysUsageDescription: "Squire reads the battery level of your ROG keyboard and mouse when they are connected over Bluetooth."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.phifogg.squire

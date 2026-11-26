@@ -24,6 +24,8 @@ The Linux settings window has the same layout (GTK 4 and libadwaita).
 - Battery percentage and charging state for keyboard and mouse
 - Works through the **ROG Omni receiver**, so both devices can share one dongle, and over the
   **USB cable**; a device on the cable is picked up automatically
+- macOS: battery level also when a device is paired directly over **Bluetooth** (the standard
+  Bluetooth battery value; no charging state and no settings over Bluetooth)
 - Menu bar item plus a popover with battery bars, connection and warning level; optionally only
   the shield icon without percentages
 - **Low-battery notification:** one notification per device when it reaches the warning
@@ -275,6 +277,10 @@ Omni receiver a device that is plugged in by cable answers `ff aa` there.
 Over USB the same queries work without a report ID: the write is `00 12 01` / `00 12 07`
 (65 bytes) and the reply starts directly with the echoed command. The wired keyboard is
 `pid 1b04`, the wired mouse `pid 1c0c`.
+
+Over Bluetooth (keyboard `pid 1b08`, mouse `pid 1c0f`) the devices expose no vendor
+HID collection, so these queries cannot be sent. Squire on macOS reads the standard GATT Battery
+Level (service `180F`, characteristic `2A19`) instead and never writes anything over Bluetooth.
 
 [`protocol.json`](protocol.json) contains real replies captured from the hardware, including
 both charging states and both connection types. The Python and Swift tests run against them.

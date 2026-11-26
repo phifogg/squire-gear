@@ -64,7 +64,11 @@ final class SettingsStore: ObservableObject {
             }
             DispatchQueue.main.async {
                 self.loading = false
-                self.batteries = Dictionary(uniqueKeysWithValues: batteries.map { ($0.device, $0) })
+                // Over Bluetooth only the menu bar's reading exists (no settings): show that level in the sidebar.
+                let bluetooth = demo ? [] : [BatteryStore.shared.keyboard, BatteryStore.shared.mouse]
+                    .compactMap { $0 }.filter { $0.connection == .bluetooth }
+                let merged = Bluetooth.merge(hid: batteries, bluetooth: bluetooth)
+                self.batteries = Dictionary(uniqueKeysWithValues: merged.map { ($0.device, $0) })
                 self.settings = settings
                 self.keyboard = keyboard
                 self.keyboardKnown = demo ? nil
