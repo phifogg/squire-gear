@@ -77,6 +77,45 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
+## Architecture (planned, agreed with the owner 2026-11-26; nothing rebuilt yet)
+Goal: support more devices without touching code everywhere. Today device knowledge (PIDs, report IDs, zones,
+ranges, effect tables) is spread as constants, "keyboard"/"mouse" are hard-wired (`ALLOWED_READS[device]`,
+`Battery.Device`), `Target` mixes device and connection, Omni and Bluetooth are special cases, and both settings
+windows are one big file each.
+Layers (same in Python and Swift):
+1. **Transport**: moves bytes and lists devices, knows nothing about ASUS: hidraw, hidapi, IOKit, BLE GATT
+   (CoreBluetooth / BlueZ), device_lock. The "vendor collections only" and timeout rules live here.
+2. **Route**: how one device is reached: transport, PID, interface / usage page, report ID, packet length. The Omni is
+   a receiver several routes go through (report IDs 02 / 03). A device has several routes with a fixed priority
+   (cable, Omni, Bluetooth); `Bluetooth.merge` becomes the general "best available route" rule.
+3. **Protocol**: the ASUS v2 framing once for all devices: echo search, provisional `ff aa`, exchange,
+   write_verified, save only on a match. Later maybe a second framing for BLE FFF0.
+4. **Model = data** (owner: data-driven): `devices.json` at the repo root, read by Python and Swift like
+   protocol.json: name, kind, routes, capabilities with parameters (battery offsets, LED zones + modes, DPI
+   range/stages, polling rates, effect speed tables, key layouts), and per command a confirmation status. Without
+   "confirmed" Squire only does --dry-run, so "show the bytes before the first send" stays enforced for new models.
+   The data must be checked: Swift decodes it strictly (Codable, tests fail on a wrong type); Python gets a
+   stdlib-only checker (required fields, types, ranges, unique PIDs, every capability has its parameters) that the
+   tests and CI run.
+5. **Capabilities = code modules**: battery, led_zones, dpi, polling, sensor, surface, power, kb_lighting, kb_sleep,
+   kb_warning, per_key. Each takes its parameters from the model and holds its reads, parser, write builders,
+   read-back check and allowlist entries. The allowlist of a device = the commands of its capabilities.
+UI: a device page is built from one editor per capability plus a drawing per model / kind with the zones from the
+model; the sidebar lists the devices found (covers the "only connected devices" backlog item).
+A new device then = an entry in devices.json + captures in protocol.json (+ maybe a drawing); code only for a new
+capability.
+Layout: Python package `squirelib/` (transport/, protocol.py, routes.py, capabilities/, registry.py, state.py, cli.py);
+`squire.py` stays the entry point and re-exports, so `import squire`, `squire.py --swiftbar`, the installers and
+tests keep working (installer and nfpm copy the folder too). Decided by the owner 2026-11-26, for as long as the
+Python core lives (until the Rust-or-similar decision). Linux window: linux/settings/ (window.py, editors/, drawings/). Swift: SquireCore split into SquireProtocol,
+SquireDevices (registry + capabilities), SquireTransport (IOKit, CoreBluetooth); App gets Settings/Editors and
+Settings/Drawings.
+Order (decided: in stages, layers first; Rust later on top of the finished shape), each stage with green tests and
+unchanged behaviour: (1) devices.json for today's two devices + checker; code reads PIDs, routes, parameters from it,
+(2) split transport / route / protocol, Python + Linux first, then Swift, (3) capabilities one by one,
+(4) windows on editors, (5) a second model as the proof, ideally another ASUS mouse on the same protocol (a Reddit
+user may test it; the owner will ask once we are there).
+
 ## Direction
 - 0.2.x stays read-only. From 0.3 Squire also configures devices (DPI, LEDs, ...) on **Linux and macOS**,
   Linux first (owner's decision 2026-11-10). Helping falchion-light with PRs stays welcome, but Squire has its own
