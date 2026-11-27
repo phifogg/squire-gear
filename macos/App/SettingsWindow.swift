@@ -31,9 +31,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             window.setFrameAutosaveName("SquireSettings")
             self.window = window
         }
+        // LSUIElement keeps Squire out of the Dock and ⌘-Tab; while the window is open it is a regular app, so the
+        // window can be found there like any other (and like the Linux window in GNOME's dock / Alt+Tab).
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         SettingsStore.shared.refresh()
+    }
+
+    /// Back to menu bar only once the window is closed.
+    func windowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
     }
 
     /// `--screenshot PATH`: save the window as PNG (development aid, like the Linux window's --screenshot).
