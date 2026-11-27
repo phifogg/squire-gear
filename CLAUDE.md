@@ -12,7 +12,8 @@ Private working notes (log, contacts, plans) live in `CLAUDE.local.md` (git-igno
 - Mouse: ASUS ROG Keris II Origin (wired PID `0b05:1c0c`)
 - Both also via the ROG Omni receiver `0b05:1ace`
 - Confirmed on macOS: Omni and wired, both devices, Python and Swift. Linux (Ubuntu 26.04, GNOME 50): Omni,
-  both devices; wired keyboard and mouse confirmed (2026-11-24).
+  both devices; wired keyboard and mouse confirmed (2026-11-24). Bluetooth (battery level only): keyboard `0b05:1b08`,
+  mouse `0b05:1c0f`, both on macOS (2026-11-26) and Linux (2026-11-27).
 
 ## Layout
 ```
@@ -227,13 +228,18 @@ user may test it; the owner will ask once we are there).
   CLI `--set-kb-keys KEY=RRGGBB,...|all=RRGGBB` only; Swift has none.
   Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
-- **Bluetooth** (owner, 2026-11-26, macOS only so far): paired directly, the devices are `0b05:1b08` (keyboard) and
+- **Bluetooth** (owner, 2026-11-26; macOS 2026-11-26, Linux 2026-11-27): paired directly, the devices are `0b05:1b08` (keyboard) and
   `0b05:1c0f` (mouse) with HID-over-GATT input collections only (no vendor page, so no 12 xx). Squire reads only the
   standard GATT Battery Level (180F / 2A19) of peripherals macOS already holds connected: never scans, pairs or
   subscribes. No charging flag or warning level over Bluetooth. The vendor service FFF0 (FFF1 write, FFF2 / FFF4
   read+notify) is probably the command channel; never send anything there until the bytes are known (capture of
   Armoury Crate over Bluetooth on Windows). The CBCentralManager (Bluetooth permission prompt) is only created when
-  IOKit lists one of the Bluetooth PIDs. HID values (Omni, cable) win over Bluetooth (`Bluetooth.merge`).
+  IOKit lists one of the Bluetooth PIDs. HID values (Omni, cable) win over Bluetooth (`Bluetooth.merge`,
+  `squire.merge_bluetooth`). Linux: BlueZ reads 2A19 itself and exposes it as `org.bluez.Battery1`; squire.py asks
+  bluetoothd once per poll (`busctl --json=short call org.bluez / org.freedesktop.DBus.ObjectManager
+  GetManagedObjects`, stdlib + systemd's busctl, no new dependency), only when a device has no HID value, and maps
+  connected devices by Modalias `usb:v0B05p1B08` / `p1C0F` (squire.BLUETOOTH_PIDS). Nothing is sent to the device.
+  The Bluetooth hidraw node (bus 0005, input collections only) is skipped by the vendor-collections rule.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
   *every* top-level collection in its report descriptor is vendor-defined (Omni iface 3 mixes them: skipped).
@@ -457,8 +463,12 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       mouse logo LED via the CLI (static green, unsaved, owner saw it, restored; protocol.json mouse_writes.writes)
 - [ ] Bluetooth, branch `bluetooth-battery` (2026-11-26): battery level over BLE (GATT 2A19) in the macOS menu bar,
       popover ("Bluetooth · level only") and settings sidebar; `squire-probe --bluetooth` reads both devices on the
-      Mac (60 % / 52 %, protocol.json `bluetooth`). App tried by the owner on the Mac (menu bar, popover, settings window shows a Bluetooth page instead of "not found"). Linux: BlueZ exposes 2A19 as
-      org.bluez.Battery1 (D-Bus), not done. Later: settings over FFF0 once captured.
+      Mac (60 % / 52 %, protocol.json `bluetooth`). App tried by the owner on the Mac (menu bar, popover, settings window shows a Bluetooth page instead of "not found").
+      Linux (2026-11-27, keyboard paired directly, Ubuntu 26.04): squire.read_bluetooth() reads BlueZ's Battery1 via
+      busctl (protocol.json `bluetooth.bluez_linux`); CLI, --json, --list, tray ("Bluetooth · level only, no charging
+      state") and the settings window (sidebar level, Bluetooth page + banner instead of "not found") show 58 % from
+      the repo. Mouse paired directly too (same day): Modalias 1c0f, BlueZ 51 %, the Omni answers ff aa, so Squire
+      shows Bluetooth for both. Later: settings over FFF0 once captured.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 - [x] Per-key colours (Falchion RX LP), branch `keyboard-direct`, PR #11 merged, released in 0.4.1 (2026-11-25): `c0 81` works via the Omni and over
       the cable (single keys, all keys; see Rules). Lost at off/on, cannot be saved (50 55 tested), blocks profile

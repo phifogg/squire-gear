@@ -1564,6 +1564,35 @@
       {"device": "keyboard", "characteristic": "2A19", "value": "3c", "expect": {"percent": 60}},
       {"device": "mouse", "characteristic": "2A26", "value": "30 78 30 31 30 30 31 30 78 a6", "notes": "'0x010010x' + one stray byte: firmware 01.00.10, as over HID. Not parsed by Squire."},
       {"device": "keyboard", "characteristic": "2A26", "value": "30 78 30 35 30 30 31 33 78 42 01 20", "notes": "'0x050013xB' + stray bytes: firmware 05.00.13, as over HID. Not parsed by Squire."}
-    ]
+    ],
+    "bluez_linux": {
+      "_comment": "Linux (Ubuntu 26.04, BlueZ, 2026-11-27): keyboard paired directly (mouse on the Omni at first, then also paired directly: the Omni answers 12 07 with ff aa, so the Bluetooth level is used). BlueZ reads 2A19 itself and exposes it as org.bluez.Battery1; Squire asks bluetoothd via `busctl --json=short call org.bluez / org.freedesktop.DBus.ObjectManager GetManagedObjects` and sends nothing to the device. hidraw shows bus 0005 nodes with input collections only (skipped: not vendor-defined): keyboard pid 1b08 0001:0006, 0001:0002, 000c:0001; mouse pid 1c0f 0001:0002, 0001:0006, 000c:0001. The device address is replaced by a synthetic one; only the fields Squire reads are kept.",
+      "objects": {
+        "/org/bluez/hci0/dev_00_00_00_00_00_01": {
+          "org.bluez.Device1": {
+            "Name": {"type": "s", "data": "ROG FALCHION RX LOW PROFILE"},
+            "Modalias": {"type": "s", "data": "usb:v0B05p1B08d0001"},
+            "Connected": {"type": "b", "data": true}
+          },
+          "org.bluez.Battery1": {
+            "Percentage": {"type": "y", "data": 58},
+            "Source": {"type": "s", "data": "GATT Battery Service"}
+          }
+        },
+        "/org/bluez/hci0/dev_00_00_00_00_00_02": {
+          "org.bluez.Device1": {
+            "Name": {"type": "s", "data": "ROG KERIS II ORIGIN"},
+            "Modalias": {"type": "s", "data": "usb:v0B05p1C0Fd0001"},
+            "Connected": {"type": "b", "data": true}
+          },
+          "org.bluez.Battery1": {
+            "Percentage": {"type": "y", "data": 51},
+            "Source": {"type": "s", "data": "GATT Battery Service"}
+          }
+        }
+      },
+      "expect": [{"device": "keyboard", "connection": "bluetooth", "percent": 58, "status": "ok"},
+                 {"device": "mouse", "connection": "bluetooth", "percent": 51, "status": "ok"}]
+    }
   }
 }

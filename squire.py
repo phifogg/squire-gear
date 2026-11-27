@@ -31,6 +31,9 @@ VID = 0x0B05
 PID_OMNI = 0x1ACE           # ROG Omni receiver (keyboard + mouse share it)
 PID_FALCHION_RX_LP = 0x1B04  # keyboard, wired
 PID_KERIS_II_ORIGIN = 0x1C0C  # mouse, wired
+# Paired directly over Bluetooth LE (macOS 2026-11-26, Linux 2026-11-27): only the normal input collections, no
+# vendor page, so no 12 xx query. Squire reads only the standard battery level (GATT 180F / 2A19) the OS holds.
+BLUETOOTH_PIDS = {0x1B08: "keyboard", 0x1C0F: "mouse"}
 
 KEYBOARD_QUERY = bytes([0x12, 0x01])
 MOUSE_QUERY = bytes([0x12, 0x07])
@@ -54,7 +57,7 @@ STATE_FILE = state_dir() / "notified.json"
 class Battery:
     device: str              # "keyboard" | "mouse"
     name: str
-    connection: str          # "omni" | "wired"
+    connection: str          # "omni" | "wired" | "bluetooth" (level only: no charging flag, no warning level)
     percent: Optional[int]   # None = not reachable
     charging: bool = False
     status: str = "ok"       # ok | asleep | no-response | no-access | error
@@ -979,9 +982,119 @@ def enumerate_paths(hid, pid: int) -> list[bytes]:
     return paths
 
 
-def read_all(debug: bool = False, hid=None) -> list[Battery]:
+CONNECTION_LABELS = {"omni": "Omni receiver", "wired": "Wired", "bluetooth": "Bluetooth"}
+
+
+def connection_label(connection: str) -> str:
+    return CONNECTION_LABELS.get(connection, connection)
+
+
+def read_all(debug: bool = False, hid=None, bluetooth: Optional[Callable[[bool], list]] = None) -> list[Battery]:
+    """HID first (Omni, cable); Bluetooth only fills in a device without a HID value.
+
+    bluetooth: reader for the Bluetooth levels; default read_bluetooth on Linux when no fake hid is given."""
     with device_lock():
-        return _read_all(debug, hid)
+        results = _read_all(debug, hid)
+    if bluetooth is None and hid is None and IS_LINUX:
+        bluetooth = read_bluetooth
+    if bluetooth is None or (len(results) == 2 and all(b.percent is not None for b in results)):
+        return results   # nothing missing: no D-Bus call
+    return merge_bluetooth(results, bluetooth(debug))
+
+
+def merge_bluetooth(hid: list[Battery], bluetooth: list[Battery]) -> list[Battery]:
+    """HID wins when it has a value; otherwise the Bluetooth reading, if any; otherwise HID's status
+    (same rule as Bluetooth.merge in SquireCore)."""
+    merged = []
+    for device in ("keyboard", "mouse"):
+        wired = next((b for b in hid if b.device == device), None)
+        ble = next((b for b in bluetooth if b.device == device and b.percent is not None), None)
+        choice = wired if wired is not None and wired.percent is not None else \
+            ble or wired or next((b for b in bluetooth if b.device == device), None)
+        if choice is not None:
+            merged.append(choice)
+    return merged
+
+
+def _modalias_pid(modalias: str) -> Optional[int]:
+    """'usb:v0B05p1B08d0001' -> 0x1B08 for an ASUS device, else None. BlueZ writes 'bluetooth:v...' for
+    Bluetooth SIG vendor ids; ASUS devices report the USB vendor id here."""
+    try:
+        kind, rest = modalias.split(":", 1)
+        if kind != "usb" or not rest.startswith("v") or "p" not in rest:
+            return None
+        vendor, product = rest[1:].split("p", 1)
+        if int(vendor[:4], 16) != VID:
+            return None
+        return int(product[:4], 16)
+    except ValueError:
+        return None
+
+
+def parse_bluez_objects(objects: dict) -> list[Battery]:
+    """Batteries from BlueZ's ObjectManager.GetManagedObjects (busctl --json: {"type": ..., "data": ...} per value).
+
+    Only connected devices with a known ASUS Bluetooth PID. Percentage 0 = asleep (same rule as the HID replies),
+    above 100 = error; no Battery1 interface yet (BlueZ reads it shortly after connecting) = no-response."""
+    def value(props: dict, key: str):
+        v = props.get(key)
+        return v.get("data") if isinstance(v, dict) else v
+
+    found: dict[str, Battery] = {}
+    for path, interfaces in sorted(objects.items()):
+        device_props = interfaces.get("org.bluez.Device1")
+        if not device_props or not value(device_props, "Connected"):
+            continue
+        device = BLUETOOTH_PIDS.get(_modalias_pid(value(device_props, "Modalias") or "") or -1)
+        if device is None:
+            continue
+        name = next(t.name for t in TARGETS if t.device == device)
+        battery_props = interfaces.get("org.bluez.Battery1")
+        level = value(battery_props, "Percentage") if battery_props else None
+        b = Battery(device, name, "bluetooth", None, raw=f"{path} Percentage={level}")
+        if level is None:
+            b.status = "no-response"
+        elif not isinstance(level, int) or not 0 <= level <= 100:
+            b.status = "error"
+        elif level == 0:
+            b.status = "asleep"
+        else:
+            b.percent = level
+        if device not in found or (found[device].percent is None and b.percent is not None):
+            found[device] = b
+    return [found[k] for k in ("keyboard", "mouse") if k in found]
+
+
+def bluez_objects(debug: bool = False) -> dict:
+    """BlueZ's managed objects via busctl (systemd, on every Ubuntu). Read-only: asks bluetoothd for what it
+    already holds; nothing is sent to the device. {} when BlueZ or busctl is missing."""
+    try:
+        out = subprocess.run(["busctl", "--system", "--json=short", "call", "org.bluez", "/",
+                              "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"],
+                             capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        if debug:
+            print(f"[bluetooth] busctl failed: {error}", file=sys.stderr)
+        return {}
+    if out.returncode != 0:
+        if debug:
+            print(f"[bluetooth] busctl: {out.stderr.strip()}", file=sys.stderr)
+        return {}
+    try:
+        return json.loads(out.stdout)["data"][0]
+    except (ValueError, KeyError, IndexError, TypeError):
+        return {}
+
+
+def read_bluetooth(debug: bool = False) -> list[Battery]:
+    """Battery levels of the devices paired over Bluetooth (Linux: BlueZ org.bluez.Battery1)."""
+    if not IS_LINUX:
+        return []   # macOS: CoreBluetooth in the Swift app (BluetoothReader)
+    results = parse_bluez_objects(bluez_objects(debug))
+    if debug:
+        for b in results:
+            print(f"[{b.device}] bluetooth: {b.raw} -> {b.percent} ({b.status})", file=sys.stderr)
+    return results
 
 
 def _read_all(debug: bool = False, hid=None) -> list[Battery]:
@@ -1796,13 +1909,17 @@ def print_mouse_settings(s: MouseSettings) -> None:
 
 
 def list_devices(hid=None) -> None:
-    hid = hid or load_backend()
-    for info in hid.enumerate(VID, 0):
+    for info in (hid or load_backend()).enumerate(VID, 0):
         pages = info.get("collections")
         usage = (" collections=" + ",".join(f"{p:04x}:{u:04x}" for p, u in pages) if pages is not None else
                  f" usage_page={info.get('usage_page', 0):04x} usage={info.get('usage', 0):04x}")
         print(f"pid={info['product_id']:04x} iface={info.get('interface_number')}{usage} "
               f"name={info.get('product_string')!r} path={info['path']!r}")
+    if hid is None:   # Bluetooth (Linux: what BlueZ already holds; sends nothing to the device)
+        for b in read_bluetooth():
+            pid = next(p for p, d in BLUETOOTH_PIDS.items() if d == b.device)
+            level = f"{b.percent}%" if b.percent is not None else b.status
+            print(f"pid={pid:04x} bluetooth battery={level} name={b.name!r} ({b.raw.split()[0]})")
 
 
 def send_notification(title: str, message: str) -> None:

@@ -47,6 +47,9 @@ class LabelTests(unittest.TestCase):
         self.assertIn("low", tray.device_lines(kb(25, warning=30), "x")[1])
         self.assertEqual(tray.device_lines(kb(50, connection="wired"), "x")[2], "Wired · warning at 20%")
         self.assertEqual(tray.device_lines(kb(50, warning=None), "x")[2], "Omni receiver · warning at 20%")
+        self.assertEqual(tray.device_lines(kb(50, warning=0), "x")[2], "Omni receiver · no low-battery warning")
+        self.assertEqual(tray.device_lines(kb(58, warning=None, connection="bluetooth"), "x")[1:],
+                         ["▰▰▰▰▰▰▱▱▱▱  58%", "Bluetooth · level only, no charging state"])
 
     def test_unreachable_device_lines(self):
         self.assertEqual(tray.device_lines(None, "ROG Keris II Origin"), ["ROG Keris II Origin", "Not found"])
