@@ -285,9 +285,7 @@ public enum Packet {
             throw CommandError.notAllowed((command.isWrite ? "write " : "") + ReplyParser.hex(command.bytes)
                                           + " for the \(device.rawValue)")
         }
-        var bytes: [UInt8] = [reportID ?? 0x00] + command.bytes
-        if bytes.count < length { bytes += [UInt8](repeating: 0, count: length - bytes.count) }
-        return bytes
+        return SquireProtocol.frame(reportID: reportID, bytes: command.bytes, length: length)
     }
 }
 

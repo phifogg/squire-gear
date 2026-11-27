@@ -69,7 +69,7 @@ if CommandLine.arguments.contains("--keyboard-settings") {
     let layout = k.layout ?? "unknown id " + layoutID
     print("  Layout:       " + layout + (k.iso == true ? " (ISO)" : ""))
     print("  Lighting:     \(k.lightMode ?? "?") (the colour cannot be read)")
-    print("  Power:        sleep after \(k.sleepMinutes.map { "\($0) min" } ?? "never") (not confirmed), low-battery warning \(k.lowWarning.map(String.init) ?? "?") %")
+    print("  Power:        sleep after \(k.sleepMinutes.map { "\($0) min" } ?? "never"), low-battery warning \(k.lowWarning.map(String.init) ?? "?") %")
     exit(0)
 }
 

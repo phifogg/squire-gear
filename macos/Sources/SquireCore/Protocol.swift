@@ -6,6 +6,9 @@
 //   keyboard  12 01 -> [10] battery % (copy at [5]), [9] low-battery warning %, [8] charging
 //   error reply  ff aa -> device asleep / command not supported
 //
+// Protocol layer (same as squirelib/protocol.py): framing, echo search, provisional ff aa, battery reply parsing.
+// Routes (Target) are in Routes.swift; the IOKit transport is in SquireHID.
+//
 // Only commands on the allowlist in Commands.swift are ever sent: the battery queries above, the mouse settings
 // reads, and the two approved writes (51 28 set LED, 50 03 save), the writes only after an explicit Apply.
 
@@ -20,53 +23,13 @@ public enum SquireProtocol {
     public static let defaultLowWarning = 20
     /// IOKit/hidapi: a timeout of 0 means "block forever". Always read with a timeout > 0.
     public static let readTimeoutMs = 400
-}
 
-/// One way of querying one device.
-public struct Target: Equatable, Sendable {
-    public let device: Battery.Device
-    public let name: String
-    public let connection: Battery.Connection
-    public let productID: UInt16
-    /// nil = unnumbered report (leading 0x00 in the write, no report ID in the reply).
-    public let reportID: UInt8?
-    public let query: [UInt8]
-    /// Candidate total write sizes (including the report-ID byte), tried in order.
-    public let reportLengths: [Int]
-
-    public static let omniMouse = Target(
-        device: .mouse, name: "ROG Keris II Origin", connection: .omni,
-        productID: SquireProtocol.omniReceiverPID, reportID: 0x03,
-        query: [0x12, 0x07], reportLengths: [64])
-
-    /// Wired report size 65 confirmed 2026-11-10; 64 kept as a harmless fallback.
-    public static let wiredMouse = Target(
-        device: .mouse, name: "ROG Keris II Origin", connection: .wired,
-        productID: SquireProtocol.kerisIIOriginPID, reportID: nil,
-        query: [0x12, 0x07], reportLengths: [65, 64])
-
-    public static let mouseTargets = [omniMouse, wiredMouse]
-
-    public static let omniKeyboard = Target(
-        device: .keyboard, name: "ROG Falchion RX LP", connection: .omni,
-        productID: SquireProtocol.omniReceiverPID, reportID: 0x02,
-        query: [0x12, 0x01], reportLengths: [64])
-
-    /// Wired keyboard confirmed 2026-11-10: 65-byte write, reply without report ID.
-    public static let wiredKeyboard = Target(
-        device: .keyboard, name: "ROG Falchion RX LP", connection: .wired,
-        productID: SquireProtocol.falchionRXLowProfilePID, reportID: nil,
-        query: [0x12, 0x01], reportLengths: [65])
-
-    public static let keyboardTargets = [omniKeyboard, wiredKeyboard]
-    /// Query order: Omni first, wired as fallback (a device on the cable answers `ff aa` on the receiver).
-    public static let all = keyboardTargets + mouseTargets
-
-    /// Report ID byte followed by the query, zero-padded to `length`.
-    public func packet(length: Int) -> [UInt8] {
-        var bytes: [UInt8] = [reportID ?? 0x00] + query
-        if bytes.count < length { bytes += [UInt8](repeating: 0, count: length - bytes.count) }
-        return bytes
+    /// The ASUS v2 framing: report ID (0x00 = unnumbered) + command, zero-padded to `length`. The only place a
+    /// packet's bytes are laid out; callers check the allowlist first (Packet.build).
+    public static func frame(reportID: UInt8?, bytes: [UInt8], length: Int) -> [UInt8] {
+        var packet: [UInt8] = [reportID ?? 0x00] + bytes
+        if packet.count < length { packet += [UInt8](repeating: 0, count: length - packet.count) }
+        return packet
     }
 }
 
