@@ -249,3 +249,23 @@ private func keyboardReply(percent: UInt8, charging: Bool = false, warning: UInt
         }
     }
 }
+
+/// Refactor stage 2: one framing for every packet (SquireProtocol.frame), used by Target and Packet.build alike.
+@Suite struct FramingTests {
+    @Test func frameIsReportIDPlusCommandZeroPadded() {
+        #expect(SquireProtocol.frame(reportID: 0x03, bytes: [0x12, 0x07], length: 6) == [0x03, 0x12, 0x07, 0, 0, 0])
+        #expect(SquireProtocol.frame(reportID: nil, bytes: [0x12, 0x01], length: 4) == [0x00, 0x12, 0x01, 0])
+        #expect(SquireProtocol.frame(reportID: 0x02, bytes: [0x12, 0x01, 0x00], length: 2) == [0x02, 0x12, 0x01, 0x00])
+    }
+
+    @Test func allowlistedPacketsUseTheSameFraming() throws {
+        for target in Target.all {
+            for length in target.reportLengths {
+                let built = try Packet.build(device: target.device, reportID: target.reportID, command: target.command,
+                                             length: length)
+                #expect(built == target.packet(length: length))
+                #expect(built == SquireProtocol.frame(reportID: target.reportID, bytes: target.query, length: length))
+            }
+        }
+    }
+}

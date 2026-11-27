@@ -94,8 +94,14 @@ allowlist), so the allowlist, reply_expected, battery parsing, the per-device re
 write_verified stay in squire.py until stage 3 (capabilities). Target got `connection` + `interface` (no more
 `pid == PID_OMNI` checks). Tests: 256 green, incl. a layer test (transport + protocol import without the registry).
 Checked on the device (Omni, read-only): --json, --settings, --keyboard-settings, --list and six --dry-run writes
-print the same as main. Owner installed the .deb on Ubuntu 26.04: tray + window work. Next: merge the PR, then the
-Swift part of stage 2 (needs a Mac build).
+print the same as main. Owner installed the .deb on Ubuntu 26.04: tray + window work.
+Stage 2 Swift (same PR #14, written on Linux without a compiler; CI builds swift test + the app): SquireCore
+Routes.swift (Target), Protocol.swift (SquireProtocol.frame = the one framing, used by Target.packet and
+Packet.build; ReplyParser, Exchange); SquireHID IOKitTransport.swift (listDevices, candidates, request/transact with
+the fresh-IOHIDDevice rule; gets finished packets + a `done` check, knows no commands), DeviceLock.swift, and
+HIDReader.swift = sessions only (builds every packet via Packet.build). No SwiftPM target split (pragmatic scope).
+Next: owner checks on the Mac (swift test, `swift run squire-probe`, `--settings`, `--keyboard-settings`,
+`--repeat 60`, the app: menu bar, popover, settings window reads; Apply optional), then merge #14.
 Stage 1 state: devices.json + squirelib/registry.py (checker) exist; squire.py reads VID/PIDs, TARGETS, interfaces,
 report IDs, the read allowlist (confirmed reads only), confirmed write prefixes (is_allowed_write requires one),
 battery offsets (wired mouse now filtered to interface 0 like the others; confirmed on the Mac 2026-11-27:

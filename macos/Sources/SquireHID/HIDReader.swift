@@ -3,21 +3,14 @@ import IOKit
 import IOKit.hid
 import SquireCore
 
-/// Talks to keyboard and mouse through IOKit. Every packet comes from `Packet.build`, i.e. only commands on the
-/// allowlist in SquireCore (Commands.swift) are ever written: the battery queries, the mouse and keyboard settings
-/// reads, and the mouse writes + save, which the app sends only after an explicit Apply.
-///
-/// Safety rules (same as the Python version, see CLAUDE.md):
-/// - the manager only matches vendor-defined usage pages (>= 0xFF00); the normal keyboard/mouse
-///   input collections are never opened
-/// - every wait is bounded (no blocking reads)
-/// - one fresh IOHIDDevice per request (see `request`)
-/// - one device session at a time, also across processes (DeviceLock, shared with squire.py)
+/// Device sessions for keyboard and mouse (batteries, settings reads, verified writes) on top of IOKitTransport.
+/// Every packet comes from `Packet.build`, i.e. only commands on the allowlist in SquireCore (Commands.swift) are
+/// ever written: the battery queries, the mouse and keyboard settings reads, and the writes + save, which the app
+/// sends only after an explicit Apply. One device session at a time, also across processes (DeviceLock, shared
+/// with squire.py). Transport rules (vendor collections only, bounded waits, one fresh IOHIDDevice per request)
+/// are in IOKitTransport.
 public final class HIDReader {
-    /// Vendor pages seen on the Omni receiver interface 2 (ff00-ff02), the wired keyboard interface 1 (ff00)
-    /// and the wired mouse interface 0 (ff01).
-    /// The ffc0-ffc2 pages belong to other interfaces and are deliberately not matched.
-    static let vendorPages = [0xFF00, 0xFF01, 0xFF02]
+    private let transport = IOKitTransport()
 
     public struct Result {
         public var batteries: [Battery]
@@ -34,8 +27,6 @@ public final class HIDReader {
         public var diagnostics: [String]
     }
 
-    private final class ReplyBox { var replies: [[UInt8]] = [] }
-
     public init() {}
 
     // MARK: batteries
@@ -43,11 +34,11 @@ public final class HIDReader {
     public func read() -> Result {
         DeviceLock.run {
             var log: [String] = []
-            let devices = listDevices(log: &log)
+            let devices = transport.listDevices(log: &log)
             var found: [Battery.Device: Battery] = [:]
             for target in Target.all {
                 if found[target.device]?.percent != nil { continue }   // already have a value (e.g. via Omni)
-                for device in candidates(devices, target) {
+                for device in transport.candidates(devices, productID: target.productID) {
                     let battery = queryBattery(device, target: target, log: &log)
                     if found[target.device] == nil || (found[target.device]?.percent == nil && battery.percent != nil) {
                         found[target.device] = battery
@@ -77,10 +68,10 @@ public final class HIDReader {
     public func readMouseSettings() -> SettingsResult {
         DeviceLock.run {
             var log: [String] = []
-            let devices = listDevices(log: &log)
+            let devices = transport.listDevices(log: &log)
             var result = MouseSettings(status: .notFound)
             for target in Target.mouseTargets {
-                for device in candidates(devices, target) {
+                for device in transport.candidates(devices, productID: target.productID) {
                     var settings = MouseSettings(name: target.name, connection: target.connection)
                     let battery = exchange(device, target: target, command: .mouseBattery, log: &log)
                     guard battery.status == .ok else {
@@ -111,10 +102,10 @@ public final class HIDReader {
     public func readKeyboardSettings() -> KeyboardSettingsResult {
         DeviceLock.run {
             var log: [String] = []
-            let devices = listDevices(log: &log)
+            let devices = transport.listDevices(log: &log)
             var result = KeyboardSettings(status: .notFound)
             for target in Target.keyboardTargets {
-                for device in candidates(devices, target) {
+                for device in transport.candidates(devices, productID: target.productID) {
                     var settings = KeyboardSettings(name: target.name, connection: target.connection)
                     let battery = exchange(device, target: target, command: .keyboardBattery, log: &log)
                     guard battery.status == .ok else {
@@ -157,10 +148,10 @@ public final class HIDReader {
         }
         return DeviceLock.run { [prebuilt] in
             var log: [String] = []
-            let devices = listDevices(log: &log)
+            let devices = transport.listDevices(log: &log)
             var result = WriteResult(status: .notFound)
             for target in Target.mouseTargets {
-                for device in candidates(devices, target) {
+                for device in transport.candidates(devices, productID: target.productID) {
                     let awake = exchange(device, target: target, command: .mouseBattery, log: &log)
                     guard awake.status == .ok else {
                         result = WriteResult(status: Self.writeStatus(awake.status), message: "mouse not awake: nothing written")
@@ -217,10 +208,10 @@ public final class HIDReader {
         }
         return DeviceLock.run {
             var log: [String] = []
-            let devices = listDevices(log: &log)
+            let devices = transport.listDevices(log: &log)
             var result = KeyboardWriteResult(status: .notFound)
             for target in Target.keyboardTargets {
-                for device in candidates(devices, target) {
+                for device in transport.candidates(devices, productID: target.productID) {
                     let awake = exchange(device, target: target, command: .keyboardBattery, log: &log)
                     guard awake.status == .ok else {
                         result = KeyboardWriteResult(status: Self.writeStatus(awake.status),
@@ -291,37 +282,7 @@ public final class HIDReader {
         return nil
     }
 
-    // MARK: transport
-
-    private func listDevices(log: inout [String]) -> [IOHIDDevice] {
-        let access = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
-        log.append("Input Monitoring: \(Self.describe(access))")
-        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-        let matching = Self.vendorPages.map {
-            [kIOHIDVendorIDKey: Int(SquireProtocol.vendorID), kIOHIDDeviceUsagePageKey: $0] as CFDictionary
-        }
-        IOHIDManagerSetDeviceMatchingMultiple(manager, matching as CFArray)
-        // The manager is only used to find devices; it is never opened. Every request talks to its own,
-        // freshly created IOHIDDevice (see request), like hidapi does.
-        let devices = Array((IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>) ?? [])
-        for device in devices {
-            log.append("device pid=\(String(Self.intProperty(device, kIOHIDProductIDKey) ?? 0, radix: 16)) "
-                       + "name=\(Self.stringProperty(device, kIOHIDProductKey) ?? "?") "
-                       + "transport=\(Self.stringProperty(device, kIOHIDTransportKey) ?? "?") "
-                       + "pages=\(Self.usagePages(device).map { String($0, radix: 16) }) "
-                       + "maxIn=\(Self.intProperty(device, kIOHIDMaxInputReportSizeKey) ?? -1) "
-                       + "maxOut=\(Self.intProperty(device, kIOHIDMaxOutputReportSizeKey) ?? -1)")
-        }
-        return devices
-    }
-
-    /// Vendor-defined collections of the target's product; never the keyboard/mouse input collections.
-    private func candidates(_ devices: [IOHIDDevice], _ target: Target) -> [IOHIDDevice] {
-        devices.filter {
-            Self.intProperty($0, kIOHIDProductIDKey) == Int(target.productID)
-                && Self.usagePages($0).contains(where: { $0 >= SquireProtocol.minVendorUsagePage })
-        }
-    }
+    // MARK: protocol
 
     private func exchange(_ device: IOHIDDevice, target: Target, command: Command, log: inout [String]) -> Exchange {
         let sent = request(device, target: target, command: command, log: &log)
@@ -329,103 +290,27 @@ public final class HIDReader {
         return ReplyParser.exchange(replies: sent.replies, echo: command.expectedReply, reportID: target.reportID)
     }
 
-    static let reportBufferSize = 65   // max input report is 64 bytes on all known devices
-
-    /// One command, one reply wait, on a fresh IOHIDDevice.
-    ///
-    /// Owns everything the input-report callback can touch (box + buffer) and frees it only after `transact`
-    /// has returned, i.e. after the private IOHIDDevice that holds the callback registration is gone.
-    ///
-    /// Why: IOKit keeps input-report callbacks in a per-device set and calls every entry for each report.
-    /// Unregistering (callback nil, with or without the original context) did NOT remove the entry, so
-    /// re-using one IOHIDDevice for several queries left stale entries whose freed context was later
-    /// called: use-after-free crashes (reproduced with `squire-probe --repeat`, 2026-11-10). A device
-    /// object that is used for exactly one request and then released cannot call back any more.
+    /// One command on a fresh device object. Built first: a command that is not on the allowlist never gets as
+    /// far as opening the device. The wait ends at the first reply that echoes the command.
     private func request(_ listed: IOHIDDevice, target: Target, command: Command,
                          log: inout [String]) -> (replies: [[UInt8]], error: String?) {
-        let box = ReplyBox()
-        let context = Unmanaged.passRetained(box)
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Self.reportBufferSize)
-        defer {
-            context.release()
-            buffer.deallocate()
-        }
-        let error = transact(listed, target: target, command: command, box: box, context: context.toOpaque(),
-                             buffer: buffer, log: &log)
-        return (box.replies, error)
-    }
-
-    /// Returns an error text, or nil when the packet was written (replies are in `box`).
-    private func transact(_ listed: IOHIDDevice, target: Target, command: Command, box: ReplyBox,
-                          context: UnsafeMutableRawPointer, buffer: UnsafeMutablePointer<UInt8>,
-                          log: inout [String]) -> String? {
-        // Build first: a command that is not on the allowlist never gets as far as opening the device.
         let packets: [[UInt8]]
         do {
             packets = try target.reportLengths.map { try Packet.build(device: target.device, reportID: target.reportID, command: command, length: $0) }
         } catch {
             log.append("[\(target.connection.rawValue)] refused: \(error)")
-            return "refused: \(error)"
+            return ([], "refused: \(error)")
         }
-        // Fresh object for this one request, never the manager's shared one.
-        let service = IOHIDDeviceGetService(listed)
-        guard service != MACH_PORT_NULL, let device = IOHIDDeviceCreate(kCFAllocatorDefault, service) else {
-            return "create failed"
-        }
-        let opened = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
-        if opened != kIOReturnSuccess {
-            log.append("[\(target.connection.rawValue)] IOHIDDeviceOpen: \(Self.describe(opened))")
-            return "open failed"
-        }
-
-        let runLoop: CFRunLoop = CFRunLoopGetCurrent()
-        IOHIDDeviceScheduleWithRunLoop(device, runLoop, CFRunLoopMode.defaultMode.rawValue)
-        IOHIDDeviceRegisterInputReportCallback(device, buffer, Self.reportBufferSize, { context, _, _, _, _, report, length in
-            guard let context else { return }
-            Unmanaged<ReplyBox>.fromOpaque(context).takeUnretainedValue().replies
-                .append(Array(UnsafeBufferPointer(start: report, count: length)))
-        }, context)
-        defer {
-            // Same order as hidapi's hid_close. The object itself is released when this function returns.
-            IOHIDDeviceRegisterInputReportCallback(device, buffer, Self.reportBufferSize, nil, context)
-            IOHIDDeviceUnscheduleFromRunLoop(device, runLoop, CFRunLoopMode.defaultMode.rawValue)
-            IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
-        }
-        pump(0.01)
-        box.replies.removeAll()   // drop stale input
-
-        var written = false
-        for packet in packets {
-            // Same framing as hidapi: report ID 0 means "unnumbered", the leading 0x00 is not sent.
-            let reportID = Int(target.reportID ?? 0)
-            let payload = target.reportID == nil ? Array(packet.dropFirst()) : packet
-            let result = payload.withUnsafeBufferPointer {
-                IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, reportID, $0.baseAddress!, $0.count)
-            }
-            log.append("[\(target.connection.rawValue)] > \(ReplyParser.hex(Array(packet.prefix(command.isWrite ? 13 : 5)))) "
-                       + "… (\(packet.count) bytes) -> \(Self.describe(result))")
-            if result == kIOReturnSuccess { written = true; break }
-        }
-        guard written else { return "write failed" }
-
         let echo = Array(command.bytes.prefix(command.echoLength))
-        let deadline = Date().addingTimeInterval(Double(SquireProtocol.readTimeoutMs) / 1000)
-        while Date() < deadline {
-            pump(0.02)
-            // Stop at the first echoed reply. An `ff aa` alone does not end the wait: a valid reply may follow.
-            if box.replies.contains(where: { ReplyParser.echoIndex(in: $0, query: echo) != nil }) { break }
-        }
-        for reply in box.replies {
-            log.append("[\(target.connection.rawValue)] < \(ReplyParser.hex(reply))")
-        }
-        return nil
+        // An `ff aa` alone does not end the wait: a valid reply may follow.
+        return transport.request(listed, reportID: target.reportID, packets: packets,
+                                 timeoutMs: SquireProtocol.readTimeoutMs, label: target.connection.rawValue,
+                                 logBytes: command.isWrite ? 13 : 5,
+                                 done: { replies in replies.contains { ReplyParser.echoIndex(in: $0, query: echo) != nil } },
+                                 log: &log)
     }
 
     // MARK: helpers
-
-    private func pump(_ seconds: TimeInterval) {
-        CFRunLoopRunInMode(.defaultMode, seconds, false)
-    }
 
     private static func settingsStatus(_ status: Exchange.Status) -> MouseSettings.Status {
         switch status {
@@ -449,53 +334,5 @@ public final class HIDReader {
         guard let packet = try? Packet.build(device: target.device, reportID: target.reportID, command: command,
                                              length: target.reportLengths[0]) else { return "refused" }
         return ReplyParser.hex(Array(packet.prefix(prefix)))
-    }
-
-    private static func intProperty(_ device: IOHIDDevice, _ key: String) -> Int? {
-        IOHIDDeviceGetProperty(device, key as CFString) as? Int
-    }
-
-    private static func stringProperty(_ device: IOHIDDevice, _ key: String) -> String? {
-        IOHIDDeviceGetProperty(device, key as CFString) as? String
-    }
-
-    private static func usagePages(_ device: IOHIDDevice) -> [Int] {
-        let pairs = IOHIDDeviceGetProperty(device, kIOHIDDeviceUsagePairsKey as CFString) as? [[String: Int]] ?? []
-        return pairs.compactMap { $0[kIOHIDDeviceUsagePageKey] }
-    }
-
-    static func describe(_ access: IOHIDAccessType) -> String {
-        switch access {
-        case kIOHIDAccessTypeGranted: return "granted"
-        case kIOHIDAccessTypeDenied: return "denied"
-        case kIOHIDAccessTypeUnknown: return "unknown (not asked yet)"
-        default: return "?(\(access.rawValue))"
-        }
-    }
-
-    static func describe(_ result: IOReturn) -> String {
-        result == kIOReturnSuccess ? "ok" : "error 0x" + String(UInt32(bitPattern: result), radix: 16)
-    }
-}
-
-/// One device session at a time: battery poll, settings window and squire.py (SwiftBar plugin) must not
-/// interleave their requests. Uses the same lock file as squire.device_lock on macOS (flock). Best effort:
-/// if the file cannot be created, only the in-process lock applies.
-enum DeviceLock {
-    private static let inProcess = NSLock()
-
-    static var path: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/squire-gear/squire-gear-device.lock")
-    }
-
-    static func run<T>(_ body: () -> T) -> T {
-        inProcess.lock()
-        defer { inProcess.unlock() }
-        try? FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fd = open(path.path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o644)
-        if fd >= 0 { flock(fd, LOCK_EX) }   // waits; a session takes about a second at most
-        defer { if fd >= 0 { close(fd) } }  // closing releases the lock
-        return body()
     }
 }
