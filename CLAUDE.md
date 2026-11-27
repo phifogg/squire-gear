@@ -87,7 +87,7 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
-## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 on `refactor-transport`)
+## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 on `refactor-transport` (PR #14), checked on Linux + Mac)
 Stage 2 state (Python, 2026-11-27): transport / route / protocol split into squirelib (see Layout).
 protocol.exchange() writes only what its `build` callable returns; squire.exchange() passes squire.packet() (the
 allowlist), so the allowlist, reply_expected, battery parsing, the per-device read/write sessions and
@@ -100,8 +100,9 @@ Routes.swift (Target), Protocol.swift (SquireProtocol.frame = the one framing, u
 Packet.build; ReplyParser, Exchange); SquireHID IOKitTransport.swift (listDevices, candidates, request/transact with
 the fresh-IOHIDDevice rule; gets finished packets + a `done` check, knows no commands), DeviceLock.swift, and
 HIDReader.swift = sessions only (builds every packet via Packet.build). No SwiftPM target split (pragmatic scope).
-Next: owner checks on the Mac (swift test, `swift run squire-probe`, `--settings`, `--keyboard-settings`,
-`--repeat 60`, the app: menu bar, popover, settings window reads; Apply optional), then merge #14.
+Checked on the Mac (2026-11-27, Omni, read-only): swift test (118 tests in 20 suites) green, `squire-probe`, `--settings`,
+`--keyboard-settings` parse as before, `--repeat 60` no crash; the app (menu bar, popover, settings window reads)
+confirmed by the owner. Next: merge #14, then stage 3 (capabilities).
 Stage 1 state: devices.json + squirelib/registry.py (checker) exist; squire.py reads VID/PIDs, TARGETS, interfaces,
 report IDs, the read allowlist (confirmed reads only), confirmed write prefixes (is_allowed_write requires one),
 battery offsets (wired mouse now filtered to interface 0 like the others; confirmed on the Mac 2026-11-27:
@@ -113,7 +114,8 @@ Where we are (2026-11-27): stage 1 merged (PR #13, 7862be0) after the owner's Li
 Ubuntu 26.04: tray + settings window work). Owner's decision: merge each stage via PR, no release until the whole
 refactoring is done. Test each stage like stage 1: build the .deb (`linux/build-packages.sh deb`, or the PR's `linux`
 artifact), check /usr/share/squire-gear has every new file, run squire --version / --list / --debug / --settings /
---keyboard-settings (read-only), tray + Settings… window with both devices. NEXT: stage 2, Python + Linux first.
+--keyboard-settings (read-only), tray + Settings… window with both devices. Stage 2 (PR #14) checked on Linux and
+the Mac; NEXT: merge #14, then stage 3.
 Stage 1b (Swift runtime loading) postponed by the owner, Linux first: copy devices.json to
 macos/Sources/SquireCore/Resources/ as a SwiftPM resource (Bundle.module; SwiftPM cannot reach ../devices.json, a
 symlink is unreliable), a test that the copy equals the root file, then build Target.all / Allowlist / Command tables
@@ -181,7 +183,8 @@ separate SwiftPM targets.
   never opens at launch), opened with "Settings…" in the popover. Same rules: Apply writes each changed zone, reads
   it back, saves (50 03) once with the last one and only if all matched. protocol.json is bundled for --demo.
   Reads and LED Apply (all three zones) confirmed on macOS via Omni (owner, 2026-11-11) and over the cable
-  (2026-11-12). The colour row is an
+  (2026-11-12). While the window is open the app switches from LSUIElement (accessory) to a regular app, so the
+  window is in the Dock and Cmd-Tab; closing it goes back to menu bar only (owner confirmed, 2026-11-27). The colour row is an
   NSColorWell wrapper (LEDColorWell), not SwiftUI's ColorPicker: that one wrote each edit back as clamped sRGB,
   so the panel's cursor jumped and parts of the wheel seemed unreachable.
 - Linux settings window: a separate GTK 4 + libadwaita process (`squire-settings`), started from the tray menu.
