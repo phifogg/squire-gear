@@ -26,6 +26,10 @@ if [ ! -x "$APP_DIR/venv/bin/python" ]; then
 fi
 "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip hidapi
 install -m 0755 "$HERE/squire.py" "$APP_DIR/squire.py"
+install -m 0644 "$HERE/devices.json" "$APP_DIR/devices.json"     # device models, read by squire.py
+rm -rf "$APP_DIR/squirelib"
+mkdir -p "$APP_DIR/squirelib"
+install -m 0644 "$HERE"/squirelib/*.py "$APP_DIR/squirelib/"
 
 if [ -n "$PLUGIN_DIR" ] && [ -d "$PLUGIN_DIR" ]; then
   PLUGIN="$PLUGIN_DIR/squire-gear.5m.sh"

@@ -27,16 +27,34 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Callable, Optional
 
-VID = 0x0B05
-PID_OMNI = 0x1ACE           # ROG Omni receiver (keyboard + mouse share it)
-PID_FALCHION_RX_LP = 0x1B04  # keyboard, wired
-PID_KERIS_II_ORIGIN = 0x1C0C  # mouse, wired
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # squirelib/ sits next to squire.py (repo and installs)
+from squirelib import registry  # noqa: E402
+
+# Device models (ids, routes, commands, capability parameters) come from devices.json; load() refuses a file that
+# fails the checker. The module constants below are derived from it, so the rest of Squire reads them as before.
+DEVICES = registry.load()
+KEYBOARD = DEVICES.by_kind("keyboard")   # Falchion RX Low Profile
+MOUSE = DEVICES.by_kind("mouse")         # Keris II Origin
+_hex = registry.byte
+
+
+def _pid(device, connection: str) -> int:
+    return int(device.route(connection)["pid"], 16)
+
+
+VID = DEVICES.vendor_id
+PID_OMNI = int(DEVICES.receivers["rog-omni"]["pid"], 16)   # ROG Omni receiver (keyboard + mouse share it)
+PID_FALCHION_RX_LP = _pid(KEYBOARD, "wired")
+PID_KERIS_II_ORIGIN = _pid(MOUSE, "wired")
 # Paired directly over Bluetooth LE (macOS 2026-11-26, Linux 2026-11-27): only the normal input collections, no
 # vendor page, so no 12 xx query. Squire reads only the standard battery level (GATT 180F / 2A19) the OS holds.
-BLUETOOTH_PIDS = {0x1B08: "keyboard", 0x1C0F: "mouse"}
+BLUETOOTH_PIDS = {_pid(d, "bluetooth"): d.kind for d in DEVICES.devices if d.route("bluetooth")}
+# Interface of the vendor collection per HID pid (Omni 2, wired keyboard 1, wired mouse 0).
+HID_INTERFACES = {int(r["pid"], 16): r["interface"] for d in DEVICES.devices for r in d.routes()
+                  if r["connection"] != "bluetooth"}
 
-KEYBOARD_QUERY = bytes([0x12, 0x01])
-MOUSE_QUERY = bytes([0x12, 0x07])
+KEYBOARD_QUERY = KEYBOARD.read(KEYBOARD.capability("battery")["read"])
+MOUSE_QUERY = MOUSE.read(MOUSE.capability("battery")["read"])
 READ_TIMEOUT_MS = 400
 DRAIN_TIMEOUT_MS = 5   # hidapi: timeout 0 means "block forever", so never pass 0
 MAX_READS = 8
@@ -75,56 +93,56 @@ class Target:
     report_lens: tuple         # candidate total write sizes (incl. report-ID byte), tried in order
 
 
-TARGETS = [
-    Target("keyboard", "ROG Falchion RX LP", PID_OMNI, 0x02, KEYBOARD_QUERY, (64,)),
-    Target("mouse", "ROG Keris II Origin", PID_OMNI, 0x03, MOUSE_QUERY, (64,)),
-    Target("keyboard", "ROG Falchion RX LP", PID_FALCHION_RX_LP, None, KEYBOARD_QUERY, (65,)),
-    # wired mouse: report size unverified on macOS, try both
-    Target("mouse", "ROG Keris II Origin", PID_KERIS_II_ORIGIN, None, MOUSE_QUERY, (65, 64)),
-]
+def _targets() -> list:
+    """One Target per HID route: every device via the Omni first, then every device on the cable (the order Squire
+    has always tried; a device on the cable answers ff aa on the receiver). Bluetooth has no vendor collection."""
+    targets = []
+    for connection in ("omni", "wired"):
+        for device in DEVICES.devices:
+            route = next((r for r in device.routes() if r["connection"] == connection), None)
+            if route is None:
+                continue
+            report_id = _hex(route["report_id"]) if "report_id" in route else None
+            query = device.read(device.capability("battery")["read"])
+            targets.append(Target(device.kind, device.name, int(route["pid"], 16), report_id, query,
+                                  tuple(route["report_lengths"])))
+    return targets
 
 
-# Read-only commands for the Keris II Origin settings ("get" requests all start with 0x12; writes start with
-# 0x50/0x51 and are not on any list here). Sources, facts only: libratbag src/asus.c + driver-asus.c (MIT,
-# confirmed on this mouse in the owner's libratbag fork) and G-Helper app/Peripherals/Mouse/AsusMouse.cs (GPL-3.0).
-MOUSE_SETTINGS_QUERIES = {
-    "profile": bytes([0x12, 0x00]),             # active profile, active DPI stage, firmware
-    "settings": bytes([0x12, 0x04, 0x00]),      # DPI stages, polling rate, debounce, angle snapping/tuning
-    "dpi_xy": bytes([0x12, 0x04, 0x02]),        # DPI stages with separate X and Y
-    "dpi_colors": bytes([0x12, 0x04, 0x03]),    # colour per DPI stage
-    "led_logo": bytes([0x12, 0x03, 0x00]),      # LED zone 0 = logo
-    "led_wheel": bytes([0x12, 0x03, 0x01]),     # LED zone 1 = scroll wheel
-    "led_side": bytes([0x12, 0x03, 0x02]),      # LED zone 2 = side strip (G-Helper/libratbag: "underglow")
-    "liftoff": bytes([0x12, 0x06]),             # lift-off distance + surface (mouse pad) preset
-}
-# Read-only commands for the Falchion RX Low Profile settings (approved by the owner 2026-11-13). Source, facts only:
-# G-Helper app/Peripherals/Keyboard/AsusKeyboard.cs (GPL-3.0); rogdriver (no license) sends the same two.
-KEYBOARD_SETTINGS_QUERIES = {
-    "profile": bytes([0x12, 0x00]),             # firmware, current lighting effect, active profile
-    "layout": bytes([0x12, 0x12]),              # factory layout id (ISO / ANSI)
-}
+TARGETS = _targets()
+
+
+# Read-only commands ("get" requests all start with 0x12; writes start with 0x50/0x51 and are not on any list
+# here), in devices.json's order, without the battery query. Keris II Origin, facts only: libratbag src/asus.c +
+# driver-asus.c (MIT, confirmed on this mouse in the owner's libratbag fork) and G-Helper AsusMouse.cs (GPL-3.0):
+# profile (active profile, DPI stage, firmware), settings (DPI, polling, debounce, angle snapping/tuning), dpi_xy,
+# dpi_colors, led_logo / led_wheel / led_side (zones 0 / 1 / 2; G-Helper/libratbag: "underglow"), liftoff (lift-off
+# + surface). Falchion RX Low Profile (approved 2026-11-13), G-Helper AsusKeyboard.cs; rogdriver sends the same two:
+# profile (firmware, lighting effect, active profile), layout (factory layout id, ISO / ANSI).
+MOUSE_SETTINGS_QUERIES = {n: c for n, c in MOUSE.reads().items() if n != MOUSE.capability("battery")["read"]}
+KEYBOARD_SETTINGS_QUERIES = {n: c for n, c in KEYBOARD.reads().items() if n != KEYBOARD.capability("battery")["read"]}
 # The transport refuses anything not on the list of the device it talks to: the keyboard never gets a mouse
-# command and the other way round (same bytes can mean something else on the other device).
-ALLOWED_READS = {
-    "keyboard": frozenset([KEYBOARD_QUERY, *KEYBOARD_SETTINGS_QUERIES.values()]),
-    "mouse": frozenset([MOUSE_QUERY, *MOUSE_SETTINGS_QUERIES.values()]),
-}
+# command and the other way round (same bytes can mean something else on the other device). Only commands
+# devices.json marks "confirmed" are on it.
+ALLOWED_READS = {d.kind: frozenset(d.reads().values()) for d in (KEYBOARD, MOUSE)}
 ALLOWED_COMMANDS = ALLOWED_READS["keyboard"] | ALLOWED_READS["mouse"]   # all reads, for checks over both
 # Report ID of each device on the Omni receiver; wired, both use unnumbered reports (None).
-REPORT_IDS = {"keyboard": 0x02, "mouse": 0x03}
+REPORT_IDS = {d.kind: _hex(d.route("omni")["report_id"]) for d in (KEYBOARD, MOUSE)}
+# Confirmed write prefixes per device: is_allowed_write() also requires one of these (devices.json status).
+WRITE_PREFIXES = {d.kind: d.confirmed_write_prefixes() for d in (KEYBOARD, MOUSE)}
 
 
 # --- Writes (allowlist) ---
 # Every write is built by a function below and checked again by is_allowed_write() before it is sent.
 # Sources, facts only: libratbag asus_set_led()/asus_save_profile() (MIT, tested on this mouse in the owner's
 # fork) and G-Helper GetUpdateLightingModePacket()/GetSaveProfilePacket() (GPL-3.0).
-LED_WRITE = bytes([0x51, 0x28])          # 51 28 zone 00 mode brightness r g b dir random speed
-SAVE_COMMAND = bytes([0x50, 0x03])       # stores the current settings in the mouse's flash
-LED_ZONE_INDEX = {"logo": 0, "wheel": 1, "side": 2}
+_LEDS = MOUSE.capability("led_zones")
+LED_WRITE, = MOUSE.write_prefixes(_LEDS["write"])      # 51 28 zone 00 mode brightness r g b dir random speed
+SAVE_COMMAND, = MOUSE.write_prefixes(_LEDS["save"])    # 50 03: stores the current settings in the mouse's flash
+LED_ZONE_INDEX = {z["name"]: _hex(z["index"]) for z in _LEDS["zones"]}
 # Effects the Keris II Origin supports (G-Helper KerisIIOrigin); f0 = off. No rainbow/comet: they need
-# direction/speed bytes that Squire does not send.
-LED_WRITE_MODES = {"static": 0x00, "breathing": 0x01, "color-cycle": 0x02, "react": 0x04, "battery": 0x06,
-                   "off": 0xF0}
+# direction/speed bytes that Squire does not send (devices.json: writable false).
+LED_WRITE_MODES = {m["name"]: _hex(m["value"]) for m in _LEDS["modes"] if m["writable"]}
 # No speed byte: tested 2026-11-10, the Keris II Origin stores [11] = 05/09 but breathing and colour cycle keep
 # the same tempo (3 pulses in 10 s either way). Bytes [9..11] stay 00.
 
@@ -150,15 +168,18 @@ def led_command(zone: str, mode: str, brightness: int, color: str = "#000000") -
 # GetUpdateAngleSnappingPacket(), GetUpdateAngleAdjustmentPacket() and Models/KerisIIOrigin.cs (HasAutoPowerOff,
 # HasLowBatteryWarning, HasAngleSnapping, HasAngleTuning, AngleTuningStep 5) (GPL-3.0). Angle snapping also in
 # libratbag asus_set_angle_snapping() (51 31 06 00 0/1). Bytes approved by the owner 2026-11-12.
-POWER_WRITE = bytes([0x51, 0x37])        # 51 37 00 00 <power-off code> 00 <low-battery warning %>
-SENSOR_WRITE = bytes([0x51, 0x31])       # 51 31 <field> 00 <value lo> <value hi>
-ANGLE_SNAPPING_FIELD = 0x06
-ANGLE_TUNING_FIELD = 0x0B
-POLLING_FIELD = 0x04     # 51 31 04 00 <index>: Armoury Crate capture 2026-11-12 (index 3), approved 2026-11-13
-POLLING_WRITE_HZ = {125: 0x00, 250: 0x01, 500: 0x02, 1000: 0x03}   # what Armoury Crate offers for the Keris
-POWER_OFF_CODES = {1: 0x00, 2: 0x01, 3: 0x02, 5: 0x03, 10: 0x04, None: 0xFF}   # minutes (None = never) -> byte
-LOW_WARNING_LEVELS = (10, 20, 30, 40, 50)                                     # % (G-Helper: step 10, max 50)
-ANGLE_TUNING_DEGREES = tuple(range(-20, 21, 5))                               # G-Helper: -20..20, step 5
+_POWER = MOUSE.capability("power")
+POWER_WRITE, = MOUSE.write_prefixes(_POWER["write"])   # 51 37 00 00 <power-off code> 00 <low-battery warning %>
+SENSOR_WRITE = MOUSE.write_prefixes("polling")[0][:2]   # 51 31 <field> 00 <value lo> <value hi>
+ANGLE_SNAPPING_FIELD = MOUSE.write_prefixes("angle_snapping")[0][2]   # 06
+ANGLE_TUNING_FIELD = MOUSE.write_prefixes("angle_tuning")[0][2]       # 0b
+POLLING_FIELD = MOUSE.write_prefixes("polling")[0][2]   # 51 31 04 00 <index>: AC capture 2026-11-12, approved 2026-11-13
+# What Armoury Crate offers for the Keris
+POLLING_WRITE_HZ = {r["hz"]: _hex(r["value"]) for r in MOUSE.capability("polling")["rates"]}
+POWER_OFF_CODES = {p["minutes"]: _hex(p["value"]) for p in _POWER["power_off"]}   # minutes (None = never) -> byte
+LOW_WARNING_LEVELS = tuple(_POWER["warning_levels"])                         # % (G-Helper: step 10, max 50)
+_TUNING = MOUSE.capability("sensor")["angle_tuning"]                         # G-Helper: -20..20, step 5
+ANGLE_TUNING_DEGREES = tuple(range(_TUNING["min"], _TUNING["max"] + 1, _TUNING["step"]))
 
 
 def power_command(power_off_minutes: Optional[int], low_warning: int) -> bytes:
@@ -190,27 +211,14 @@ def angle_tuning_command(degrees: int) -> bytes:
 # protocol.json mouse_writes.armoury_crate); G-Helper writes only the "no surface" form. Approved by the owner
 # 2026-11-13. A lift-off write always carries the surface id and parameters read from 12 06 just before, so the
 # surface stays as it is (G-Helper's 51 35 ff 00 ff <lift-off> drops it: the "calibration reset").
-LIFTOFF_WRITE = bytes([0x51, 0x35])      # 51 35 00 00 <surface id> <lift-off> 00 <p1 p2 p3>
-NO_SURFACE = 0xFF                        # 51 35 ff 00 ff <lift-off>: "Default (No calibration)" in Armoury Crate
-LIFTOFF_CODES = {"low": 0x00, "high": 0x01}
+_SURFACE = MOUSE.capability("surface")
+LIFTOFF_WRITE, = MOUSE.write_prefixes(_SURFACE["write"])   # 51 35 00 00 <surface id> <lift-off> 00 <p1 p2 p3>
+NO_SURFACE = _hex(_SURFACE["no_surface"])  # 51 35 ff 00 ff <lift-off>: "Default (No calibration)" in Armoury Crate
+LIFTOFF_CODES = {x["name"]: _hex(x["value"]) for x in _SURFACE["liftoff"]}
 # Armoury Crate's preset surfaces (id -> name). Most share the parameters 1c 34 16. Ids 02..06 and 09 never appeared.
-SURFACES = {
-    0x00: "ROG Whetstone", 0x01: "ROG Sheath", 0x07: "ROG Scabbard", 0x08: "ROG Strix Edge", 0x0A: "Balteus",
-    0x0B: "Balteus Qi", 0x0C: "ROG Scabbard II", 0x0D: "ROG Sheath Gundam LTD",
-    0x0E: "ROG Strix Edge Call of Duty Black Ops 4 Edition", 0x0F: "ROG Sheath BLK LTD", 0x10: "ROG Sheath PNK LTD",
-    0x11: "ROG Sheath Electro Punk", 0x12: "ROG Hone Ace Aim Lab Edition", 0x13: "ROG Scabbard II EVA Edition",
-    0x14: "ROG Moonstone Ace L", 0x15: "ROG Moonstone Ace L (2)", 0x16: "ROG Hone Ace XXL",
-    0x17: "ROG Scabbard II Arctic Grey XXL", 0x18: "TUF Gaming P1 Hatsune Miku Edition", 0x19: "ROG Sheath II XXL",
-}
-
-
+SURFACES = {_hex(x["id"]): x["name"] for x in _SURFACE["surfaces"]}
 # Parameters Armoury Crate writes with each preset (captured 2026-11-12); None for "no surface".
-SURFACE_PARAMS = {
-    0x00: "1c 34 16", 0x01: "1c 34 16", 0x07: "1c 34 16", 0x08: "1c 34 16", 0x0A: "1a 32 20", 0x0B: "1a 32 20",
-    0x0C: "1c 34 16", 0x0D: "1c 34 16", 0x0E: "1c 34 16", 0x0F: "1c 34 16", 0x10: "1c 34 16", 0x11: "1c 34 16",
-    0x12: "1c 34 16", 0x13: "1c 34 16", 0x14: "37 2b 0e", 0x15: "18 35 23", 0x16: "1c 34 16", 0x17: "21 23 12",
-    0x18: "1c 42 24", 0x19: "1e 34 19", NO_SURFACE: None,
-}
+SURFACE_PARAMS = {**{_hex(x["id"]): x["params"] for x in _SURFACE["surfaces"]}, NO_SURFACE: None}
 
 
 def surface_name(surface_id: Optional[int]) -> Optional[str]:
@@ -249,10 +257,11 @@ def surface_command(surface_id: int, liftoff: str) -> bytes:
 # GetUpdateDPIPacket / GetChangeDPIProfilePacket2 / GetSetDPIProfileCountPacket + Models/KerisIIOrigin.cs (MaxDPI
 # 42000, 4 stages, CanChangeDPICount, DPI colours) (GPL-3.0, facts only). Approved by the owner 2026-11-13.
 # 51 31 <stage 0-based> 00 <lo> <hi> <r g b>: DPI (X and Y alike) + the stage colour, value = (DPI - 50) / 50.
-ACTIVE_STAGE_FIELD = 0x09     # 51 31 09 00 <stage, 1-based>
-STAGE_COUNT_FIELD = 0x0A      # 51 31 0a 00 <1..4>
-DPI_STAGES = 4
-DPI_MIN, DPI_MAX, DPI_STEP = 100, 42000, 50
+ACTIVE_STAGE_FIELD = MOUSE.write_prefixes("active_stage")[0][2]   # 51 31 09 00 <stage, 1-based>
+STAGE_COUNT_FIELD = MOUSE.write_prefixes("stage_count")[0][2]     # 51 31 0a 00 <1..4>
+_DPI = MOUSE.capability("dpi")
+DPI_STAGES = _DPI["stages"]
+DPI_MIN, DPI_MAX, DPI_STEP = _DPI["min"], _DPI["max"], _DPI["step"]
 
 
 def dpi_command(stage: int, dpi: int, color: str) -> bytes:
@@ -294,9 +303,8 @@ def polling_command(hz: int) -> bytes:
 
 
 # Lighting effect ids in 12 00 [9] (G-Helper KeyboardLightingMode); 0xf1 = the host drives the LEDs directly.
-KEYBOARD_LIGHT_MODES = {0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "reactive", 0x04: "rainbow",
-                        0x05: "ripple", 0x06: "starry-night", 0x07: "quicksand", 0x08: "current", 0x09: "raindrop",
-                        0xF1: "host-driven"}
+_KB_LIGHT = KEYBOARD.capability("kb_lighting")
+KEYBOARD_LIGHT_MODES = {_hex(e["id"]): e["name"] for e in _KB_LIGHT["effects"]}
 # Factory layout ids in 12 12 [5]: 3/4/5/17 from G-Helper, 25 = CH-DE confirmed by the owner (2026-11-13).
 
 
@@ -304,10 +312,12 @@ KEYBOARD_LIGHT_MODES = {0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 
 # Source: Armoury Crate captures on Windows (USBPcap via the Omni, 2026-11-21 and 2026-11-22, protocol.json
 # keyboard_writes, capture_4 has every option); G-Helper AsusKeyboard.cs (GPL-3.0, facts only) has the same 51 2c
 # layout and 50 55, but 51 37 for the warning, which is wrong for the Falchion (AC sends 51 3a). Only byte values AC sent.
-KEYBOARD_SAVE_COMMAND = bytes([0x50, 0x55])      # the keyboard's save (the mouse uses 50 03)
-KEYBOARD_LIGHT_WRITE = bytes([0x51, 0x2C])       # 51 2c <effect> 00 <speed> <brightness %> <mode> ff ff <r g b> ...
-KEYBOARD_SLEEP_WRITE = bytes([0x51, 0x38])       # 51 38 00 00 <power-off code>, read back 12 01 [6]
-KEYBOARD_WARNING_WRITE = bytes([0x51, 0x3A])     # 51 3a 00 00 <%>, read back 12 01 [9]
+KEYBOARD_SAVE_COMMAND, = KEYBOARD.write_prefixes(_KB_LIGHT["save"])   # 50 55 (the mouse uses 50 03)
+KEYBOARD_LIGHT_WRITE, = KEYBOARD.write_prefixes(_KB_LIGHT["write"])    # 51 2c <effect> 00 <speed> <brightness %> ...
+KEYBOARD_SLEEP_WRITE, = KEYBOARD.write_prefixes(KEYBOARD.capability("kb_sleep")["write"])     # 51 38 00 00 <code>
+KEYBOARD_WARNING_WRITE, = KEYBOARD.write_prefixes(KEYBOARD.capability("kb_warning")["write"])  # 51 3a 00 00 <%>
+# Sleep minutes (None = never) -> code: the mouse's power-off coding, kept per device in devices.json (AC, 2026-11-21)
+KEYBOARD_SLEEP_CODES = {x["minutes"]: _hex(x["value"]) for x in KEYBOARD.capability("kb_sleep")["power_off"]}
 # Per-key colours ("direct mode"), TEST ONLY (branch keyboard-direct, 2026-11-25). Sources, facts only: G-Helper
 # (GPL-3.0) AsusKeyboard.cs SetLedColors + AuraKeyboardLayouts.cs "FalchionRX"/"FalchionRXISO" (its model
 # FalchionRXLowProfileOmni = our keyboard via the Omni, report ID 02); OpenRGB (GPL-2.0) has the same packet for the
@@ -316,27 +326,18 @@ KEYBOARD_WARNING_WRITE = bytes([0x51, 0x3A])     # 51 3a 00 00 <%>, read back 12
 # (Esc 01, Tab 02, Caps 03, LShift 04, LCtrl 05, 1 = 09, Q = 0a); the original Falchion starts at row 0 (OpenRGB),
 # which is why 00 lit nothing (2026-11-25: the keyboard replied c0 82 01 00 and starry night stopped, no key lit).
 # Nothing can be read back and it is never saved (no 50 55 after it).
-KEYBOARD_DIRECT_WRITE = bytes([0xC0, 0x81])
-KEYBOARD_DIRECT_PER_PACKET = 14
-KEYBOARD_DIRECT_ACK = bytes([0xC0, 0x82])          # the keyboard answers c0 81 <n> 00 with c0 82 <n> 00 (2026-11-25)
-KEYBOARD_DIRECT_KEYS = tuple(col * 8 + row for col in range(15) for row in range(1, 6))   # 15 columns x rows 1..5 (01..75)
+_PER_KEY = KEYBOARD.capability("per_key")
+KEYBOARD_DIRECT_WRITE, = KEYBOARD.write_prefixes(_PER_KEY["write"])   # c0 81
+KEYBOARD_DIRECT_PER_PACKET = _PER_KEY["per_packet"]
+# The keyboard answers c0 81 <n> 00 with c0 82 <n> 00 (2026-11-25)
+KEYBOARD_DIRECT_ACK = registry.hex_bytes(next(c["reply"] for c in KEYBOARD.data["commands"] if c["name"] == _PER_KEY["write"]))
+# 15 columns x rows 1..5 (01..75)
+KEYBOARD_DIRECT_KEYS = tuple(col * 8 + row for col in range(_PER_KEY["columns"])
+                             for row in range(_PER_KEY["rows"]["min"], _PER_KEY["rows"]["max"] + 1))
 # Key id of each key, row by row, left to right, as the settings windows draw them (KEYBOARD_ROWS there: same count per
 # row). From G-Helper AuraKeyboardLayouts.cs "FalchionRX" / "FalchionRXISO" (facts only). ISO Enter spans two rows and
 # has one id (6b), listed in both. Right column: Ins 71, Del 72, PgUp 73, PgDn 74 (Insert confirmed by the owner).
-_KB_ID_ROW0 = [0x01, 0x09, 0x11, 0x19, 0x21, 0x29, 0x31, 0x39, 0x41, 0x49, 0x51, 0x59, 0x61, 0x69, 0x71]
-_KB_ID_ROW4 = [0x05, 0x0D, 0x15, 0x35, 0x4D, 0x55, 0x5D, 0x65, 0x6D, 0x75]
-KEYBOARD_KEY_IDS = {
-    "iso": [_KB_ID_ROW0,
-            [0x02, 0x0A, 0x12, 0x1A, 0x22, 0x2A, 0x32, 0x3A, 0x42, 0x4A, 0x52, 0x5A, 0x62, 0x6B, 0x72],
-            [0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B, 0x33, 0x3B, 0x43, 0x4B, 0x53, 0x5B, 0x63, 0x6B, 0x73],
-            [0x04, 0x0C, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C, 0x44, 0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74],
-            _KB_ID_ROW4],
-    "ansi": [_KB_ID_ROW0,
-             [0x02, 0x0A, 0x12, 0x1A, 0x22, 0x2A, 0x32, 0x3A, 0x42, 0x4A, 0x52, 0x5A, 0x62, 0x6A, 0x72],
-             [0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B, 0x33, 0x3B, 0x43, 0x4B, 0x53, 0x5B, 0x6B, 0x73],
-             [0x04, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C, 0x44, 0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74],
-             _KB_ID_ROW4],
-}
+KEYBOARD_KEY_IDS = {name: [[_hex(k) for k in row] for row in rows] for name, rows in _PER_KEY["layouts"].items()}
 
 
 def keyboard_key_ids(iso: Optional[bool]) -> list:
@@ -347,66 +348,43 @@ def keyboard_key_ids(iso: Optional[bool]) -> list:
     return ids
 # Effect -> {speed name: byte}: AC's fast / normal / slow, own values per effect, larger = slower (capture_4 block 3;
 # breathing and raindrop from capture_2 / 3). Static has no speed (ff).
-KEYBOARD_LIGHT_SPEEDS = {
-    "static": {"none": 0xFF},
-    "breathing": {"fast": 0x0F, "normal": 0x1E, "slow": 0x2A},
-    "color-cycle": {"fast": 0x12, "normal": 0x1F, "slow": 0x3E},
-    "reactive": {"fast": 0x08, "normal": 0x0F, "slow": 0x16},
-    "rainbow": {"fast": 0x23, "normal": 0x3E, "slow": 0x55},
-    "ripple": {"fast": 0x50, "normal": 0x64, "slow": 0x78},
-    "starry-night": {"fast": 0x0A, "normal": 0x0F, "slow": 0x19},
-    "quicksand": {"fast": 0x0C, "normal": 0x0F, "slow": 0x14},
-    "current": {"fast": 0x07, "normal": 0x0A, "slow": 0x0C},
-    "raindrop": {"fast": 0x0E, "normal": 0x14, "slow": 0x1B},
-}
+KEYBOARD_LIGHT_SPEEDS = {e["name"]: {x["name"]: _hex(x["value"]) for x in e["speeds"]}
+                         for e in _KB_LIGHT["effects"] if e.get("writable", True)}
 KEYBOARD_LIGHT_IDS = {name: i for i, name in KEYBOARD_LIGHT_MODES.items() if name in KEYBOARD_LIGHT_SPEEDS}
 # "off" is not an effect of its own: AC's lighting switch sends static, 4 %, black (capture_4 block 6), and the
 # keyboard then reads 00 static. (AC also sends an unknown 51 36 to the mouse; Squire does not.)
 KEYBOARD_OFF = "off"
-KEYBOARD_OFF_BRIGHTNESS = 4
+KEYBOARD_OFF_BRIGHTNESS = _KB_LIGHT["off_brightness"]
 KEYBOARD_EFFECTS = list(KEYBOARD_LIGHT_SPEEDS) + [KEYBOARD_OFF]   # what Squire can set, in the keyboard's id order
 # Effects written as one 51 2c: [6] 00, [7..8] ff ff, [9..11] colour.
 KEYBOARD_SINGLE_COLOUR = ("static", "breathing", "color-cycle", "reactive", "starry-night", "current", "raindrop")
 # Starry night, current and raindrop also have (capture_4 block 2): [6] colour mode, [12..14] second colour
 # (00 00 00 unless double), [15..17] background (00 00 00 = off). Random keeps both colours in the packet.
 KEYBOARD_OPTION_EFFECTS = ("starry-night", "current", "raindrop")
-KEYBOARD_COLOUR_MODES = {"single": 0x00, "double": 0x10, "random": 0x01}
+KEYBOARD_COLOUR_MODES = {x["name"]: _hex(x["value"]) for x in _KB_LIGHT["colour_modes"]}
 KEYBOARD_SECOND_COLOUR = "#ff00ff"               # AC's second colour when switching to double
 # Colour gradients (rainbow, ripple): three 51 2c chunks, [3] = 02, 01, 00. First chunk: <speed> <brightness> 00
 # <direction> <thickness> <stop count>, then 4 bytes per stop (position %, R, G, B): 2 stops in the first chunk, up to
 # 4 in the next one, the rest in the last (AC sends every chunk, unused ones as zeros).
 KEYBOARD_GRADIENT_EFFECTS = ("rainbow", "ripple")
 # AC's 7 gradient presets in AC's order (capture_4 block 4). AC shows them without names; the names are Squire's.
-KEYBOARD_GRADIENTS = {
-    "red": ((14, "ff0029"), (100, "ff0029")),
-    "blue-red": ((14, "0018f0"), (100, "ff0031")),
-    "sunset": ((14, "febe3f"), (57, "fe3f7d"), (100, "f91d1d")),
-    "lime-cyan": ((14, "d1fe3f"), (45, "00dcff"), (72, "00dcff"), (100, "d1fe3f")),
-    "yellow-magenta": ((14, "f1ff00"), (36, "ff00ed"), (57, "f1ff00"), (79, "ff00ed"), (100, "f1ff00")),
-    "pink-purple": ((14, "ff0091"), (32, "8c00ff"), (49, "4b00d9"), (66, "4b00d9"), (83, "8c00ff"), (100, "ff0091")),
-    "spectrum": ((14, "f500ff"), (29, "0006ff"), (43, "00faff"), (57, "01ff00"), (72, "fff600"), (86, "ff7807"),
-                 (100, "ff000d")),                                     # AC's default
-}
-KEYBOARD_GRADIENT_STOPS = (2, 7)                 # AC: 2..7 stops; positions 1..100 %, ascending
+KEYBOARD_GRADIENTS = {g["name"]: tuple((pos, rgb) for pos, rgb in g["stops"]) for g in _KB_LIGHT["gradients"]}
+# AC: 2..7 stops; positions 1..100 %, ascending
+KEYBOARD_GRADIENT_STOPS = (_KB_LIGHT["gradient_stops"]["min"], _KB_LIGHT["gradient_stops"]["max"])
 # Direction byte, per effect. Rainbow: a compass in 45 degree steps (capture_4 block 4: 00 right, 02 down, 04 left,
 # 06 up, 08 from the centre outwards; the diagonals 01/03/05/07 are assumed to be in between, clockwise). Ripple has
 # none (ff). Quicksand uses the same coding for down / up (block 5). The first one is the default.
-KEYBOARD_DIRECTIONS = {
-    "rainbow": {"right": 0x00, "down-right": 0x01, "down": 0x02, "down-left": 0x03, "left": 0x04, "up-left": 0x05,
-                "up": 0x06, "up-right": 0x07, "outwards": 0x08},
-    "ripple": {"none": 0xFF},
-    "quicksand": {"down": 0x02, "up": 0x06},
-}
+KEYBOARD_DIRECTIONS = {d["effect"]: {x["name"]: _hex(x["value"]) for x in d["values"]} for d in _KB_LIGHT["directions"]}
 KEYBOARD_DIRECTION_ALIASES = {"left-to-right": "right", "right-to-left": "left"}    # names used before 2026-11-22
 # Thickness (rainbow, ripple): byte [8] of chunk 02; AC's Low / Normal / Strong, Strong is AC's default.
-KEYBOARD_THICKNESS = {"strong": 0x02, "normal": 0x01, "low": 0x00}
+KEYBOARD_THICKNESS = {x["name"]: _hex(x["value"]) for x in _KB_LIGHT["thickness"]}
 # Quicksand: two chunks ([3] = 01, 00): <speed> <brightness> <mode> <direction> ff, then 6 RGB triples without
 # positions, 3 per chunk. Mode 00 = the colour scale, 01 = random (AC still sends the scale). Only AC's default scale.
-KEYBOARD_QUICKSAND_SCALE = ("fff600", "01ff00", "00faff", "0006ff", "f500ff", "ff000d")
-KEYBOARD_QUICKSAND_MODES = {"scale": 0x00, "random": 0x01}
+KEYBOARD_QUICKSAND_SCALE = tuple(_KB_LIGHT["quicksand_scale"])
+KEYBOARD_QUICKSAND_MODES = {x["name"]: _hex(x["value"]) for x in _KB_LIGHT["quicksand_modes"]}
 KEYBOARD_COLOURLESS = frozenset(["color-cycle", "rainbow", "ripple", "quicksand", KEYBOARD_OFF])  # no colour to pick
 # Warning levels: AC offers exactly 10..50 % and "never" (00, capture_4 block 1). 0 = never.
-KEYBOARD_WARNING_LEVELS = (0,) + LOW_WARNING_LEVELS
+KEYBOARD_WARNING_LEVELS = tuple(KEYBOARD.capability("kb_warning")["levels"])
 # The fields of a lighting value (keyboard_light_value); a field the effect does not use is None.
 KEYBOARD_LIGHT_FIELDS = ("effect", "brightness", "color", "speed", "gradient", "direction", "thickness", "mode",
                          "color2", "background")
@@ -574,9 +552,9 @@ def keyboard_light_command(effect: str, brightness: int, color: str = "#ffffff",
 
 def keyboard_sleep_command(minutes: Optional[int]) -> bytes:
     """51 38: sleep after 1/2/3/5/10 min, None = never (mouse power-off coding, AC 2026-11-21)."""
-    if minutes not in POWER_OFF_CODES:
+    if minutes not in KEYBOARD_SLEEP_CODES:
         raise ValueError(f"sleep {minutes!r} min is not one of 1, 2, 3, 5, 10 or never")
-    command = KEYBOARD_SLEEP_WRITE + bytes([0x00, 0x00, POWER_OFF_CODES[minutes]])
+    command = KEYBOARD_SLEEP_WRITE + bytes([0x00, 0x00, KEYBOARD_SLEEP_CODES[minutes]])
     assert is_allowed_write(command, "keyboard")
     return command
 
@@ -603,7 +581,7 @@ def is_allowed_keyboard_write(command: bytes) -> bool:
     if command == KEYBOARD_SAVE_COMMAND:
         return True
     if command[:2] == KEYBOARD_SLEEP_WRITE:
-        return len(command) == 5 and command[2:4] == b"\0\0" and command[4] in POWER_OFF_CODES.values()
+        return len(command) == 5 and command[2:4] == b"\0\0" and command[4] in KEYBOARD_SLEEP_CODES.values()
     if command[:2] == KEYBOARD_WARNING_WRITE:
         return len(command) == 5 and command[2:4] == b"\0\0" and command[4] in KEYBOARD_WARNING_LEVELS
     if command[:2] == KEYBOARD_DIRECT_WRITE and len(command) >= 4:
@@ -651,7 +629,10 @@ def reply_expected(command: bytes) -> Optional[bytes]:
 
 
 def is_allowed_write(command: bytes, device: str) -> bool:
-    """Writes are allowed per device: a mouse command is never sent to the keyboard and the other way round."""
+    """Writes are allowed per device: a mouse command is never sent to the keyboard and the other way round.
+    The command must start with a prefix devices.json marks confirmed for the device, and pass its byte checks."""
+    if not any(command.startswith(prefix) for prefix in WRITE_PREFIXES.get(device, ())):
+        return False
     if device == "mouse":
         return is_allowed_mouse_write(command)
     if device == "keyboard":
@@ -727,27 +708,27 @@ def is_error(reply: bytes, report_id: Optional[int]) -> bool:
     return False
 
 
+# Battery reply layout per device (devices.json capabilities.battery): percent offsets in order of preference
+# (the Falchion RX LP also carries it at [5], confirmed 2026-11-10), charging flag, warning level and its lowest
+# plausible value (keyboard 0 = never warn, AC 2026-11-22).
+BATTERY_LAYOUT = {d.kind: d.capability("battery") for d in (KEYBOARD, MOUSE)}
+
+
 def parse(device: str, reply: bytes, base: int) -> tuple[Optional[int], bool]:
     p = reply[base:]
-    if device == "keyboard":
-        pct = p[10] if len(p) > 10 else None
-        if pct is None or pct > 100:
-            # [5] also carries the percentage on the Falchion RX LP (confirmed 2026-11-10)
-            pct = p[5] if len(p) > 5 and p[5] <= 100 else None
-        charging = len(p) > 8 and p[8] != 0
-    else:
-        pct = p[4] if len(p) > 4 and p[4] <= 100 else None
-        charging = len(p) > 9 and p[9] != 0
+    layout = BATTERY_LAYOUT[device]
+    pct = next((p[i] for i in layout["percent"] if len(p) > i and p[i] <= 100), None)
+    charging = len(p) > layout["charging"] and p[layout["charging"]] != 0
     return pct, charging
 
 
 def parse_warning(device: str, reply: bytes, base: int) -> Optional[int]:
     """Low-battery warning level (%) configured on the device, or None if absent/implausible."""
     p = reply[base:]
-    index = 9 if device == "keyboard" else 6
+    layout = BATTERY_LAYOUT[device]
+    index = layout["warning"]
     value = p[index] if len(p) > index else None
-    low = 0 if device == "keyboard" else 1             # keyboard: 0 = never warn (AC, 2026-11-22)
-    return value if value is not None and low <= value <= 100 else None
+    return value if value is not None and layout["warning_min"] <= value <= 100 else None
 
 
 @dataclass
@@ -973,9 +954,8 @@ def enumerate_paths(hid, pid: int) -> list[bytes]:
     for info in hid.enumerate(VID, pid):
         if info.get("usage_page", 0) < 0xFF00:
             continue  # skip standard keyboard/mouse/consumer collections: never touch typing input
-        if pid == PID_OMNI and info.get("interface_number", 2) not in (2, -1):
-            continue
-        if pid == PID_FALCHION_RX_LP and info.get("interface_number", 1) not in (1, -1):
+        iface = HID_INTERFACES.get(pid)   # devices.json routes: Omni 2, wired keyboard 1, wired mouse 0
+        if iface is not None and info.get("interface_number", iface) not in (iface, -1):
             continue
         if info["path"] not in paths:
             paths.append(info["path"])
@@ -1133,11 +1113,10 @@ def _read_all(debug: bool = False, hid=None) -> list[Battery]:
 
 # --- Mouse settings (read-only) ------------------------------------------------------------------------------
 
-LED_MODES = {0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "rainbow", 0x04: "react",
-             0x05: "comet", 0x06: "battery", 0xF0: "off"}
-POLLING_RATES_HZ = (125, 250, 500, 1000, 2000, 4000, 8000, 16000)   # index in the low 3 bits
-POWER_OFF_MINUTES = {0: 1, 1: 2, 2: 3, 3: 5, 4: 10, 0xFF: None}     # None = never
-LED_ZONES = ("logo", "wheel", "side")
+LED_MODES = {_hex(m["value"]): m["name"] for m in _LEDS["modes"]}
+POLLING_RATES_HZ = tuple(MOUSE.capability("polling")["read_rates_hz"])   # index in the low 3 bits
+POWER_OFF_MINUTES = {code: minutes for minutes, code in POWER_OFF_CODES.items()}     # None = never
+LED_ZONES = tuple(z["name"] for z in _LEDS["zones"])
 
 
 @dataclass
@@ -1269,9 +1248,15 @@ def _read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
 
 
 # --- Keyboard settings (Falchion RX Low Profile), read-only ---
-KEYBOARD_LAYOUTS = {3: "DE", 4: "UK", 5: "FR", 17: "US", 25: "CH-DE"}
+_KB_LAYOUTS = KEYBOARD.capability("kb_layout")["layouts"]
+KEYBOARD_LAYOUTS = {x["id"]: x["name"] for x in _KB_LAYOUTS if "name" in x}
 # Layout ids G-Helper draws as ISO (an extra key left of Z, tall Enter)
-KEYBOARD_ISO_LAYOUTS = frozenset([3, 4, 5, 7, 8, 11, 12, 15, 18, 19, 20, 23, 25])
+KEYBOARD_ISO_LAYOUTS = frozenset(x["id"] for x in _KB_LAYOUTS if x["iso"])
+_KB_PROFILE = KEYBOARD.capability("kb_profile")
+_KB_SLEEP = KEYBOARD.capability("kb_sleep")
+_KB_WARNING = KEYBOARD.capability("kb_warning")
+# Sleep timeout code -> minutes (None = never); the keyboard uses the mouse's power-off coding (AC, 2026-11-21)
+KEYBOARD_SLEEP_MINUTES = {code: minutes for minutes, code in KEYBOARD_SLEEP_CODES.items()}
 
 
 @dataclass
@@ -1296,20 +1281,23 @@ def parse_keyboard_settings(s: KeyboardSettings, name: str, p: bytes) -> None:
     if len(p) < 14:
         return
     if name == "battery":
-        s.sleep_minutes = POWER_OFF_MINUTES.get(p[6])
-        s.low_warning = p[9] if p[9] <= 100 else None          # 0 = never (AC, 2026-11-22)
+        sleep, warning = p[_KB_SLEEP["offset"]], p[_KB_WARNING["offset"]]   # [6], [9]
+        s.sleep_minutes = KEYBOARD_SLEEP_MINUTES.get(sleep)
+        s.low_warning = warning if warning <= 100 else None          # 0 = never (AC, 2026-11-22)
     elif name == "profile":
-        s.light_mode = KEYBOARD_LIGHT_MODES.get(p[9], f"0x{p[9]:02x}")
-        s.profile = p[10] if 1 <= p[10] <= 5 else None
+        effect, profile = p[_KB_PROFILE["effect"]], p[_KB_PROFILE["profile"]]   # [9], [10]
+        s.light_mode = KEYBOARD_LIGHT_MODES.get(effect, f"0x{effect:02x}")
+        s.profile = profile if 1 <= profile <= _KB_PROFILE["profiles"] else None
         if s.connection == "omni" and any(p[4:7]):
             s.receiver_firmware = f"{p[6]:02X}.{p[5]:02X}.{p[4]:02X}"
         fw = p[11:14] if s.connection == "omni" else p[4:7]   # cable: [4..6] (Windows, 2026-11-21)
         if any(fw):
             s.firmware = f"{fw[2]:02X}.{fw[1]:02X}.{fw[0]:02X}"
     elif name == "layout":
-        s.layout_id = p[5]
-        s.layout = KEYBOARD_LAYOUTS.get(p[5])
-        s.iso = p[5] in KEYBOARD_ISO_LAYOUTS
+        layout = p[KEYBOARD.capability("kb_layout")["layout"]]   # [5]
+        s.layout_id = layout
+        s.layout = KEYBOARD_LAYOUTS.get(layout)
+        s.iso = layout in KEYBOARD_ISO_LAYOUTS
 
 
 def read_keyboard_settings(debug: bool = False, hid=None) -> KeyboardSettings:

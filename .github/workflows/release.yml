@@ -17,6 +17,8 @@ on:
       - macos/project.yml
       - linux/packaging/**
       - linux/build-packages.sh
+      - devices.json
+      - squirelib/**
 
 permissions:
   contents: read
