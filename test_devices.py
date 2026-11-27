@@ -193,6 +193,42 @@ class ModelTests(unittest.TestCase):
             registry.Registry(data).by_kind("mouse")
 
 
+class LayerTests(unittest.TestCase):
+    """Stage 2: transport and protocol know nothing about devices; routes come from devices.json."""
+
+    def test_transport_and_protocol_load_without_the_device_model(self):
+        import subprocess
+        import sys
+        code = ("import sys; import squirelib.transport, squirelib.transport.bluez, squirelib.protocol; "
+                "print(sorted(m for m in sys.modules if m.startswith('squirelib')))")
+        out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, check=True)
+        self.assertNotIn("squirelib.registry", out.stdout)
+        self.assertNotIn("squirelib.routes", out.stdout)
+
+    def test_targets_carry_connection_and_interface_from_the_routes(self):
+        self.assertEqual([(t.device, t.connection, t.interface) for t in squire.TARGETS], [
+            ("keyboard", "omni", 2), ("mouse", "omni", 2), ("keyboard", "wired", 1), ("mouse", "wired", 0)])
+
+    def test_exchange_writes_only_what_build_returns(self):
+        from squirelib import protocol
+
+        class Dev:
+            def __init__(self):
+                self.written, self.replies = [], [bytes([0x03, 0x12, 0x07, 0x00, 0x50])]
+
+            def read(self, size, timeout):
+                assert timeout > 0
+                return [] if timeout == squire.DRAIN_TIMEOUT_MS else (self.replies.pop(0) if self.replies else [])
+
+            def write(self, data):
+                self.written.append(bytes(data))
+                return len(data)
+
+        dev, target = Dev(), squire.TARGETS[1]
+        ex = protocol.exchange(dev, target, b"\x12\x07", lambda n: b"built:%d" % n)
+        self.assertEqual((ex.status, ex.base, dev.written), ("ok", 1, [b"built:64"]))
+
+
 class PackagingTests(unittest.TestCase):
     """squire.py does not start without devices.json and squirelib/: every installer must copy them."""
 
@@ -201,15 +237,16 @@ class PackagingTests(unittest.TestCase):
             text = (ROOT / script).read_text()
             with self.subTest(script=script):
                 self.assertIn("devices.json", text)
-                self.assertIn("squirelib/*.py", text)
+                self.assertIn("find squirelib -name '*.py'", text)   # subpackages too
 
     def test_nfpm_has_every_squirelib_file(self):
         text = (ROOT / "linux/packaging/nfpm.yaml").read_text()
         self.assertIn("dst: /usr/share/squire-gear/devices.json", text)
-        for path in sorted((ROOT / "squirelib").glob("*.py")):
-            with self.subTest(file=path.name):
-                self.assertIn(f"src: squirelib/{path.name}", text)
-                self.assertIn(f"dst: /usr/share/squire-gear/squirelib/{path.name}", text)
+        for path in sorted((ROOT / "squirelib").rglob("*.py")):
+            name = path.relative_to(ROOT / "squirelib").as_posix()
+            with self.subTest(file=name):
+                self.assertIn(f"src: squirelib/{name}", text)
+                self.assertIn(f"dst: /usr/share/squire-gear/squirelib/{name}", text)
 
 
 if __name__ == "__main__":

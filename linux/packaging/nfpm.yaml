@@ -53,8 +53,29 @@ contents:
   - src: squirelib/__init__.py
     dst: /usr/share/squire-gear/squirelib/__init__.py
     file_info: {mode: 0644}
+  - src: squirelib/protocol.py
+    dst: /usr/share/squire-gear/squirelib/protocol.py
+    file_info: {mode: 0644}
   - src: squirelib/registry.py
     dst: /usr/share/squire-gear/squirelib/registry.py
+    file_info: {mode: 0644}
+  - src: squirelib/routes.py
+    dst: /usr/share/squire-gear/squirelib/routes.py
+    file_info: {mode: 0644}
+  - src: squirelib/state.py
+    dst: /usr/share/squire-gear/squirelib/state.py
+    file_info: {mode: 0644}
+  - src: squirelib/transport/__init__.py
+    dst: /usr/share/squire-gear/squirelib/transport/__init__.py
+    file_info: {mode: 0644}
+  - src: squirelib/transport/bluez.py
+    dst: /usr/share/squire-gear/squirelib/transport/bluez.py
+    file_info: {mode: 0644}
+  - src: squirelib/transport/hidraw.py
+    dst: /usr/share/squire-gear/squirelib/transport/hidraw.py
+    file_info: {mode: 0644}
+  - src: squirelib/transport/lock.py
+    dst: /usr/share/squire-gear/squirelib/transport/lock.py
     file_info: {mode: 0644}
   - src: linux/squire_tray.py
     dst: /usr/share/squire-gear/squire_tray.py

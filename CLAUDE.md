@@ -27,7 +27,11 @@ protocol.json      real replies captured from hardware = shared test vectors (Py
 devices.json       device models (ids, routes, commands + confirmation status, capability parameters); squire.py
                    derives its tables from it, the Swift tests hold SquireCore's tables to it (DeviceModels.swift)
 squirelib/         registry.py: loads devices.json and checks it (stdlib only; `python3 -m squirelib.registry`);
-                   installers copy squirelib/ + devices.json next to squire.py
+                   transport/ (hidraw.py, lock.py = device_lock, bluez.py = busctl; load_backend, enumerate_paths,
+                   timeouts), protocol.py (frame, echo search, ff aa, exchange), routes.py (Target per route from
+                   devices.json, connection labels, best_reading = Bluetooth merge), state.py (state_dir);
+                   squire.py re-exports every moved name. Installers copy squirelib/ (with subpackages, `find`) +
+                   devices.json next to squire.py; nfpm.yaml lists each file (a test checks it)
 test_devices.py    checker + model tests (broken files refused, unconfirmed commands never sent, installers copy it)
 install.sh         on Linux hands over to linux/install.sh. macOS: venv + hidapi into ~/Library/Application Support/squire-gear, writes SwiftBar plugin
                    squire-gear.5m.sh (runs --swiftbar --notify) with xbar metadata
@@ -83,7 +87,15 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
-## Architecture (planned, agreed with the owner 2026-11-26; stage 1 started 2026-11-27, branch `refactor-devices`)
+## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 on `refactor-transport`)
+Stage 2 state (Python, 2026-11-27): transport / route / protocol split into squirelib (see Layout).
+protocol.exchange() writes only what its `build` callable returns; squire.exchange() passes squire.packet() (the
+allowlist), so the allowlist, reply_expected, battery parsing, the per-device read/write sessions and
+write_verified stay in squire.py until stage 3 (capabilities). Target got `connection` + `interface` (no more
+`pid == PID_OMNI` checks). Tests: 256 green, incl. a layer test (transport + protocol import without the registry).
+Checked on the device (Omni, read-only): --json, --settings, --keyboard-settings, --list and six --dry-run writes
+print the same as main. Owner installed the .deb on Ubuntu 26.04: tray + window work. Next: merge the PR, then the
+Swift part of stage 2 (needs a Mac build).
 Stage 1 state: devices.json + squirelib/registry.py (checker) exist; squire.py reads VID/PIDs, TARGETS, interfaces,
 report IDs, the read allowlist (confirmed reads only), confirmed write prefixes (is_allowed_write requires one),
 battery offsets (wired mouse now filtered to interface 0 like the others; confirmed on the Mac 2026-11-27:
@@ -91,15 +103,11 @@ battery + every --settings read over the cable, keyboard via Omni) and the capab
 gradients/directions, layouts, key ids, sleep/warning) from it; all names stay as module constants. Still hard-coded:
 mouse settings reply offsets (parse_mouse_settings), packet builders and byte checks (stage 3). Swift: DeviceModels.swift
 decodes strictly and tests compare every SquireCore table to the file; the app does not load it at runtime yet.
-Where we are (2026-11-27): stage 1 committed (da92d02) and pushed, PR #13 open, CI + release build green. Owner's
-decision: merge each stage via PR (no release until the whole refactoring is done). Linux test DONE (2026-11-27):
-local .deb of c325c95 installed by the owner on Ubuntu 26.04, tray + settings window work. NEXT: merge #13, then
-stage 2. (Original test plan, kept for later stages: download the `linux` artifact of run 45986714706 (`gh run download 45986714706 --repo
-phifogg/squire-gear --name linux --dir ~/Downloads/squire-pr13`), quit an install.sh tray first, `sudo apt install
-./squire-gear_*_all.deb`, check /usr/share/squire-gear has devices.json + squirelib/{__init__,registry}.py, run
-squire --version / --list / --debug / --settings / --keyboard-settings (read-only), tray + Settings… window with
-both devices; optionally the wired mouse in --debug (1c0c iface 0). Afterwards `sudo apt remove squire-gear` if the
-install.sh copy should stay.) Then merge #13, then stage 2 (Linux/Python first) on a new branch from main.
+Where we are (2026-11-27): stage 1 merged (PR #13, 7862be0) after the owner's Linux test (local .deb of c325c95 on
+Ubuntu 26.04: tray + settings window work). Owner's decision: merge each stage via PR, no release until the whole
+refactoring is done. Test each stage like stage 1: build the .deb (`linux/build-packages.sh deb`, or the PR's `linux`
+artifact), check /usr/share/squire-gear has every new file, run squire --version / --list / --debug / --settings /
+--keyboard-settings (read-only), tray + Settings… window with both devices. NEXT: stage 2, Python + Linux first.
 Stage 1b (Swift runtime loading) postponed by the owner, Linux first: copy devices.json to
 macos/Sources/SquireCore/Resources/ as a SwiftPM resource (Bundle.module; SwiftPM cannot reach ../devices.json, a
 symlink is unreliable), a test that the copy equals the root file, then build Target.all / Allowlist / Command tables
@@ -115,41 +123,40 @@ Layers (same in Python and Swift):
    a receiver several routes go through (report IDs 02 / 03). A device has several routes with a fixed priority
    (cable, Omni, Bluetooth); `Bluetooth.merge` becomes the general "best available route" rule.
 3. **Protocol**: the ASUS v2 framing once for all devices: echo search, provisional `ff aa`, exchange,
-   write_verified, save only on a match. Later maybe a second framing for BLE FFF0. Must explicitly handle the
-   three patterns already needed by current devices: multi-chunk writes (`51 2c` gradients/quicksand), non-echo
-   acknowledgements (`reply_expected`, e.g. `c0 81` -> `c0 82`), and pre-read dependencies before building a write
-   (`liftoff` reading `12 06`, `dpi` reading `12 04 03`).
+   write_verified, save only on a match. Later maybe a second framing for BLE FFF0. Must handle the three patterns
+   today's devices already need: multi-chunk writes (`51 2c` gradients / quicksand, each chunk echoed before the
+   next), non-echo acknowledgements (`reply_expected`: `c0 81` -> `c0 82`), and reads a write depends on, made in the
+   same device session right before it (lift-off / surface read `12 06`, DPI reads `12 04 03` for the stage colour).
 4. **Model = data** (owner: data-driven): `devices.json` at the repo root, read by Python and Swift like
    protocol.json: id, name, kind, routes, capabilities with parameters (battery offsets, LED zones + modes, DPI
    range/stages, polling rates, effect speed tables, key layouts), and per command a confirmation status. Without
    "confirmed" Squire only does --dry-run, so "show the bytes before the first send" stays enforced for new models.
-   Keep the model/instance id separate from `kind` (`"mouse"` / `"keyboard"`): state dicts and UI selection key on
-   the device/model id, while `kind` is only for icons, symbols and wording, so two mice can coexist.
+   The model id (`keris-ii-origin`) is not `kind` (`mouse` / `keyboard`): state dicts and the UI selection key on the
+   id; `kind` is only for icons, symbols and wording, so two mice can coexist (today ~15 places key on the kind).
    The data must be checked: Swift decodes it strictly (Codable, tests fail on a wrong type); Python gets a
    stdlib-only checker (required fields, types, ranges, unique PIDs, every capability has its parameters) that the
    tests and CI run.
 5. **Capabilities = code modules**: battery, led_zones, dpi, polling, sensor, surface, power, kb_lighting, kb_sleep,
    kb_warning, per_key. Each takes its parameters from the model and holds its reads, parser, write builders,
    read-back check and allowlist entries. The allowlist of a device = the commands of its capabilities.
-UI: a device page is built from one specialized, composable editor per capability plus a drawing per model / kind
-with the zones from the model (keep `devices.json` for model/protocol parameters rather than trying to generate
-complex UIs like per-key painting or linked LED zones from a generic form schema). Provide a plain parameter/chip
-fallback when a model has no drawing yet so new devices are usable before artwork exists. The sidebar lists the
-devices found (covers the "only connected devices" backlog item), but must still surface restricted/error states
-(Bluetooth-only, asleep, udev `no-access`) and show a hint when no device is connected.
+UI: a device page is built from one specialized editor per capability plus a drawing per model / kind with the
+zones from the model. devices.json holds model / protocol parameters, not a generic form schema (per-key painting
+or linked LED zones stay hand-written editors). A model without a drawing gets a plain parameter / chip page, so a
+new device is usable before artwork exists. The sidebar lists the devices found (covers the "only connected
+devices" backlog item), still shows restricted states (Bluetooth only, asleep, udev no-access) and a hint when
+none is connected.
 A new device then = an entry in devices.json + captures in protocol.json (+ maybe a drawing); code only for a new
 capability.
 Layout: Python package `squirelib/` (transport/, protocol.py, routes.py, capabilities/, registry.py, state.py, cli.py);
-`squire.py` stays the entry point and re-exports (and keeps `__version__`, which `release.yml` and `install.sh`
-parse with `sed`), so `import squire`, `squire.py --swiftbar`, the installers and tests keep working.
-Packaging & build checklists when adding files/folders:
-- Copy `squirelib/`, `linux/settings/`, and `devices.json` in `linux/install.sh`, `linux/packaging/nfpm.yaml`, and
-  macOS `install.sh` (SwiftBar venv folder).
-- Bundle `devices.json` as a resource in `macos/project.yml` (App, like `protocol.json`) and `macos/Package.swift`
-  (so `swift test` and `SquireCore` can load it). Update `.github/workflows/release.yml` `paths:` if build inputs move.
-Decided by the owner 2026-11-26, for as long as the Python core lives (until the Rust-or-similar decision). Linux
-window: linux/settings/ (window.py, editors/, drawings/). Swift: SquireCore split into SquireProtocol, SquireDevices
-(registry + capabilities), SquireTransport (IOKit, CoreBluetooth); App gets Settings/Editors and Settings/Drawings.
+`squire.py` stays the entry point and re-exports, so `import squire`, `squire.py --swiftbar`, the installers and
+tests keep working; it keeps `__version__` (release.yml, install.sh and build-packages.sh read it with `sed`).
+Checklist for every new file / folder (squirelib/ subpackages, linux/settings/, devices.json): copy it in
+linux/install.sh, linux/packaging/nfpm.yaml (one entry per file) and the macOS install.sh (SwiftBar venv folder);
+add build inputs to `.github/workflows/release.yml` `paths:` (devices.json + squirelib/** are there). Stage 1b:
+devices.json as a resource in macos/Package.swift (SquireCore, Bundle.module) and macos/project.yml (App). Decided by the owner 2026-11-26, for as long as the
+Python core lives (until the Rust-or-similar decision). Linux window: linux/settings/ (window.py, editors/, drawings/). Swift: SquireCore split into SquireProtocol,
+SquireDevices (registry + capabilities), SquireTransport (IOKit, CoreBluetooth); App gets Settings/Editors and
+Settings/Drawings.
 Order (decided: in stages, layers first; Rust later on top of the finished shape), each stage with green tests and
 unchanged behaviour: `bluetooth-battery` merged into main (done), then (1) devices.json for today's two devices + checker;
 code reads PIDs, routes, parameters from it, (2) split transport / route / protocol, Python + Linux first, then

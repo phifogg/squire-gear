@@ -19,7 +19,6 @@ __version__ = "0.4.1"
 import argparse
 import json
 import os
-import select
 import subprocess
 import sys
 import time
@@ -28,7 +27,13 @@ from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # squirelib/ sits next to squire.py (repo and installs)
-from squirelib import registry  # noqa: E402
+from squirelib import protocol, registry, routes, transport  # noqa: E402
+from squirelib.protocol import Exchange, find_echo, is_error, MAX_READS  # noqa: E402,F401
+from squirelib.routes import CONNECTION_LABELS, Target, connection_label  # noqa: E402,F401
+from squirelib.state import IS_LINUX, state_dir  # noqa: E402,F401
+from squirelib.transport import (DRAIN_TIMEOUT_MS, READ_TIMEOUT_MS, HidrawBackend, HidrawDevice,  # noqa: E402,F401
+                                 descriptor_collections, device_lock, load_backend)
+from squirelib.transport.bluez import bluez_objects  # noqa: E402,F401
 
 # Device models (ids, routes, commands, capability parameters) come from devices.json; load() refuses a file that
 # fails the checker. The module constants below are derived from it, so the rest of Squire reads them as before.
@@ -55,17 +60,7 @@ HID_INTERFACES = {int(r["pid"], 16): r["interface"] for d in DEVICES.devices for
 
 KEYBOARD_QUERY = KEYBOARD.read(KEYBOARD.capability("battery")["read"])
 MOUSE_QUERY = MOUSE.read(MOUSE.capability("battery")["read"])
-READ_TIMEOUT_MS = 400
-DRAIN_TIMEOUT_MS = 5   # hidapi: timeout 0 means "block forever", so never pass 0
-MAX_READS = 8
 DEFAULT_LOW_WARNING = 20   # used when a device does not report a plausible warning level
-IS_LINUX = sys.platform.startswith("linux")
-
-
-def state_dir() -> Path:
-    if IS_LINUX:
-        return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "squire-gear"
-    return Path.home() / "Library" / "Application Support" / "squire-gear"
 
 
 STATE_FILE = state_dir() / "notified.json"
@@ -83,33 +78,8 @@ class Battery:
     raw: str = ""
 
 
-@dataclass(frozen=True)
-class Target:
-    device: str
-    name: str
-    pid: int
-    report_id: Optional[int]   # None = unnumbered report (leading 0x00, 64-byte payload)
-    query: bytes
-    report_lens: tuple         # candidate total write sizes (incl. report-ID byte), tried in order
-
-
-def _targets() -> list:
-    """One Target per HID route: every device via the Omni first, then every device on the cable (the order Squire
-    has always tried; a device on the cable answers ff aa on the receiver). Bluetooth has no vendor collection."""
-    targets = []
-    for connection in ("omni", "wired"):
-        for device in DEVICES.devices:
-            route = next((r for r in device.routes() if r["connection"] == connection), None)
-            if route is None:
-                continue
-            report_id = _hex(route["report_id"]) if "report_id" in route else None
-            query = device.read(device.capability("battery")["read"])
-            targets.append(Target(device.kind, device.name, int(route["pid"], 16), report_id, query,
-                                  tuple(route["report_lengths"])))
-    return targets
-
-
-TARGETS = _targets()
+# Every HID route (Omni first, then the cable) from devices.json; see squirelib/routes.py.
+TARGETS = routes.build_targets(DEVICES)
 
 
 # Read-only commands ("get" requests all start with 0x12; writes start with 0x50/0x51 and are not on any list
@@ -683,29 +653,11 @@ def packet(report_id: Optional[int], command: bytes, length: int, write: bool = 
             raise ValueError(f"write {command.hex(' ')} is not on the {device} allowlist")
     elif command not in ALLOWED_READS[device]:
         raise ValueError(f"command {command.hex(' ')} is not on the {device} allowlist")
-    rid = 0x00 if report_id is None else report_id
-    return (bytes([rid]) + command).ljust(length, b"\0")
+    return protocol.frame(report_id, command, length)
 
 
 def build_packet(target: Target, length: int) -> bytes:
     return packet(target.report_id, target.query, length, device=target.device)
-
-
-def find_echo(reply: bytes, query: bytes) -> Optional[int]:
-    """Return index where the echoed command starts (0 or 1, depending on report-ID byte)."""
-    for base in (0, 1):
-        if reply[base:base + len(query)] == query:
-            return base
-    return None
-
-
-def is_error(reply: bytes, report_id: Optional[int]) -> bool:
-    for base in (0, 1):
-        if reply[base:base + 2] == b"\xff\xaa":
-            if base == 1 and report_id is not None and reply[0] != report_id:
-                continue
-            return True
-    return False
 
 
 # Battery reply layout per device (devices.json capabilities.battery): percent offsets in order of preference
@@ -731,63 +683,19 @@ def parse_warning(device: str, reply: bytes, base: int) -> Optional[int]:
     return value if value is not None and layout["warning_min"] <= value <= 100 else None
 
 
-@dataclass
-class Exchange:
-    status: str                      # ok | asleep | no-response | error
-    reply: bytes = b""
-    base: int = 0                    # index of the echoed command in reply
-    raw: str = ""
-
-    @property
-    def payload(self) -> bytes:
-        """Reply from the echoed command on (indices as in protocol.json notes, without report ID)."""
-        return self.reply[self.base:]
-
-
 def exchange(dev, target: Target, command: bytes, debug: bool = False, match: Optional[int] = None,
-             write: bool = False) -> Exchange:
+             write: bool = False) -> protocol.Exchange:
     """Send one allowlisted command and wait for the reply that echoes it (first `match` bytes), or for its
-    acknowledgement where the device answers with other bytes (reply_expected: per-key colours)."""
-    echo = reply_expected(command) or command[:match or len(command)]
-    # drain stale input (bounded, short timeout)
-    for _ in range(MAX_READS):
-        if not dev.read(65, DRAIN_TIMEOUT_MS):
-            break
-    written, last_error = -1, "write failed"
-    for length in target.report_lens:
-        data = packet(target.report_id, command, length, write=write, device=target.device)
-        try:
-            written = dev.write(data)
-        except (OSError, ValueError) as error:
-            written, last_error = -1, f"write failed: {error}"
-        if debug:
-            print(f"[{target.device}] > {data[:5].hex(' ')} … ({length} bytes) -> {written}", file=sys.stderr)
-        if written is not None and written >= 0:
-            break
-    if written is None or written < 0:
-        return Exchange("error", raw=last_error)
-    saw_error, raw = False, ""
-    for _ in range(MAX_READS):
-        reply = bytes(dev.read(65, READ_TIMEOUT_MS))
-        if not reply:
-            if debug:
-                print(f"[{target.device}] < (timeout)", file=sys.stderr)
-            break
-        if debug:
-            print(f"[{target.device}] < {reply.hex(' ')}", file=sys.stderr)
-        if is_error(reply, target.report_id):
-            # the receiver sometimes sends ff aa right before the real reply: keep reading
-            saw_error, raw = True, reply.hex(" ")
-            continue
-        base = find_echo(reply, echo)
-        if base is None:
-            continue  # other traffic (e.g. button/profile events); keep reading
-        return Exchange("ok", reply, base, reply.hex(" "))
-    return Exchange("asleep" if saw_error else "no-response", raw=raw)
+    acknowledgement where the device answers with other bytes (reply_expected: per-key colours). Every packet is
+    built by packet(), so the allowlist of the target's device applies to each candidate length."""
+    return protocol.exchange(
+        dev, target, command,
+        lambda length: packet(target.report_id, command, length, write=write, device=target.device),
+        expect=reply_expected(command), debug=debug, match=match)
 
 
 def query(dev, target: Target, debug: bool = False) -> Battery:
-    result = Battery(target.device, target.name, "omni" if target.pid == PID_OMNI else "wired", None)
+    result = Battery(target.device, target.name, target.connection, None)
     ex = exchange(dev, target, target.query, debug)
     result.raw = ex.raw
     if ex.status != "ok":
@@ -802,171 +710,10 @@ def query(dev, target: Target, debug: bool = False) -> Battery:
     return result
 
 
-# --- Linux: hidraw backend -------------------------------------------------------------------------------
-
-def descriptor_collections(descriptor: bytes) -> list[tuple[int, int]]:
-    """(usage page, usage) of each top-level collection in a HID report descriptor."""
-    result, page, usage, usage_size, depth, stack, i = [], 0, None, 0, 0, [], 0
-    while i < len(descriptor):
-        prefix = descriptor[i]
-        if prefix == 0xFE:  # long item: [FE, size, tag, data...]
-            i += 3 + (descriptor[i + 1] if i + 1 < len(descriptor) else 0)
-            continue
-        size = (0, 1, 2, 4)[prefix & 0x03]
-        data = descriptor[i + 1:i + 1 + size]
-        value = int.from_bytes(data, "little")
-        kind, tag = (prefix >> 2) & 0x03, prefix >> 4
-        i += 1 + size
-        if kind == 1:            # global
-            if tag == 0x0:
-                page = value
-            elif tag == 0xA:
-                stack.append(page)
-            elif tag == 0xB and stack:
-                page = stack.pop()
-        elif kind == 2:          # local
-            if tag == 0x0 and usage is None:
-                usage, usage_size = value, size
-        elif kind == 0:          # main
-            if tag == 0xA:
-                if depth == 0:
-                    if usage is not None and usage_size == 4:
-                        result.append((usage >> 16, usage & 0xFFFF))  # usage carries its own page
-                    else:
-                        result.append((page, usage or 0))
-                depth += 1
-            elif tag == 0xC:
-                depth = max(0, depth - 1)
-            usage = None         # local items end at every main item
-    return result
-
-
-class HidrawDevice:
-    """Same small interface as hidapi's device (open_path/write/read/close), on a /dev/hidraw node."""
-
-    def __init__(self):
-        self.fd: Optional[int] = None
-
-    def open_path(self, path) -> None:
-        self.fd = os.open(path, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
-
-    def write(self, data) -> int:
-        # first byte is the report ID, 0 for unnumbered reports (stripped by the kernel), like hidapi
-        return os.write(self.fd, bytes(data))
-
-    def read(self, size: int, timeout_ms: int) -> list:
-        if timeout_ms <= 0:
-            raise ValueError("timeout must be > 0")  # same rule as with hidapi: never block forever
-        ready, _, _ = select.select([self.fd], [], [], timeout_ms / 1000)
-        if not ready:
-            return []
-        try:
-            return list(os.read(self.fd, size))
-        except BlockingIOError:
-            return []
-
-    def close(self) -> None:
-        if self.fd is not None:
-            os.close(self.fd)
-            self.fd = None
-
-
-class HidrawBackend:
-    """hidapi-like enumerate()/device() for Linux. One entry per hidraw node (= one USB interface).
-
-    usage_page is the *lowest* top-level page, so a node that mixes vendor and input collections is
-    filtered out by enumerate_paths(): we never open a node that also carries keyboard or mouse input."""
-
-    def __init__(self, sysfs: Path = Path("/sys/class/hidraw"), dev: Path = Path("/dev")):
-        self.sysfs, self.dev = sysfs, dev
-
-    def enumerate(self, vid: int = 0, pid: int = 0) -> list[dict]:
-        infos = []
-        nodes = sorted(self.sysfs.glob("hidraw*"), key=lambda n: int(n.name[6:] or 0))
-        for node in nodes:
-            try:
-                uevent = dict(line.split("=", 1) for line in
-                              (node / "device" / "uevent").read_text().splitlines() if "=" in line)
-                _, v, p = uevent.get("HID_ID", "0:0:0").split(":")
-                v, p = int(v, 16), int(p, 16)
-                if (vid and v != vid) or (pid and p != pid):
-                    continue
-                collections = descriptor_collections((node / "device" / "report_descriptor").read_bytes())
-            except (OSError, ValueError):
-                continue
-            try:
-                iface = int((node / "device" / ".." / "bInterfaceNumber").read_text().strip(), 16)
-            except (OSError, ValueError):
-                iface = -1
-            pages = [page for page, _ in collections]
-            infos.append({
-                "path": os.fsencode(self.dev / node.name),
-                "vendor_id": v, "product_id": p, "interface_number": iface,
-                "usage_page": min(pages) if pages else 0,
-                "usage": collections[0][1] if collections else 0,
-                "collections": collections,
-                "product_string": uevent.get("HID_NAME", ""),
-            })
-        return infos
-
-    @staticmethod
-    def device() -> HidrawDevice:
-        return HidrawDevice()
-
-
-class device_lock:
-    """Serialises device sessions between Squire processes (tray, settings window, CLI) for this user.
-
-    Each process gets its own copy of every reply, so this is about keeping request/reply pairs together,
-    not about safety. Best effort: if the lock file cannot be created, run without it."""
-
-    def __init__(self, path: Optional[Path] = None):
-        runtime = os.environ.get("XDG_RUNTIME_DIR")
-        self.path = path or (Path(runtime) if runtime else state_dir()) / "squire-gear-device.lock"
-        self.handle = None
-
-    def __enter__(self):
-        try:
-            import fcntl
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.handle = open(self.path, "w")
-            fcntl.flock(self.handle, fcntl.LOCK_EX)   # waits; a session takes about a second at most
-        except (ImportError, OSError):
-            self.handle = None
-        return self
-
-    def __exit__(self, *exc):
-        if self.handle is not None:
-            self.handle.close()   # closing releases the lock
-        return False
-
-
-def load_backend():
-    if IS_LINUX:
-        return HidrawBackend()
-    import hid  # pip package "hidapi"
-    return hid
-
-
 def enumerate_paths(hid, pid: int) -> list[bytes]:
-    """Unique HID paths for vendor-defined collections of a product (macOS lists one entry per collection)."""
-    paths = []
-    for info in hid.enumerate(VID, pid):
-        if info.get("usage_page", 0) < 0xFF00:
-            continue  # skip standard keyboard/mouse/consumer collections: never touch typing input
-        iface = HID_INTERFACES.get(pid)   # devices.json routes: Omni 2, wired keyboard 1, wired mouse 0
-        if iface is not None and info.get("interface_number", iface) not in (iface, -1):
-            continue
-        if info["path"] not in paths:
-            paths.append(info["path"])
-    return paths
-
-
-CONNECTION_LABELS = {"omni": "Omni receiver", "wired": "Wired", "bluetooth": "Bluetooth"}
-
-
-def connection_label(connection: str) -> str:
-    return CONNECTION_LABELS.get(connection, connection)
+    """Unique HID paths for vendor-defined collections of a product, on the vendor interface of its route
+    (devices.json: Omni 2, wired keyboard 1, wired mouse 0)."""
+    return transport.enumerate_paths(hid, VID, pid, HID_INTERFACES.get(pid))
 
 
 def read_all(debug: bool = False, hid=None, bluetooth: Optional[Callable[[bool], list]] = None) -> list[Battery]:
@@ -984,31 +731,13 @@ def read_all(debug: bool = False, hid=None, bluetooth: Optional[Callable[[bool],
 
 def merge_bluetooth(hid: list[Battery], bluetooth: list[Battery]) -> list[Battery]:
     """HID wins when it has a value; otherwise the Bluetooth reading, if any; otherwise HID's status
-    (same rule as Bluetooth.merge in SquireCore)."""
-    merged = []
-    for device in ("keyboard", "mouse"):
-        wired = next((b for b in hid if b.device == device), None)
-        ble = next((b for b in bluetooth if b.device == device and b.percent is not None), None)
-        choice = wired if wired is not None and wired.percent is not None else \
-            ble or wired or next((b for b in bluetooth if b.device == device), None)
-        if choice is not None:
-            merged.append(choice)
-    return merged
+    (same rule as Bluetooth.merge in SquireCore; squirelib.routes.best_reading)."""
+    return routes.best_reading(hid, bluetooth)
 
 
 def _modalias_pid(modalias: str) -> Optional[int]:
-    """'usb:v0B05p1B08d0001' -> 0x1B08 for an ASUS device, else None. BlueZ writes 'bluetooth:v...' for
-    Bluetooth SIG vendor ids; ASUS devices report the USB vendor id here."""
-    try:
-        kind, rest = modalias.split(":", 1)
-        if kind != "usb" or not rest.startswith("v") or "p" not in rest:
-            return None
-        vendor, product = rest[1:].split("p", 1)
-        if int(vendor[:4], 16) != VID:
-            return None
-        return int(product[:4], 16)
-    except ValueError:
-        return None
+    """'usb:v0B05p1B08d0001' -> 0x1B08 for an ASUS device, else None."""
+    return transport.bluez.modalias_pid(modalias, VID)
 
 
 def parse_bluez_objects(objects: dict) -> list[Battery]:
@@ -1045,27 +774,6 @@ def parse_bluez_objects(objects: dict) -> list[Battery]:
     return [found[k] for k in ("keyboard", "mouse") if k in found]
 
 
-def bluez_objects(debug: bool = False) -> dict:
-    """BlueZ's managed objects via busctl (systemd, on every Ubuntu). Read-only: asks bluetoothd for what it
-    already holds; nothing is sent to the device. {} when BlueZ or busctl is missing."""
-    try:
-        out = subprocess.run(["busctl", "--system", "--json=short", "call", "org.bluez", "/",
-                              "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"],
-                             capture_output=True, text=True, timeout=3)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        if debug:
-            print(f"[bluetooth] busctl failed: {error}", file=sys.stderr)
-        return {}
-    if out.returncode != 0:
-        if debug:
-            print(f"[bluetooth] busctl: {out.stderr.strip()}", file=sys.stderr)
-        return {}
-    try:
-        return json.loads(out.stdout)["data"][0]
-    except (ValueError, KeyError, IndexError, TypeError):
-        return {}
-
-
 def read_bluetooth(debug: bool = False) -> list[Battery]:
     """Battery levels of the devices paired over Bluetooth (Linux: BlueZ org.bluez.Battery1)."""
     if not IS_LINUX:
@@ -1095,7 +803,7 @@ def _read_all(debug: bool = False, hid=None) -> list[Battery]:
                 if isinstance(error, PermissionError) and target.device not in found:
                     # Linux without the udev rule: say so instead of "not found"
                     found[target.device] = Battery(target.device, target.name,
-                                                   "omni" if target.pid == PID_OMNI else "wired", None,
+                                                   target.connection, None,
                                                    status="no-access", raw=str(error))
                 continue
             try:
@@ -1226,7 +934,7 @@ def _read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
                     result.status = "no-access"
                 continue
             try:
-                settings = MouseSettings(target.name, "omni" if target.pid == PID_OMNI else "wired")
+                settings = MouseSettings(target.name, target.connection)
                 battery = exchange(dev, target, target.query, debug)
                 if battery.status != "ok":
                     result = settings
@@ -1316,7 +1024,7 @@ def read_keyboard_settings(debug: bool = False, hid=None) -> KeyboardSettings:
                         result.status = "no-access"
                     continue
                 try:
-                    settings = KeyboardSettings(target.name, "omni" if target.pid == PID_OMNI else "wired")
+                    settings = KeyboardSettings(target.name, target.connection)
                     battery = exchange(dev, target, target.query, debug)
                     if battery.status != "ok":
                         result = settings
@@ -1799,7 +1507,7 @@ def write_verified(command, read_name, extract, matches, save: bool = False, dry
         return WriteResult("dry-run", sent, message="nothing sent")
 
     def read_value(dev, target):
-        tmp = spec["settings"]("omni" if target.pid == PID_OMNI else "wired")
+        tmp = spec["settings"](target.connection)
         for name in read_names:
             read_command = spec["reads"](name)
             ex = exchange(dev, target, read_command, debug, match=3 if read_command[1] == 0x04 else 2)

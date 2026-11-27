@@ -28,8 +28,10 @@ fi
 install -m 0755 "$HERE/squire.py" "$APP_DIR/squire.py"
 install -m 0644 "$HERE/devices.json" "$APP_DIR/devices.json"     # device models, read by squire.py
 rm -rf "$APP_DIR/squirelib"
-mkdir -p "$APP_DIR/squirelib"
-install -m 0644 "$HERE"/squirelib/*.py "$APP_DIR/squirelib/"
+(cd "$HERE" && find squirelib -name '*.py') | while read -r f; do   # squirelib/ and its subpackages
+  mkdir -p "$APP_DIR/$(dirname "$f")"
+  install -m 0644 "$HERE/$f" "$APP_DIR/$f"
+done
 
 if [ -n "$PLUGIN_DIR" ] && [ -d "$PLUGIN_DIR" ]; then
   PLUGIN="$PLUGIN_DIR/squire-gear.5m.sh"
