@@ -145,8 +145,7 @@ struct DeviceRow: View {
                     ProgressView(value: Double(percent), total: 100).tint(batteryColor(for: battery))
                     Text("\(percent)%\(battery.charging ? " ⚡︎" : "")").monospacedDigit()
                 }
-                Text(battery.lowWarning == 0 ? "\(connection) · no low-battery warning"
-                     : "\(connection) · warning at \(battery.lowWarning ?? SquireProtocol.defaultLowWarning)%")
+                Text(caption)
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text(statusText).foregroundStyle(.secondary)
@@ -154,7 +153,13 @@ struct DeviceRow: View {
         }
     }
 
-    private var connection: String { battery.connection == .wired ? "Wired" : "Omni receiver" }
+    private var caption: String {
+        let connection = battery.connection.label
+        // Bluetooth reports only the level: no charging flag, no device warning level.
+        if battery.connection == .bluetooth { return "\(connection) · level only, no charging state" }
+        if battery.lowWarning == 0 { return "\(connection) · no low-battery warning" }
+        return "\(connection) · warning at \(battery.lowWarning ?? SquireProtocol.defaultLowWarning)%"
+    }
 
     private var statusText: String {
         switch battery.status {

@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import squire as rb
@@ -182,6 +183,116 @@ class EnumerateAndReadAllTests(unittest.TestCase):
         self.assertEqual([(b.device, b.percent) for b in results], [("keyboard", 90), ("mouse", 12)])
         self.assertTrue(all(d.closed for d in self.devices["all"]))
         self.assertTrue(all(d.path == b"omni-if2" for d in self.devices["all"]))
+
+
+def bluez_device(path, modalias, connected=True, percentage=None):
+    interfaces = {"org.bluez.Device1": {"Name": {"type": "s", "data": "x"},
+                                        "Modalias": {"type": "s", "data": modalias},
+                                        "Connected": {"type": "b", "data": connected}}}
+    if percentage is not None:
+        interfaces["org.bluez.Battery1"] = {"Percentage": {"type": "y", "data": percentage}}
+    return {path: interfaces}
+
+
+class BluetoothTests(unittest.TestCase):
+    """Linux: battery level of devices paired over Bluetooth, from BlueZ's org.bluez.Battery1 (protocol.json)."""
+
+    def test_real_bluez_capture(self):
+        data = json.loads((Path(__file__).parent / "protocol.json").read_text())["bluetooth"]["bluez_linux"]
+        results = rb.parse_bluez_objects(data["objects"])
+        self.assertEqual([{"device": b.device, "connection": b.connection, "percent": b.percent, "status": b.status}
+                          for b in results], data["expect"])
+        self.assertEqual([b.name for b in results], ["ROG Falchion RX LP", "ROG Keris II Origin"])
+        self.assertFalse(results[0].charging)
+        self.assertIsNone(results[0].low_warning)     # no warning level over Bluetooth
+
+    def test_pids_match_the_mac_capture(self):
+        devices = json.loads((Path(__file__).parent / "protocol.json").read_text())["bluetooth"]["devices"]
+        self.assertEqual({int(d["product_id"], 16): k for k, d in devices.items()}, rb.BLUETOOTH_PIDS)
+
+    def test_modalias(self):
+        self.assertEqual(rb._modalias_pid("usb:v0B05p1C0Fd0100"), 0x1C0F)
+        self.assertIsNone(rb._modalias_pid("usb:v046Dp1B08d0001"))         # other vendor, same pid
+        self.assertIsNone(rb._modalias_pid("bluetooth:v0B05p1B08d0001"))   # SIG vendor id space
+        self.assertIsNone(rb._modalias_pid(""))
+        self.assertIsNone(rb._modalias_pid("usb:vzzzz"))
+
+    def test_mouse_levels_and_filters(self):
+        objects = {}
+        objects.update(bluez_device("/a", "usb:v0B05p1C0Fd0001", percentage=52))
+        objects.update(bluez_device("/b", "usb:v0B05p1B08d0001", connected=False, percentage=40))   # not connected
+        objects.update(bluez_device("/c", "usb:v0B05p1ACEd0001", percentage=99))                   # not a BT pid
+        objects.update(bluez_device("/d", "usb:v054Cp0CE6d0100", percentage=70))                   # someone else
+        objects["/org/bluez/hci0"] = {"org.bluez.Adapter1": {}}
+        self.assertEqual([(b.device, b.percent, b.connection) for b in rb.parse_bluez_objects(objects)],
+                         [("mouse", 52, "bluetooth")])
+
+    def test_zero_is_asleep_missing_is_no_response_out_of_range_is_error(self):
+        self.assertEqual(rb.parse_bluez_objects(bluez_device("/a", "usb:v0B05p1B08d0001", percentage=0))[0].status,
+                         "asleep")
+        self.assertEqual(rb.parse_bluez_objects(bluez_device("/a", "usb:v0B05p1B08d0001"))[0].status, "no-response")
+        b = rb.parse_bluez_objects(bluez_device("/a", "usb:v0B05p1B08d0001", percentage=200))[0]
+        self.assertEqual((b.percent, b.status), (None, "error"))
+
+    def test_merge_hid_wins(self):
+        omni = rb.Battery("keyboard", "k", "omni", 70)
+        ble = rb.Battery("keyboard", "k", "bluetooth", 60)
+        self.assertEqual(rb.merge_bluetooth([omni], [ble]), [omni])
+
+    def test_merge_bluetooth_fills_asleep_or_missing(self):
+        asleep = rb.Battery("keyboard", "k", "omni", None, status="asleep")
+        kb = rb.Battery("keyboard", "k", "bluetooth", 60)
+        mouse = rb.Battery("mouse", "m", "bluetooth", 52)
+        self.assertEqual(rb.merge_bluetooth([asleep], [mouse, kb]), [kb, mouse])
+        no_reply = rb.Battery("mouse", "m", "bluetooth", None, status="no-response")
+        self.assertEqual(rb.merge_bluetooth([asleep], [no_reply]), [asleep, no_reply])
+        self.assertEqual(rb.merge_bluetooth([], []), [])
+
+    def test_read_all_asks_bluetooth_only_for_a_missing_device(self):
+        class NoHid:
+            def enumerate(self, vid, pid):
+                return []
+
+        calls = []
+
+        def ble(debug):
+            calls.append(debug)
+            return [rb.Battery("keyboard", "k", "bluetooth", 58)]
+
+        results = rb.read_all(hid=NoHid(), bluetooth=ble)
+        self.assertEqual([(b.device, b.connection, b.percent) for b in results], [("keyboard", "bluetooth", 58)])
+        self.assertEqual(calls, [False])
+
+    def test_read_all_with_a_fake_hid_never_calls_busctl(self):
+        with unittest.mock.patch.object(rb.subprocess, "run", side_effect=AssertionError("busctl called")):
+            class NoHid:
+                def enumerate(self, vid, pid):
+                    return []
+            self.assertEqual(rb.read_all(hid=NoHid()), [])
+
+    def test_bluez_objects_tolerates_missing_busctl_and_bad_output(self):
+        with unittest.mock.patch.object(rb.subprocess, "run", side_effect=FileNotFoundError("busctl")):
+            self.assertEqual(rb.bluez_objects(), {})
+        bad = types.SimpleNamespace(returncode=0, stdout="not json", stderr="")
+        with unittest.mock.patch.object(rb.subprocess, "run", return_value=bad):
+            self.assertEqual(rb.bluez_objects(), {})
+        failed = types.SimpleNamespace(returncode=1, stdout="", stderr="Unit dbus-org.bluez.service not found")
+        with unittest.mock.patch.object(rb.subprocess, "run", return_value=failed):
+            self.assertEqual(rb.bluez_objects(), {})
+
+    def test_bluez_objects_is_one_read_only_call(self):
+        out = types.SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(
+            {"type": "a{oa{sa{sv}}}", "data": [bluez_device("/a", "usb:v0B05p1B08d0001", percentage=58)]}))
+        with unittest.mock.patch.object(rb.subprocess, "run", return_value=out) as run:
+            self.assertIn("/a", rb.bluez_objects())
+        args = run.call_args.args[0]
+        self.assertEqual(args[:3], ["busctl", "--system", "--json=short"])
+        self.assertEqual(args[-2:], ["org.freedesktop.DBus.ObjectManager", "GetManagedObjects"])
+        self.assertIn("timeout", run.call_args.kwargs)
+
+    def test_connection_labels(self):
+        self.assertEqual([rb.connection_label(c) for c in ("omni", "wired", "bluetooth")],
+                         ["Omni receiver", "Wired", "Bluetooth"])
 
 
 # Report descriptors read from /sys/class/hidraw/*/device/report_descriptor on Linux (Omni receiver)

@@ -24,6 +24,8 @@
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Squire reads the battery level of your ROG keyboard and mouse when they are connected over Bluetooth.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License, Daniel Draes</string>
 </dict>

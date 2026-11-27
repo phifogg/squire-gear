@@ -125,6 +125,15 @@ def mouse_svg(s: squire.MouseSettings) -> str:
 </svg>"""
 
 
+def bluetooth_status(b, device: str):
+    """(title, text) for a device that has a Bluetooth battery level but no settings read, else None."""
+    if b is None or b.connection != "bluetooth" or b.percent is None:
+        return None
+    return (f"The {device} is connected over Bluetooth",
+            f"Over Bluetooth Squire can only read the battery level. To change settings, connect the {device} "
+            "through the Omni receiver or the USB cable, then read again.")
+
+
 def demo_data() -> tuple[dict, "squire.MouseSettings"]:
     """Batteries and mouse settings from the real captures in protocol.json (sends nothing)."""
     import json
@@ -948,7 +957,7 @@ def run(argv: list[str]) -> int:
                 elif b.percent is None:
                     text = {"asleep": "asleep", "no-access": "no access"}.get(b.status, b.status)
                 else:
-                    text = f"{'Wired' if b.connection == 'wired' else 'Omni receiver'} · {b.percent} %" + \
+                    text = f"{squire.connection_label(b.connection)} · {b.percent} %" + \
                            (" · charging" if b.charging else "")
                 r.set_subtitle(text)
 
@@ -1049,6 +1058,11 @@ def run(argv: list[str]) -> int:
                 page.set_icon_name(icon)
             self.content_view.set_content(page)
 
+        def bluetooth_page(self, device):
+            """No settings over Bluetooth (no vendor HID collection there), but the device is connected: say so
+            instead of "not found" / "asleep"."""
+            return bluetooth_status(self.batteries.get(device), device)
+
         def render(self):
             if self.device == "keyboard":
                 self.render_keyboard()
@@ -1066,7 +1080,11 @@ def run(argv: list[str]) -> int:
                                                               "re-plug the receiver."),
                     "not-found": ("Mouse not found", "Plug in the Omni receiver or the USB cable."),
                 }
-                title, text = texts.get(s.status, ("Could not read the mouse", s.status))
+                bluetooth = self.bluetooth_page("mouse")
+                if bluetooth:
+                    self.banner.set_title("Connected over Bluetooth: battery level only, no settings.")
+                title, text = bluetooth or \
+                    texts.get(s.status, ("Could not read the mouse", s.status))
                 self.show_status(title, text)
                 return
             body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -1103,7 +1121,11 @@ def run(argv: list[str]) -> int:
                                                               "re-plug the receiver."),
                     "not-found": ("Keyboard not found", "Plug in the Omni receiver or the USB cable."),
                 }
-                title, text = texts.get(k.status, ("Could not read the keyboard", k.status))
+                bluetooth = self.bluetooth_page("keyboard")
+                if bluetooth:
+                    self.banner.set_title("Connected over Bluetooth: battery level only, no settings.")
+                title, text = bluetooth or \
+                    texts.get(k.status, ("Could not read the keyboard", k.status))
                 self.show_status(title, text, icon="input-keyboard-symbolic")
                 return
             body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)

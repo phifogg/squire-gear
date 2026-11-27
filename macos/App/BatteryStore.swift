@@ -22,6 +22,9 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
     @Published private(set) var notificationStatus = "unknown"
 
     private var timer: Timer?
+    /// One central manager for the app's lifetime; only used on `pollQueue`.
+    private let bluetooth = BluetoothReader()
+    private let pollQueue = DispatchQueue(label: "io.github.phifogg.squire.poll", qos: .utility)
     private var notificationState: NotificationState = {
         UserDefaults.standard.data(forKey: BatteryStore.stateKey)
             .flatMap { try? JSONDecoder().decode(NotificationState.self, from: $0) } ?? NotificationState()
@@ -43,9 +46,16 @@ final class BatteryStore: NSObject, ObservableObject, UNUserNotificationCenterDe
         guard !isRefreshing else { return }
         isRefreshing = true
         // IOKit reads pump a run loop for up to ~1 s: keep them off the main thread.
-        DispatchQueue.global(qos: .utility).async {
-            let result = HIDReader().read()
-            DispatchQueue.main.async { self.apply(result.batteries) }
+        let bluetooth = self.bluetooth
+        pollQueue.async {
+            let hid = HIDReader().read().batteries
+            // Bluetooth only for a device without a value from the Omni or the cable.
+            let missing = [Battery.Device.keyboard, .mouse].filter { device in
+                hid.first { $0.device == device }?.percent == nil
+            }
+            let ble = missing.isEmpty ? [] : bluetooth.read().batteries
+            let batteries = Bluetooth.merge(hid: hid, bluetooth: ble)
+            DispatchQueue.main.async { self.apply(batteries) }
         }
     }
 

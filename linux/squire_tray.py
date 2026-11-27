@@ -100,10 +100,14 @@ def device_lines(b: Optional[Battery], fallback_name: str) -> list[str]:
     if b.percent is None:
         return [b.name, STATUS_TEXT.get(b.status, b.status)]
     state = " charging" if b.charging else (" low" if b.percent <= warning_level(b) else "")
-    connection = "Wired" if b.connection == "wired" else "Omni receiver"
-    return [b.name,
-            f"{bar(b.percent)}  {b.percent}%{(' ' + BOLT) if b.charging else ''}{state}",
-            f"{connection} · warning at {warning_level(b)}%"]
+    connection = squire.connection_label(b.connection)
+    if b.connection == "bluetooth":
+        caption = f"{connection} · level only, no charging state"   # BlueZ has only the GATT battery level
+    elif b.low_warning == 0:
+        caption = f"{connection} · no low-battery warning"
+    else:
+        caption = f"{connection} · warning at {warning_level(b)}%"
+    return [b.name, f"{bar(b.percent)}  {b.percent}%{(' ' + BOLT) if b.charging else ''}{state}", caption]
 
 
 def load_settings(path: Path = SETTINGS_FILE) -> dict:

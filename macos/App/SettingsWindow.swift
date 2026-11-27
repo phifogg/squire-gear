@@ -96,7 +96,8 @@ struct SettingsView: View {
                 if store.demo { Text("Demo: protocol.json captures, nothing is sent").font(.caption).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            Text(store.device == .keyboard
+            Text(bluetoothOnly ? "Connected over Bluetooth: battery level only, no settings."
+                 : store.device == .keyboard
                  ? "Lighting, sleep and the low-battery warning can be changed. Nothing is sent until you click Apply."
                  : "Lights, DPI, sensor and power settings can be changed. Nothing is sent until you click Apply.")
                 .font(.callout)
@@ -111,6 +112,8 @@ struct SettingsView: View {
             if let keyboard = store.keyboard {
                 if keyboard.status == .ok {
                     KeyboardSettingsView(store: store, settings: keyboard)
+                } else if let page = bluetoothPage(.keyboard) {
+                    page
                 } else {
                     let (title, text) = Self.keyboardStatusTexts[keyboard.status]
                         ?? ("Could not read the keyboard", keyboard.status.rawValue)
@@ -123,6 +126,8 @@ struct SettingsView: View {
         } else if let settings = store.settings {
             if settings.status == .ok {
                 MouseSettingsView(store: store, settings: settings)
+            } else if let page = bluetoothPage(.mouse) {
+                page
             } else {
                 let (title, text) = Self.statusTexts[settings.status] ?? ("Could not read the mouse", settings.status.rawValue)
                 StatusPage(systemImage: "computermouse", title: title, text: text)
@@ -131,6 +136,26 @@ struct SettingsView: View {
             StatusPage(systemImage: nil, title: "Reading the mouse…",
                        text: "Squire reads the current settings. This takes about a second.")
         }
+    }
+
+    /// The selected device has no settings read (HID) but a Bluetooth battery level.
+    private var bluetoothOnly: Bool {
+        let status: MouseSettings.Status? = store.device == .keyboard ? store.keyboard?.status : store.settings?.status
+        guard let device = store.device, let status, status != .ok else { return false }
+        return bluetoothPage(device) != nil
+    }
+
+    /// No settings over Bluetooth (no vendor HID collection there), but the device is connected: say so instead of
+    /// "not found" / "asleep".
+    private func bluetoothPage(_ device: Battery.Device) -> StatusPage? {
+        guard let battery = store.batteries[device], battery.connection == .bluetooth, battery.percent != nil else {
+            return nil
+        }
+        let name = device == .mouse ? "mouse" : "keyboard"
+        return StatusPage(systemImage: device == .mouse ? "computermouse" : "keyboard",
+                          title: "The \(name) is connected over Bluetooth",
+                          text: "Over Bluetooth Squire can only read the battery level. To change settings, connect the "
+                              + "\(name) through the Omni receiver or the USB cable, then read again.")
     }
 
     static let statusTexts: [MouseSettings.Status: (String, String)] = [
@@ -169,7 +194,7 @@ struct DeviceSidebarRow: View {
         var text: String
         if let battery {
             if let percent = battery.percent {
-                text = (battery.connection == .wired ? "Wired" : "Omni receiver") + " · \(percent) %"
+                text = battery.connection.label + " · \(percent) %"
                     + (battery.charging ? " · charging" : "")
             } else {
                 text = battery.status == .asleep ? "asleep" : battery.status.rawValue
@@ -487,7 +512,7 @@ struct KeyboardInspectorView: View {
                 }
             }
             Section("Device") {
-                InfoRow("Connection", settings.connection == .wired ? "Wired" : "Omni receiver")
+                InfoRow("Connection", settings.connection?.label ?? "–")
                 if let firmware = settings.firmware { InfoRow("Firmware", firmware) }
                 if let receiver = settings.receiverFirmware { InfoRow("Receiver firmware", receiver) }
             }
@@ -762,7 +787,7 @@ struct InspectorView: View {
                 }
             }
             Section("Device") {
-                InfoRow("Connection", settings.connection == .wired ? "Wired" : "Omni receiver")
+                InfoRow("Connection", settings.connection?.label ?? "–")
                 InfoRow("Profile", settings.profile.map(String.init) ?? "–", subtitle: "Squire reads the active profile only")
                 InfoRow("Firmware", settings.firmware ?? "–")
                 if let receiver = settings.receiverFirmware { InfoRow("Receiver firmware", receiver) }

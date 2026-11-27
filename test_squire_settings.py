@@ -31,6 +31,18 @@ class DemoDataTests(unittest.TestCase):
         self.assertEqual(ui.zone_summary(self.s, "power"), "off after 3 min · warn at 20 %")
 
 
+class BluetoothPageTests(unittest.TestCase):
+    def test_page_only_for_a_bluetooth_level(self):
+        ble = squire.Battery("keyboard", "ROG Falchion RX LP", "bluetooth", 58)
+        title, text = ui.bluetooth_status(ble, "keyboard")
+        self.assertEqual(title, "The keyboard is connected over Bluetooth")
+        self.assertIn("Omni receiver or the USB cable", text)
+        self.assertIsNone(ui.bluetooth_status(None, "keyboard"))
+        self.assertIsNone(ui.bluetooth_status(squire.Battery("keyboard", "k", "omni", 58), "keyboard"))
+        self.assertIsNone(ui.bluetooth_status(squire.Battery("keyboard", "k", "bluetooth", None, status="asleep"),
+                                              "keyboard"))
+
+
 class DrawingTests(unittest.TestCase):
     def settings(self, **leds):
         s = squire.MouseSettings("m", "omni")

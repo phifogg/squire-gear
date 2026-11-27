@@ -12,7 +12,8 @@ Private working notes (log, contacts, plans) live in `CLAUDE.local.md` (git-igno
 - Mouse: ASUS ROG Keris II Origin (wired PID `0b05:1c0c`)
 - Both also via the ROG Omni receiver `0b05:1ace`
 - Confirmed on macOS: Omni and wired, both devices, Python and Swift. Linux (Ubuntu 26.04, GNOME 50): Omni,
-  both devices; wired keyboard and mouse confirmed (2026-11-24).
+  both devices; wired keyboard and mouse confirmed (2026-11-24). Bluetooth (battery level only): keyboard `0b05:1b08`,
+  mouse `0b05:1c0f`, both on macOS (2026-11-26) and Linux (2026-11-27).
 
 ## Layout
 ```
@@ -41,9 +42,10 @@ macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project
                        (KeyboardEditing.swift),
                        low-battery rules (Swift Testing tests, read protocol.json)
   Sources/SquireHID    IOKit HIDReader (vendor pages ff00-ff02 only): batteries, readMouseSettings, readKeyboardSettings, write,
-                       writeKeyboard;
+                       writeKeyboard; BluetoothReader (CoreBluetooth, GATT 180F/2A19 battery level only);
                        DeviceLock = same flock file as squire.device_lock
-  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings / --keyboard-settings (read-only)
+  Sources/squire-probe CLI diagnostics, --repeat N stress test, --settings / --keyboard-settings (read-only),
+                       --bluetooth (battery level over BLE; Info.plist embedded via -sectcreate, CoreBluetooth needs it)
   App/                 SwiftUI MenuBarExtra app (BatteryStore, Views), settings window (SettingsWindow,
                        SettingsStore, MouseDrawing, KeyboardDrawing; same layout as the Linux window), Assets
   scripts/             build-release.sh (universal, ad-hoc signed zip), make-icon.swift
@@ -55,6 +57,7 @@ python3 -m unittest -v                         # Python tests, no hardware
 cd macos && swift test                         # Swift core tests (macOS only)
 cd macos && swift run squire-probe             # what IOKit sees + parsed batteries
 cd macos && swift run squire-probe --settings  # mouse DPI / LEDs / sensor / power, read-only
+cd macos && swift run squire-probe --bluetooth # battery level of devices paired over Bluetooth (GATT 2A19 only)
 Squire.app/Contents/MacOS/Squire --demo --settings          # settings window with protocol.json captures, sends nothing
 Squire.app/Contents/MacOS/Squire --demo --screenshot PATH [ZONE] [edit] [linked]   # saves a PNG and quits (sidebar stays blank;
                                                # `screencapture -o -l<window id>` shows it, needs Screen Recording)
@@ -74,6 +77,45 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 ./linux/install.sh [--no-udev] [--no-start]    # install for the current user
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
+
+## Architecture (planned, agreed with the owner 2026-11-26; nothing rebuilt yet)
+Goal: support more devices without touching code everywhere. Today device knowledge (PIDs, report IDs, zones,
+ranges, effect tables) is spread as constants, "keyboard"/"mouse" are hard-wired (`ALLOWED_READS[device]`,
+`Battery.Device`), `Target` mixes device and connection, Omni and Bluetooth are special cases, and both settings
+windows are one big file each.
+Layers (same in Python and Swift):
+1. **Transport**: moves bytes and lists devices, knows nothing about ASUS: hidraw, hidapi, IOKit, BLE GATT
+   (CoreBluetooth / BlueZ), device_lock. The "vendor collections only" and timeout rules live here.
+2. **Route**: how one device is reached: transport, PID, interface / usage page, report ID, packet length. The Omni is
+   a receiver several routes go through (report IDs 02 / 03). A device has several routes with a fixed priority
+   (cable, Omni, Bluetooth); `Bluetooth.merge` becomes the general "best available route" rule.
+3. **Protocol**: the ASUS v2 framing once for all devices: echo search, provisional `ff aa`, exchange,
+   write_verified, save only on a match. Later maybe a second framing for BLE FFF0.
+4. **Model = data** (owner: data-driven): `devices.json` at the repo root, read by Python and Swift like
+   protocol.json: name, kind, routes, capabilities with parameters (battery offsets, LED zones + modes, DPI
+   range/stages, polling rates, effect speed tables, key layouts), and per command a confirmation status. Without
+   "confirmed" Squire only does --dry-run, so "show the bytes before the first send" stays enforced for new models.
+   The data must be checked: Swift decodes it strictly (Codable, tests fail on a wrong type); Python gets a
+   stdlib-only checker (required fields, types, ranges, unique PIDs, every capability has its parameters) that the
+   tests and CI run.
+5. **Capabilities = code modules**: battery, led_zones, dpi, polling, sensor, surface, power, kb_lighting, kb_sleep,
+   kb_warning, per_key. Each takes its parameters from the model and holds its reads, parser, write builders,
+   read-back check and allowlist entries. The allowlist of a device = the commands of its capabilities.
+UI: a device page is built from one editor per capability plus a drawing per model / kind with the zones from the
+model; the sidebar lists the devices found (covers the "only connected devices" backlog item).
+A new device then = an entry in devices.json + captures in protocol.json (+ maybe a drawing); code only for a new
+capability.
+Layout: Python package `squirelib/` (transport/, protocol.py, routes.py, capabilities/, registry.py, state.py, cli.py);
+`squire.py` stays the entry point and re-exports, so `import squire`, `squire.py --swiftbar`, the installers and
+tests keep working (installer and nfpm copy the folder too). Decided by the owner 2026-11-26, for as long as the
+Python core lives (until the Rust-or-similar decision). Linux window: linux/settings/ (window.py, editors/, drawings/). Swift: SquireCore split into SquireProtocol,
+SquireDevices (registry + capabilities), SquireTransport (IOKit, CoreBluetooth); App gets Settings/Editors and
+Settings/Drawings.
+Order (decided: in stages, layers first; Rust later on top of the finished shape), each stage with green tests and
+unchanged behaviour: (1) devices.json for today's two devices + checker; code reads PIDs, routes, parameters from it,
+(2) split transport / route / protocol, Python + Linux first, then Swift, (3) capabilities one by one,
+(4) windows on editors, (5) a second model as the proof, ideally another ASUS mouse on the same protocol (a Reddit
+user may test it; the owner will ask once we are there).
 
 ## Direction
 - 0.2.x stays read-only. From 0.3 Squire also configures devices (DPI, LEDs, ...) on **Linux and macOS**,
@@ -186,6 +228,18 @@ On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
   CLI `--set-kb-keys KEY=RRGGBB,...|all=RRGGBB` only; Swift has none.
   Any new command, read or write, must be shown to the owner before it is sent,
   and only once the bytes are known from a source or a capture.
+- **Bluetooth** (owner, 2026-11-26; macOS 2026-11-26, Linux 2026-11-27): paired directly, the devices are `0b05:1b08` (keyboard) and
+  `0b05:1c0f` (mouse) with HID-over-GATT input collections only (no vendor page, so no 12 xx). Squire reads only the
+  standard GATT Battery Level (180F / 2A19) of peripherals macOS already holds connected: never scans, pairs or
+  subscribes. No charging flag or warning level over Bluetooth. The vendor service FFF0 (FFF1 write, FFF2 / FFF4
+  read+notify) is probably the command channel; never send anything there until the bytes are known (capture of
+  Armoury Crate over Bluetooth on Windows). The CBCentralManager (Bluetooth permission prompt) is only created when
+  IOKit lists one of the Bluetooth PIDs. HID values (Omni, cable) win over Bluetooth (`Bluetooth.merge`,
+  `squire.merge_bluetooth`). Linux: BlueZ reads 2A19 itself and exposes it as `org.bluez.Battery1`; squire.py asks
+  bluetoothd once per poll (`busctl --json=short call org.bluez / org.freedesktop.DBus.ObjectManager
+  GetManagedObjects`, stdlib + systemd's busctl, no new dependency), only when a device has no HID value, and maps
+  connected devices by Modalias `usb:v0B05p1B08` / `p1C0F` (squire.BLUETOOTH_PIDS). Nothing is sent to the device.
+  The Bluetooth hidraw node (bus 0005, input collections only) is skipped by the vendor-collections rule.
 - Only open vendor-defined HID collections (usage page >= 0xFF00). Never open the normal
   keyboard/mouse input collections. Linux: a hidraw node is a whole interface, so it is opened only if
   *every* top-level collection in its report descriptor is vendor-defined (Omni iface 3 mixes them: skipped).
@@ -407,6 +461,14 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       charging, --keyboard-settings and --settings read over the cable, same replies as on Windows/macOS
       (protocol.json keyboard_settings.captures_wired, mouse_settings_wired). Write over the cable confirmed on Linux:
       mouse logo LED via the CLI (static green, unsaved, owner saw it, restored; protocol.json mouse_writes.writes)
+- [ ] Bluetooth, branch `bluetooth-battery` (2026-11-26): battery level over BLE (GATT 2A19) in the macOS menu bar,
+      popover ("Bluetooth · level only") and settings sidebar; `squire-probe --bluetooth` reads both devices on the
+      Mac (60 % / 52 %, protocol.json `bluetooth`). App tried by the owner on the Mac (menu bar, popover, settings window shows a Bluetooth page instead of "not found").
+      Linux (2026-11-27, keyboard paired directly, Ubuntu 26.04): squire.read_bluetooth() reads BlueZ's Battery1 via
+      busctl (protocol.json `bluetooth.bluez_linux`); CLI, --json, --list, tray ("Bluetooth · level only, no charging
+      state") and the settings window (sidebar level, Bluetooth page + banner instead of "not found") show 58 % from
+      the repo. Mouse paired directly too (same day): Modalias 1c0f, BlueZ 51 %, the Omni answers ff aa, so Squire
+      shows Bluetooth for both. Later: settings over FFF0 once captured.
 - [ ] More devices: collect `--list` / `--debug` / `squire-probe` output from users
 - [x] Per-key colours (Falchion RX LP), branch `keyboard-direct`, PR #11 merged, released in 0.4.1 (2026-11-25): `c0 81` works via the Omni and over
       the cable (single keys, all keys; see Rules). Lost at off/on, cannot be saved (50 55 tested), blocks profile
