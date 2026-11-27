@@ -577,9 +577,9 @@ def can_edit_kb_sleep(k: "squire.KeyboardSettings") -> bool:
     """Only a sleep code Squire can write back (None means "never" only for ff, not for an unknown code)."""
     raw = k.raw.get("battery")
     try:
-        return bytes.fromhex(raw)[6] in squire.POWER_OFF_CODES.values()
+        return bytes.fromhex(raw)[6] in squire.KEYBOARD_SLEEP_CODES.values()
     except (TypeError, ValueError, IndexError):
-        return k.sleep_minutes in squire.POWER_OFF_CODES
+        return k.sleep_minutes in squire.KEYBOARD_SLEEP_CODES
 
 
 def can_edit_kb_warning(k: "squire.KeyboardSettings") -> bool:

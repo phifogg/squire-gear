@@ -46,6 +46,16 @@ contents:
   - src: squire.py
     dst: /usr/share/squire-gear/squire.py
     file_info: {mode: 0644}
+  # squire.py needs squirelib/ and devices.json next to it (device models)
+  - src: devices.json
+    dst: /usr/share/squire-gear/devices.json
+    file_info: {mode: 0644}
+  - src: squirelib/__init__.py
+    dst: /usr/share/squire-gear/squirelib/__init__.py
+    file_info: {mode: 0644}
+  - src: squirelib/registry.py
+    dst: /usr/share/squire-gear/squirelib/registry.py
+    file_info: {mode: 0644}
   - src: linux/squire_tray.py
     dst: /usr/share/squire-gear/squire_tray.py
     file_info: {mode: 0644}
