@@ -92,13 +92,14 @@ gradients/directions, layouts, key ids, sleep/warning) from it; all names stay a
 mouse settings reply offsets (parse_mouse_settings), packet builders and byte checks (stage 3). Swift: DeviceModels.swift
 decodes strictly and tests compare every SquireCore table to the file; the app does not load it at runtime yet.
 Where we are (2026-11-27): stage 1 committed (da92d02) and pushed, PR #13 open, CI + release build green. Owner's
-decision: merge each stage via PR (no release until the whole refactoring is done). NEXT: test PR #13 on Linux
-before merging: download the `linux` artifact of run 45986714706 (`gh run download 45986714706 --repo
+decision: merge each stage via PR (no release until the whole refactoring is done). Linux test DONE (2026-11-27):
+local .deb of c325c95 installed by the owner on Ubuntu 26.04, tray + settings window work. NEXT: merge #13, then
+stage 2. (Original test plan, kept for later stages: download the `linux` artifact of run 45986714706 (`gh run download 45986714706 --repo
 phifogg/squire-gear --name linux --dir ~/Downloads/squire-pr13`), quit an install.sh tray first, `sudo apt install
 ./squire-gear_*_all.deb`, check /usr/share/squire-gear has devices.json + squirelib/{__init__,registry}.py, run
 squire --version / --list / --debug / --settings / --keyboard-settings (read-only), tray + Settings… window with
 both devices; optionally the wired mouse in --debug (1c0c iface 0). Afterwards `sudo apt remove squire-gear` if the
-install.sh copy should stay. Then merge #13, then stage 2 (Linux/Python first) on a new branch from main.
+install.sh copy should stay.) Then merge #13, then stage 2 (Linux/Python first) on a new branch from main.
 Stage 1b (Swift runtime loading) postponed by the owner, Linux first: copy devices.json to
 macos/Sources/SquireCore/Resources/ as a SwiftPM resource (Bundle.module; SwiftPM cannot reach ../devices.json, a
 symlink is unreliable), a test that the copy equals the root file, then build Target.all / Allowlist / Command tables
