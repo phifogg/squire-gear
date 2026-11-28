@@ -218,3 +218,21 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.KBLighting {
+    /// Every 51 2c chunk, read back from 12 00: only the effect is readable (not colour or brightness), and the
+    /// profile must not have changed in between.
+    public func change(_ light: KeyboardLight) -> Change<KeyboardSettings> {
+        Change(reads: ["profile"],
+               build: { _ in
+                   let chunks = try chunks(light)
+                   // a chunk is echoed as command + effect + chunk index: a late echo of the previous one is not taken for it
+                   let echo = chunks.count > 1 ? 4 : 2
+                   return chunks.map { writeCommand($0, echoLength: echo) }
+               },
+               matches: { k, before in
+                   k.lightMode == Self.effectRead(light.effect) && k.profile != nil
+                       && (before.map { $0.profile == k.profile } ?? true)
+               })
+    }
+}

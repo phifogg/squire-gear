@@ -50,3 +50,25 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.LEDZones {
+    /// The read of a zone (devices.json zones[].read: led_logo, ...).
+    public func read(_ zone: LEDZone) -> String {
+        zoneReads.first { $0.value == zone.rawValue }?.key ?? "led_\(zone.rawValue)"
+    }
+
+    /// Does the zone as read show what was asked for? Colour only counts for one-colour effects, brightness not at
+    /// all when off (same as squire LedZones.matches).
+    public static func matches(_ wanted: LEDState, _ actual: LEDState?) -> Bool {
+        guard let actual, actual.mode == wanted.mode else { return false }
+        if wanted.mode == .off { return true }
+        if actual.brightness != wanted.brightness { return false }
+        return ![LEDMode.static, .breathing, .react].contains(wanted.mode) || actual.color == wanted.color
+    }
+
+    /// One zone, read back from its 12 03 read.
+    public func change(_ zone: LEDZone, _ led: LEDState) -> Change<MouseSettings> {
+        Change(reads: [read(zone)], build: { _ in [writeCommand(try command(zone, led))] },
+               matches: { s, _ in Self.matches(led, s.leds[zone]) }, apply: { $0.leds[zone] = led })
+    }
+}

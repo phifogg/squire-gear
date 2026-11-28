@@ -133,3 +133,24 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.KBSleep {
+    /// Read back from 12 01; compares the code itself where the raw reply is known (an unknown code is not "never").
+    public func change(_ minutes: Int?) -> Change<KeyboardSettings> {
+        Change(reads: [read], build: { _ in [writeCommand(try command(minutes))] },
+               matches: { k, _ in
+                   if let raw = k.raw["battery"].map({ $0.split(separator: " ").compactMap { UInt8($0, radix: 16) } }),
+                      raw.count > offset {
+                       return raw[offset] == codes[minutes]
+                   }
+                   return k.sleepMinutes == minutes
+               })
+    }
+}
+
+extension Capabilities.KBWarning {
+    public func change(_ percent: Int) -> Change<KeyboardSettings> {
+        Change(reads: [read], build: { _ in [writeCommand(try command(percent))] },
+               matches: { k, _ in k.lowWarning == percent })
+    }
+}

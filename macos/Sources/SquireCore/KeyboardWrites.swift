@@ -86,10 +86,7 @@ public enum KeyboardLighting {
 
     /// Every 51 2c chunk, in the order they are sent, each checked against the keyboard's allowlist.
     public static func commands(_ light: KeyboardLight) throws -> [Command] {
-        let chunks = try cap.chunks(light)
-        // a chunk is echoed as command + effect + chunk index: a late echo of the previous one is not taken for it
-        let echo = chunks.count > 1 ? 4 : 2
-        return try chunks.map { try KeyboardCapabilities.bundled.checked($0, echoLength: echo) }
+        try KeyboardCapabilities.bundled.commands(cap.change(light))
     }
 }
 
@@ -120,50 +117,29 @@ public enum KeyboardChange: Equatable, Hashable, Sendable {
     /// Per-key colours {key id: "#rrggbb"} (KeyboardKeys.swift): never saved, the keyboard cannot store them.
     case keys([UInt8: String])
 
-    public func commands() throws -> [Command] {
+    /// The capability's description of this write: commands, reads, read-back check (Capabilities/).
+    public var change: Change<KeyboardSettings> {
+        let k = KeyboardCapabilities.bundled
         switch self {
-        case .sleep(let minutes): return [try .keyboardSleep(minutes)]
-        case .warning(let percent): return [try .keyboardWarning(percent)]
-        case .light(let light): return try KeyboardLighting.commands(light)
-        case .keys(let keys): return try KeyboardDirect.commands(KeyboardDirect.colours(keys))
+        case .sleep(let minutes): return k.sleep.change(minutes)
+        case .warning(let percent): return k.warning.change(percent)
+        case .light(let light): return k.lighting.change(light)
+        case .keys(let keys): return k.perKey.change(keys)
         }
     }
 
+    public func commands() throws -> [Command] { try KeyboardCapabilities.bundled.commands(change) }
+
     /// Whether Apply saves it (50 55). Per-key colours are not: 50 55 stores nothing (tested 2026-11-25).
-    public var isSaved: Bool {
-        if case .keys = self { return false }
-        return true
-    }
+    public var isSaved: Bool { change.isSaved }
 
     /// The read that shows the value: nil = the battery query 12 01, else 12 00 (effect only: colour and brightness
     /// cannot be read from this keyboard; per-key colours not at all, only that the profile stayed).
-    public var readBack: KeyboardQuery? {
-        switch self {
-        case .light, .keys: return .profile
-        default: return nil
-        }
-    }
+    public var readBack: KeyboardQuery? { change.reads.first.flatMap { KeyboardQuery(rawValue: $0) } }
 
     /// Does the keyboard (as read) show this value? For lighting only the effect is readable, and the profile must
     /// not have changed in between.
-    public func matches(_ k: KeyboardSettings, before: KeyboardSettings? = nil) -> Bool {
-        switch self {
-        case .sleep(let minutes):
-            // compare the code itself where the raw reply is known: an unknown code is not "never"
-            if let raw = k.raw["battery"].map({ $0.split(separator: " ").compactMap { UInt8($0, radix: 16) } }),
-               raw.count > 6 {
-                return raw[6] == Command.powerOffCodes[minutes]
-            }
-            return k.sleepMinutes == minutes
-        case .warning(let percent): return k.lowWarning == percent
-        case .light(let light):
-            return k.lightMode == KeyboardLighting.effectRead(light.effect) && k.profile != nil
-                && (before.map { $0.profile == k.profile } ?? true)
-        case .keys:
-            // nothing to read back: only that the keyboard still answers on the same profile (squire.py does the same)
-            return k.profile != nil && (before.map { $0.profile == k.profile } ?? true)
-        }
-    }
+    public func matches(_ k: KeyboardSettings, before: KeyboardSettings? = nil) -> Bool { change.matches(k, before: before) }
 
     public var title: String {
         switch self {

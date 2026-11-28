@@ -23,6 +23,51 @@ public protocol MouseCapability: Capability {
     func parse(_ read: String, _ p: [UInt8], into s: inout MouseSettings)
 }
 
+/// One write as its capability describes it (squirelib Change). HIDReader runs it in one device session: read
+/// `reads` (before, if `needsCurrent`), build the commands from that read, write, read `reads` again, and `matches`
+/// judges the read-back. Save only when every change of an Apply matched (and only if `isSaved`).
+public struct Change<Settings: Sendable>: Sendable {
+    /// devices.json read names that show the value; "battery" = the battery query (12 07 / 12 01).
+    public let reads: [String]
+    /// The commands depend on the value read right before (lift-off keeps the surface it reads, DPI the colour).
+    public let needsCurrent: Bool
+    /// Apply's save (50 03 / 50 55) counts for it; per-key colours cannot be saved.
+    public let isSaved: Bool
+    let build: @Sendable (Settings?) throws -> [Command]
+    let check: @Sendable (_ after: Settings, _ before: Settings?) -> Bool
+    let apply: @Sendable (inout Settings) -> Void
+
+    init(reads: [String], needsCurrent: Bool = false, isSaved: Bool = true,
+         build: @escaping @Sendable (Settings?) throws -> [Command],
+         matches: @escaping @Sendable (_ after: Settings, _ before: Settings?) -> Bool,
+         apply: @escaping @Sendable (inout Settings) -> Void = { _ in }) {
+        self.reads = reads
+        self.needsCurrent = needsCurrent
+        self.isSaved = isSaved
+        self.build = build
+        self.check = matches
+        self.apply = apply
+    }
+
+    /// The commands, from the value read just before (`current`); not yet checked against the allowlist.
+    public func commands(current: Settings?) throws -> [Command] { try build(current) }
+
+    /// Does the device (as read back) show the value? `before` = the read made before the write.
+    public func matches(_ after: Settings, before: Settings? = nil) -> Bool { check(after, before) }
+
+    /// The settings as they are once the change is written (for planning a sequence of writes).
+    public func applied(to settings: Settings) -> Settings {
+        var s = settings
+        apply(&s)
+        return s
+    }
+}
+
+/// A write command of a capability (echoed on its first `echoLength` bytes unless `reply` is given).
+func writeCommand(_ bytes: [UInt8], echoLength: Int = 2, reply: [UInt8]? = nil) -> Command {
+    Command(bytes, isWrite: true, echoLength: echoLength, reply: reply)
+}
+
 /// A devices.json entry that a capability needs is missing or does not fit.
 public struct ModelError: Error, CustomStringConvertible {
     public let description: String

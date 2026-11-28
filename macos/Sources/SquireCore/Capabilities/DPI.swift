@@ -88,3 +88,58 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.DPI {
+    /// One stage (1-based), X and Y alike, plus its colour; read back from 12 04 02 + 12 04 03. A stage read with
+    /// separate X/Y values is never flattened.
+    public func change(stage: Int, _ value: DPIStage) -> Change<MouseSettings> {
+        Change(reads: ["dpi_xy", "dpi_colors"], needsCurrent: true,
+               build: { current in
+                   if let current {
+                       let i = stage - 1
+                       guard i < current.dpiXY.count else { throw CommandError.notAllowed("DPI stage \(stage) not read") }
+                       guard current.dpiXY[i][0] == current.dpiXY[i][1] else {
+                           throw CommandError.notAllowed("stage \(stage) has X \(current.dpiXY[i][0]) / Y \(current.dpiXY[i][1])")
+                       }
+                   }
+                   return [writeCommand(try command(stage: stage, value))]
+               },
+               matches: { s, _ in
+                   let i = stage - 1
+                   return i < s.dpiXY.count && i < s.dpiColors.count && s.dpiXY[i] == [value.dpi, value.dpi]
+                       && s.dpiColors[i] == value.color
+               },
+               apply: { p in
+                   let i = stage - 1
+                   if i < p.dpiXY.count { p.dpiXY[i] = [value.dpi, value.dpi] }
+                   if i < p.dpiColors.count { p.dpiColors[i] = value.color }
+                   if i < p.dpi.count { p.dpi[i] = value.dpi }
+               })
+    }
+
+    /// The stage in use, read back from 12 00. Only a stage the DPI button cycles through; the count must stay.
+    public func activeStageChange(_ stage: Int) -> Change<MouseSettings> {
+        Change(reads: ["profile"], needsCurrent: true,
+               build: { current in
+                   guard let count = current?.dpiStageCount, stage <= count else {
+                       throw CommandError.notAllowed("stage \(stage) is not on the DPI button")
+                   }
+                   return [writeCommand(try activeStageCommand(stage))]
+               },
+               matches: { s, before in s.dpiStage == stage && (before.map { $0.dpiStageCount == s.dpiStageCount } ?? true) },
+               apply: { $0.dpiStage = stage })
+    }
+
+    /// Stages on the DPI button, read back from 12 00. Never fewer than the active stage; the active stage must stay.
+    public func stageCountChange(_ count: Int) -> Change<MouseSettings> {
+        Change(reads: ["profile"], needsCurrent: true,
+               build: { current in
+                   guard let active = current?.dpiStage, count >= active else {
+                       throw CommandError.notAllowed("\(count) stages: the active stage is beyond them")
+                   }
+                   return [writeCommand(try stageCountCommand(count))]
+               },
+               matches: { s, before in s.dpiStageCount == count && (before.map { $0.dpiStage == s.dpiStage } ?? true) },
+               apply: { $0.dpiStageCount = count })
+    }
+}

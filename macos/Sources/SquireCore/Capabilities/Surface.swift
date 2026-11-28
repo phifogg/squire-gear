@@ -76,3 +76,36 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.Surface {
+    /// Lift-off with the surface from the 12 06 read made right before; the read-back must show the new lift-off and,
+    /// with `before`, the same surface + parameters.
+    public func liftoffChange(_ value: String) -> Change<MouseSettings> {
+        Change(reads: [read], needsCurrent: true,
+               build: { current in
+                   [writeCommand(try liftoffCommand(value, surfaceID: current?.surfaceID, surfaceParams: current?.surfaceParams))]
+               },
+               matches: { s, before in
+                   s.liftoff == value
+                       && (before.map { $0.surfaceID == s.surfaceID && $0.surfaceParams == s.surfaceParams } ?? true)
+               },
+               apply: { $0.liftoff = value })
+    }
+
+    /// A preset surface (or none), keeping the lift-off as read. Never replaces a surface Squire does not know: it may
+    /// be a calibration. The read-back must show the surface with AC's parameters and the unchanged lift-off.
+    public func surfaceChange(_ id: UInt8) -> Change<MouseSettings> {
+        Change(reads: [read], needsCurrent: true,
+               build: { current in
+                   guard let current, let now = current.surfaceID, surfaceParams[now] != nil, let liftoff = current.liftoff else {
+                       throw CommandError.notAllowed("surface \(name(current?.surfaceID) ?? "not read"): not replaced")
+                   }
+                   return [writeCommand(try surfaceCommand(id, liftoff: liftoff))]
+               },
+               matches: { s, before in
+                   s.surfaceID == id && s.surfaceParams == surfaceParams[id] ?? nil
+                       && (before.map { $0.liftoff == s.liftoff } ?? true)
+               },
+               apply: { $0.surfaceID = id; $0.surfaceParams = surfaceParams[id] ?? nil })
+    }
+}

@@ -25,8 +25,11 @@ public enum KeyboardDirect {
 
     /// c0 81 <n> 00 + n x <id> <r g b>, at most 14 keys per packet, in key id order.
     public static func commands(_ colours: [UInt8: RGB]) throws -> [Command] {
-        try cap.packets(colours).map {
-            try KeyboardCapabilities.bundled.checked($0, echoLength: 4, reply: cap.ack + [$0[2], 0x00])
+        try cap.commands(colours).map { c in
+            guard KeyboardCapabilities.bundled.device.isAllowedWrite(c.bytes) else {
+                throw CommandError.notAllowed(ReplyParser.hex(c.bytes))
+            }
+            return c
         }
     }
 

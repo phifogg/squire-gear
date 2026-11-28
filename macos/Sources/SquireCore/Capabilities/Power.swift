@@ -47,3 +47,12 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.Power {
+    /// Power-off and warning together, read back from the battery reply; only counts while the mouse answers.
+    public func change(_ power: PowerSetting) -> Change<MouseSettings> {
+        Change(reads: [read], build: { _ in [writeCommand(try command(power))] },
+               matches: { s, _ in s.lowWarning == power.lowWarning && s.powerOffMinutes == power.offMinutes && s.status == .ok },
+               apply: { $0.powerOffMinutes = power.offMinutes; $0.lowWarning = power.lowWarning })
+    }
+}

@@ -42,6 +42,14 @@ public struct KeyboardCapabilities: Sendable {
         return Command(bytes, isWrite: true, echoLength: echoLength, reply: reply)
     }
 
+    /// The change's commands, each checked against the whole allowlist.
+    public func commands(_ change: Change<KeyboardSettings>, current: KeyboardSettings? = nil) throws -> [Command] {
+        try change.commands(current: current).map { c in
+            guard device.isAllowedWrite(c.bytes) else { throw CommandError.notAllowed(ReplyParser.hex(c.bytes)) }
+            return c
+        }
+    }
+
     public func parse(_ read: String, _ p: [UInt8], into k: inout KeyboardSettings) {
         for parser in parsers { parser.parse(read, p, into: &k) }
     }

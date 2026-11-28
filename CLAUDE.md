@@ -168,9 +168,19 @@ prefix + the owner by longest prefix (51 31 04 polling, 51 31 06/0b sensor, 51 3
 Every old name stays as a forward (Command.setLED/..., Command tables, KeyboardLighting.*, KeyboardDirect.*,
 KeyboardSettings.lightModes/layouts, KeyboardLayout.isoIDs/ansiIDs, SettingsQuery/KeyboardQuery.command from the
 model); MouseSettings/KeyboardSettings.apply(_:_:capabilities:) dispatch to the parsers; the offset constants are gone.
-Packet layouts per effect group (single colour, options, gradient, quicksand) stay code in KBLighting. Not moved:
-SettingChange / KeyboardChange read-back logic (Python has Change per capability; next step if wanted), battery
-parsing (ReplyParser). Checked: swift test 125 tests in 22 suites (new: shifted offsets +1 for mouse and keyboard
+Packet layouts per effect group (single colour, options, gradient, quicksand) stay code in KBLighting. Battery
+parsing stays in ReplyParser.
+Read-back checks (same day, committed): Change<Settings> (Capability.swift) = squirelib Change: reads (read
+names, "battery" = 12 07 / 12 01), needsCurrent, isSaved, build(current) -> [Command], matches(after, before),
+applied(to:). Each capability makes its own (LEDZones.change, Power.change, Sensor.snapping/tuningChange,
+Polling.change, Surface.liftoff/surfaceChange incl. the "unknown surface is not replaced" guard, DPI.change /
+activeStageChange / stageCountChange incl. the X != Y and count guards, KBSleep/KBWarning/KBLighting/PerKey.change;
+PerKey isSaved false). Mouse/KeyboardCapabilities.commands(change, current:) checks every built command against the
+allowlist. SettingChange / KeyboardChange stay the values the window and HIDReader use and only dispatch
+(`.change`); LEDState.matches = Capabilities.LEDZones.matches. Test: every change reads only confirmed reads of its
+device. Checked: swift test 127, behaviour snapshot (now also every SettingChange / KeyboardChange judged against 20+
+states with every before, commands, reads, isSaved) identical to 34c5971, Release app build + --demo. Not checked on
+the device for writes yet (reads via the Omni unchanged; an Apply in the app is the real test of this path). Checked: swift test 125 tests in 22 suites (new: shifted offsets +1 for mouse and keyboard
 parse a reply shifted by one byte to the same settings; a model without a capability is refused); a behaviour
 snapshot (throwaway test, SWIFT_DETERMINISTIC_HASHING=1: allowlist decisions for 846 seed writes x every single-byte
 mutation on both devices, every mouse/keyboard builder over input grids incl. errors, packets, every protocol.json

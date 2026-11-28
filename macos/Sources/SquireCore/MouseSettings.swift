@@ -116,13 +116,8 @@ public struct LEDState: Hashable, Sendable {
     }
 
     /// Does the device state `actual` show what was asked for? Colour only counts for one-colour effects,
-    /// brightness not at all when off (same as squire.led_matches).
-    public func matches(_ actual: LEDState?) -> Bool {
-        guard let actual, actual.mode == mode else { return false }
-        if mode == .off { return true }
-        if actual.brightness != brightness { return false }
-        return ![LEDMode.static, .breathing, .react].contains(mode) || actual.color == color
-    }
+    /// brightness not at all when off (Capabilities.LEDZones.matches).
+    public func matches(_ actual: LEDState?) -> Bool { Capabilities.LEDZones.matches(self, actual) }
 }
 
 public struct MouseSettings: Equatable, Sendable {
@@ -199,115 +194,42 @@ public enum SettingChange: Equatable, Hashable, Sendable {
     case activeStage(Int)       // 1-based
     case stageCount(Int)
 
+    /// The capability's description of this write: commands, reads, read-back check (Capabilities/).
+    public var change: Change<MouseSettings> {
+        let m = MouseCapabilities.bundled
+        switch self {
+        case .led(let zone, let led): return m.ledZones.change(zone, led)
+        case .power(let power): return m.power.change(power)
+        case .angleSnapping(let on): return m.sensor.snappingChange(on)
+        case .angleTuning(let degrees): return m.sensor.tuningChange(degrees)
+        case .liftoff(let value): return m.surface.liftoffChange(value)
+        case .surface(let id): return m.surface.surfaceChange(id)
+        case .polling(let hz): return m.polling.change(hz)
+        case .dpi(let stage, let value): return m.dpi.change(stage: stage, value)
+        case .activeStage(let stage): return m.dpi.activeStageChange(stage)
+        case .stageCount(let count): return m.dpi.stageCountChange(count)
+        }
+    }
+
     /// The bytes. Lift-off needs the surface from `current` (the 12 06 read right before the write).
     public func command(current: MouseSettings? = nil) throws -> Command {
-        switch self {
-        case .led(let zone, let led): return try .setLED(zone, led)
-        case .power(let power): return try .setPower(power)
-        case .angleSnapping(let on): return try .setAngleSnapping(on)
-        case .angleTuning(let degrees): return try .setAngleTuning(degrees)
-        case .liftoff(let value):
-            return try .setLiftoff(value, surfaceID: current?.surfaceID, surfaceParams: current?.surfaceParams)
-        case .surface(let id):
-            // never replace a surface Squire does not know: it may be a calibration
-            guard let current, let now = current.surfaceID, Command.surfaceParams[now] != nil, let liftoff = current.liftoff else {
-                throw CommandError.notAllowed("surface \(Command.surfaceName(current?.surfaceID) ?? "not read"): not replaced")
-            }
-            return try .setSurface(id, liftoff: liftoff)
-        case .polling(let hz): return try .setPolling(hz)
-        case .dpi(let stage, let value):
-            if let current {   // a stage with separate X/Y is never flattened
-                let i = stage - 1
-                guard i < current.dpiXY.count else { throw CommandError.notAllowed("DPI stage \(stage) not read") }
-                guard current.dpiXY[i][0] == current.dpiXY[i][1] else {
-                    throw CommandError.notAllowed("stage \(stage) has X \(current.dpiXY[i][0]) / Y \(current.dpiXY[i][1])")
-                }
-            }
-            return try .setDPI(stage: stage, value)
-        case .activeStage(let stage):
-            guard let count = current?.dpiStageCount, stage <= count else {
-                throw CommandError.notAllowed("stage \(stage) is not on the DPI button")
-            }
-            return try .setActiveStage(stage)
-        case .stageCount(let count):
-            guard let active = current?.dpiStage, count >= active else {
-                throw CommandError.notAllowed("\(count) stages: the active stage is beyond them")
-            }
-            return try .setStageCount(count)
-        }
+        try MouseCapabilities.bundled.commands(change, current: current)[0]
     }
 
     /// The settings as they are once this change is written (for planning a sequence of writes).
-    public func applied(to s: MouseSettings) -> MouseSettings {
-        var p = s
-        switch self {
-        case .led(let zone, let led): p.leds[zone] = led
-        case .power(let power): p.powerOffMinutes = power.offMinutes; p.lowWarning = power.lowWarning
-        case .angleSnapping(let on): p.angleSnapping = on
-        case .angleTuning(let degrees): p.angleTuning = degrees
-        case .liftoff(let value): p.liftoff = value
-        case .surface(let id): p.surfaceID = id; p.surfaceParams = Command.surfaceParams[id] ?? nil
-        case .polling(let hz): p.pollingHz = hz
-        case .dpi(let stage, let value):
-            let i = stage - 1
-            if i < p.dpiXY.count { p.dpiXY[i] = [value.dpi, value.dpi] }
-            if i < p.dpiColors.count { p.dpiColors[i] = value.color }
-            if i < p.dpi.count { p.dpi[i] = value.dpi }
-        case .activeStage(let stage): p.dpiStage = stage
-        case .stageCount(let count): p.dpiStageCount = count
-        }
-        return p
-    }
+    public func applied(to s: MouseSettings) -> MouseSettings { change.applied(to: s) }
 
     /// Built from the value read just before the write (not from the window's older read).
-    public var needsCurrent: Bool {
-        switch self { case .liftoff, .surface, .dpi, .activeStage, .stageCount: return true; default: return false }
-    }
-
-    /// The read that shows the value: nil = the battery query 12 07.
-    public var readBack: SettingsQuery? {
-        switch self {
-        case .led(let zone, _): return .led(zone)
-        case .power: return nil
-        case .angleSnapping, .angleTuning: return .settings
-        case .liftoff, .surface: return .liftoff
-        case .polling: return .settings
-        case .dpi: return .dpiXY
-        case .activeStage, .stageCount: return .profile
-        }
-    }
+    public var needsCurrent: Bool { change.needsCurrent }
 
     /// Every read that shows the value (nil = 12 07). DPI needs X/Y and the stage colours.
-    public var reads: [SettingsQuery?] {
-        if case .dpi = self { return [.dpiXY, .dpiColors] }
-        return [readBack]
-    }
+    public var reads: [SettingsQuery?] { change.reads.map { SettingsQuery(rawValue: $0) } }
+
+    /// The read that shows the value: nil = the battery query 12 07.
+    public var readBack: SettingsQuery? { reads.first ?? nil }
 
     /// Does the mouse (as read) already have this value? With `before`, lift-off also needs the surface unchanged.
-    public func matches(_ s: MouseSettings, before: MouseSettings? = nil) -> Bool {
-        switch self {
-        case .led(let zone, let led): return led.matches(s.leds[zone])
-        case .power(let power):
-            return s.lowWarning == power.lowWarning && s.powerOffMinutes == power.offMinutes && s.status == .ok
-        case .angleSnapping(let on): return s.angleSnapping == on
-        case .angleTuning(let degrees): return s.angleTuning == degrees
-        case .liftoff(let value):
-            return s.liftoff == value
-                && (before.map { $0.surfaceID == s.surfaceID && $0.surfaceParams == s.surfaceParams } ?? true)
-        case .surface(let id):
-            return s.surfaceID == id && s.surfaceParams == Command.surfaceParams[id] ?? nil
-                && (before.map { $0.liftoff == s.liftoff } ?? true)
-        case .polling(let hz): return s.pollingHz == hz
-        case .dpi(let stage, let value):
-            let i = stage - 1
-            return i < s.dpiXY.count && i < s.dpiColors.count && s.dpiXY[i] == [value.dpi, value.dpi]
-                && s.dpiColors[i] == value.color
-        case .activeStage(let stage):
-            return s.dpiStage == stage && (before.map { $0.dpiStageCount == s.dpiStageCount } ?? true)
-        case .stageCount(let count):
-            return s.dpiStageCount == count && (before.map { $0.dpiStage == s.dpiStage } ?? true)
-        }
-    }
+    public func matches(_ s: MouseSettings, before: MouseSettings? = nil) -> Bool { change.matches(s, before: before) }
 
     /// Short name for messages.
     public var title: String {

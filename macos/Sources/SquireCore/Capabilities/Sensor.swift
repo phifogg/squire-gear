@@ -51,3 +51,15 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.Sensor {
+    public func snappingChange(_ on: Bool) -> Change<MouseSettings> {
+        Change(reads: ["settings"], build: { _ in [writeCommand(snappingCommand(on))] },
+               matches: { s, _ in s.angleSnapping == on }, apply: { $0.angleSnapping = on })
+    }
+
+    public func tuningChange(_ degrees: Int) -> Change<MouseSettings> {
+        Change(reads: ["settings"], build: { _ in [writeCommand(try tuningCommand(degrees))] },
+               matches: { s, _ in s.angleTuning == degrees }, apply: { $0.angleTuning = degrees })
+    }
+}

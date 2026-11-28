@@ -37,3 +37,10 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.Polling {
+    public func change(_ hz: Int) -> Change<MouseSettings> {
+        Change(reads: ["settings"], build: { _ in [writeCommand(try command(hz))] },
+               matches: { s, _ in s.pollingHz == hz }, apply: { $0.pollingHz = hz })
+    }
+}

@@ -45,6 +45,14 @@ public struct MouseCapabilities: Sendable {
         return Command(bytes, isWrite: true, echoLength: 2)
     }
 
+    /// The change's commands from the value read before (`current`), each checked against the whole allowlist.
+    public func commands(_ change: Change<MouseSettings>, current: MouseSettings?) throws -> [Command] {
+        try change.commands(current: current).map { c in
+            guard device.isAllowedWrite(c.bytes) else { throw CommandError.notAllowed(ReplyParser.hex(c.bytes)) }
+            return c
+        }
+    }
+
     /// Fill the settings from one read reply (payload from the echo on); `read` = the devices.json read name.
     public func parse(_ read: String, _ p: [UInt8], into s: inout MouseSettings) {
         for parser in parsers { parser.parse(read, p, into: &s) }

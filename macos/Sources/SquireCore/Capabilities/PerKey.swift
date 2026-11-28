@@ -45,3 +45,18 @@ extension Capabilities {
         }
     }
 }
+
+extension Capabilities.PerKey {
+    /// Packets with the acknowledgement each expects (c0 82 <n> 00).
+    public func commands(_ colours: [UInt8: RGB]) throws -> [Command] {
+        try packets(colours).map { writeCommand($0, echoLength: 4, reply: ack + [$0[2], 0x00]) }
+    }
+
+    /// {key id: "#rrggbb"}; keys that are not valid colours are dropped. Never saved (50 55 stores nothing). Nothing
+    /// to read back: only that the keyboard still answers on the same profile (squire.py does the same).
+    public func change(_ keys: [UInt8: String]) -> Change<KeyboardSettings> {
+        Change(reads: ["profile"], isSaved: false,
+               build: { _ in try commands(keys.compactMapValues { RGB(hex: $0) }) },
+               matches: { k, before in k.profile != nil && (before.map { $0.profile == k.profile } ?? true) })
+    }
+}

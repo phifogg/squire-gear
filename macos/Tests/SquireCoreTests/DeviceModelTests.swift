@@ -187,6 +187,36 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
         }
     }
 
+    /// Every change reads back only confirmed reads of its own device (the battery read included), so no read name
+    /// can silently fall back to the battery query.
+    @Test func changesReadOnlyConfirmedReads() throws {
+        let mouseChanges: [SettingChange] = LEDZone.allCases.map { .led($0, LEDState(mode: .static, brightness: 50, color: RGB(1, 2, 3))) }
+            + [.power(PowerSetting(offMinutes: 3, lowWarning: 20)), .angleSnapping(true), .angleTuning(5), .liftoff("low"),
+               .surface(0x01), .polling(500), .dpi(stage: 1, DPIStage(dpi: 800, color: RGB(0, 0, 0))), .activeStage(1), .stageCount(2)]
+        let mouse = MouseCapabilities.bundled.model
+        for change in mouseChanges {
+            #expect(!change.change.reads.isEmpty)
+            for read in change.change.reads {
+                let bytes = try #require(mouse.command(read)?.bytes?.bytes, "\(change): \(read)")
+                #expect(Allowlist.mouseReads.contains(bytes), "\(change): \(read)")
+            }
+        }
+        #expect(SettingChange.power(PowerSetting(offMinutes: 3, lowWarning: 20)).reads == [nil])
+        #expect(SettingChange.dpi(stage: 1, DPIStage(dpi: 800, color: RGB(0, 0, 0))).reads == [.dpiXY, .dpiColors])
+
+        let keyboardChanges: [KeyboardChange] = [.sleep(3), .warning(20), .light(KeyboardLight(effect: "static")), .keys([1: "#ff0000"])]
+        let keyboard = KeyboardCapabilities.bundled.model
+        for change in keyboardChanges {
+            for read in change.change.reads {
+                let bytes = try #require(keyboard.command(read)?.bytes?.bytes, "\(change): \(read)")
+                #expect(Allowlist.keyboardReads.contains(bytes), "\(change): \(read)")
+            }
+        }
+        #expect(KeyboardChange.keys([1: "#ff0000"]).isSaved == false)
+        #expect(KeyboardChange.light(KeyboardLight(effect: "static")).readBack == .profile)
+        #expect(KeyboardChange.sleep(3).readBack == nil)
+    }
+
     @Test func modelWithoutACapabilityIsRefused() throws {
         let text = try devicesText().replacingOccurrences(of: "\"polling\": {", with: "\"polling_gone\": {")
         let model = try #require(try DeviceModels.decode(Data(text.utf8)).model(.mouse))
