@@ -6,3 +6,6 @@ venv/
 .DS_Store
 CLAUDE.local.md
 linux/dist/
+
+# SwiftPM build cache when Swift tooling runs from the repo root (the package is in macos/)
+.build/
