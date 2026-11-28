@@ -1,0 +1,90 @@
+name: Bug report
+description: Something does not work as expected with a supported device
+title: "<short description of the problem>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! For a device Squire does not support yet, please use the **New device** template instead.
+
+        Please do not attach Wireshark / USBPcap captures (`.pcapng`) here: they can contain your keystrokes.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part of Squire?
+      multiple: true
+      options:
+        - macOS menu bar app
+        - macOS settings window
+        - Linux top bar (tray)
+        - Linux settings window
+        - Command line (squire.py)
+        - SwiftBar plugin
+        - Installer / packages
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: devices
+    attributes:
+      label: Devices and connection
+      description: Tick everything that is connected while the problem happens.
+      options:
+        - label: Keyboard (Falchion RX Low Profile) via the ROG Omni receiver
+        - label: Keyboard via USB cable
+        - label: Keyboard via Bluetooth
+        - label: Mouse (Keris II Origin) via the ROG Omni receiver
+        - label: Mouse via USB cable
+        - label: Mouse via Bluetooth
+
+  - type: input
+    id: os
+    attributes:
+      label: OS version and desktop
+      placeholder: Ubuntu 26.04, GNOME 50 / macOS 26.1
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Squire version and how you installed it
+      description: "`squire --version`, or About in the menu bar / tray menu"
+      placeholder: 0.4.1, .deb from the releases page
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug
+    attributes:
+      label: "`squire --debug` output"
+      description: |
+        Read-only: it queries the battery and prints the raw replies. Run it while the problem happens.
+
+        - Linux: `squire --debug` (tray: `python3 linux/squire_tray.py --debug` from a checkout)
+        - macOS: `"$HOME/Library/Application Support/squire-gear/venv/bin/python" "$HOME/Library/Application Support/squire-gear/squire.py" --debug`,
+          or `swift run squire-probe` from `macos/` in a checkout
+      render: text
+
+  - type: textarea
+    id: list
+    attributes:
+      label: "`squire --list` output"
+      description: Lists the ASUS HID interfaces, sends nothing. Helpful when a device is not found.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, error messages, whether it happened after a firmware update or a change in Armoury Crate, ...
