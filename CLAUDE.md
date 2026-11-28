@@ -179,8 +179,9 @@ PerKey isSaved false). Mouse/KeyboardCapabilities.commands(change, current:) che
 allowlist. SettingChange / KeyboardChange stay the values the window and HIDReader use and only dispatch
 (`.change`); LEDState.matches = Capabilities.LEDZones.matches. Test: every change reads only confirmed reads of its
 device. Checked: swift test 127, behaviour snapshot (now also every SettingChange / KeyboardChange judged against 20+
-states with every before, commands, reads, isSaved) identical to 34c5971, Release app build + --demo. Not checked on
-the device for writes yet (reads via the Omni unchanged; an Apply in the app is the real test of this path). Checked: swift test 125 tests in 22 suites (new: shifted offsets +1 for mouse and keyboard
+states with every before, commands, reads, isSaved) identical to 34c5971, Release app build + --demo. Apply in the app
+confirmed by the owner on both devices via the Omni (2026-11-28); reads via the Omni unchanged.
+Capability split checked: swift test 125 tests in 22 suites (new: shifted offsets +1 for mouse and keyboard
 parse a reply shifted by one byte to the same settings; a model without a capability is refused); a behaviour
 snapshot (throwaway test, SWIFT_DETERMINISTIC_HASHING=1: allowlist decisions for 846 seed writes x every single-byte
 mutation on both devices, every mouse/keyboard builder over input grids incl. errors, packets, every protocol.json
