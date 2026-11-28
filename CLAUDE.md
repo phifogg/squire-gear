@@ -29,7 +29,9 @@ devices.json       device models (ids, routes, commands + confirmation status, c
 squirelib/         registry.py: loads devices.json and checks it (stdlib only; `python3 -m squirelib.registry`);
                    transport/ (hidraw.py, lock.py = device_lock, bluez.py = busctl; load_backend, enumerate_paths,
                    timeouts), protocol.py (frame, echo search, ff aa, exchange), routes.py (Target per route from
-                   devices.json, connection labels, best_reading = Bluetooth merge), state.py (state_dir);
+                   devices.json, connection labels, best_reading = Bluetooth merge), state.py (state_dir),
+                   capabilities/ (one module per devices.json capability: builders, byte check, reply parser,
+                   read-back Change; DeviceCapabilities = a device's allowlist, squire.CAPABILITIES[kind]);
                    squire.py re-exports every moved name. Installers copy squirelib/ (with subpackages, `find`) +
                    devices.json next to squire.py; nfpm.yaml lists each file (a test checks it)
 test_devices.py    checker + model tests (broken files refused, unconfirmed commands never sent, installers copy it)
@@ -88,6 +90,21 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
 ## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 on `refactor-transport` (PR #14), checked on Linux + Mac)
+Stage 3 (branch `refactor-capabilities`, Python, 2026-11-28, not committed yet): squirelib/capabilities/ has one class per
+devices.json capability (battery, led_zones, dpi, polling, sensor, surface, power, kb_profile, kb_layout, kb_lighting,
+kb_sleep, kb_warning, per_key), each built from the Device with its params. A capability holds its write builders
+(asserting the whole device allowlist), `allows()` = the byte check for the writes whose prefix it owns (longest
+prefix wins: 51 31 04 polling, 51 31 06/0b sensor, 51 31 00..03/09/0a dpi), `parse()` for its part of the read
+replies, `reply_expected()` (per_key c0 82) and `change(...)` -> Change(command | chunks | build(before), reads,
+extract, matches) = the read-back check. DeviceCapabilities: is_allowed_write = confirmed prefix + owning capability's
+allows(); save_command from the capability with "save". squire.py keeps every old name (constants and functions point
+into the capabilities), the settings dataclasses, the mouse profile/firmware parse (no capability in devices.json),
+packet(), write_verified() (the session; set_* = _apply(cap.change(...))), key presets and keyboard-lighting.json.
+Checked: 258 tests green; a behaviour snapshot (96k allowlist decisions on protocol.json bytes + mutations, every
+builder incl. error messages, every parse of the captures) is identical to main; on the device (Omni, read-only) --json,
+--settings, --keyboard-settings, --list and three --dry-runs print the same as main; --demo window renders.
+Next in stage 3: move write_verified / the read sessions out of squire.py (squirelib/session.py), mouse profile +
+firmware offsets into devices.json; then the Swift side (SquireCore capability types, CI builds it).
 Stage 2 state (Python, 2026-11-27): transport / route / protocol split into squirelib (see Layout).
 protocol.exchange() writes only what its `build` callable returns; squire.exchange() passes squire.packet() (the
 allowlist), so the allowlist, reply_expected, battery parsing, the per-device read/write sessions and

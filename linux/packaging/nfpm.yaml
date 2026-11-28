@@ -53,6 +53,48 @@ contents:
   - src: squirelib/__init__.py
     dst: /usr/share/squire-gear/squirelib/__init__.py
     file_info: {mode: 0644}
+  - src: squirelib/capabilities/__init__.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/__init__.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/battery.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/battery.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/dpi.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/dpi.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/kb_layout.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/kb_layout.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/kb_lighting.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/kb_lighting.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/kb_profile.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/kb_profile.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/kb_sleep.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/kb_sleep.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/kb_warning.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/kb_warning.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/led_zones.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/led_zones.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/per_key.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/per_key.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/polling.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/polling.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/power.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/power.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/sensor.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/sensor.py
+    file_info: {mode: 0644}
+  - src: squirelib/capabilities/surface.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/surface.py
+    file_info: {mode: 0644}
   - src: squirelib/protocol.py
     dst: /usr/share/squire-gear/squirelib/protocol.py
     file_info: {mode: 0644}

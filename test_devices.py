@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 import squire
-from squirelib import registry
+from squirelib import capabilities, registry
 
 ROOT = Path(__file__).parent
 DATA = json.loads((ROOT / "devices.json").read_text())
@@ -148,14 +148,33 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn(bytes([0x51, 0x31, 0x04]), mouse.confirmed_write_prefixes())
 
     def test_write_must_have_a_confirmed_prefix(self):
-        original = squire.WRITE_PREFIXES["mouse"]
         polling = squire.polling_command(500)
-        try:
-            squire.WRITE_PREFIXES["mouse"] = tuple(p for p in original if p != bytes([0x51, 0x31, 0x04]))
-            self.assertFalse(squire.is_allowed_write(polling, "mouse"))
-        finally:
-            squire.WRITE_PREFIXES["mouse"] = original
         self.assertTrue(squire.is_allowed_write(polling, "mouse"))
+        data = copy.deepcopy(DATA)
+        command(data, "mouse", "polling")["status"] = "unconfirmed"
+        caps = capabilities.for_device(registry.Registry(data).by_kind("mouse"))
+        self.assertFalse(caps.is_allowed_write(polling))      # same bytes, but the model has not confirmed them
+        with self.assertRaises(AssertionError):
+            caps["polling"].command(500)                      # the builder refuses too
+        self.assertTrue(caps.is_allowed_write(squire.angle_snapping_command(True)))   # the rest is unaffected
+
+    def test_allowlist_is_the_capabilities(self):
+        """Every confirmed write prefix belongs to a capability, and every write a builder makes is accepted by
+        exactly the capability that owns its prefix (so a device's allowlist = its capabilities' commands)."""
+        for kind, caps in squire.CAPABILITIES.items():
+            for prefix in caps.confirmed_prefixes:
+                self.assertIsNotNone(caps.owner_of(prefix), f"{kind} {prefix.hex(' ')} has no capability")
+        self.assertIs(squire.CAPABILITIES["mouse"].owner_of(squire.polling_command(500)).name, "polling")
+        self.assertIs(squire.CAPABILITIES["mouse"].owner_of(squire.dpi_command(1, 800, "#ff0000")).name, "dpi")
+        self.assertIs(squire.CAPABILITIES["mouse"].owner_of(squire.angle_tuning_command(5)).name, "sensor")
+        self.assertIsNone(squire.CAPABILITIES["keyboard"].owner_of(squire.polling_command(500)))
+        self.assertEqual(squire.CAPABILITIES["mouse"].save_command, bytes([0x50, 0x03]))
+        self.assertEqual(squire.CAPABILITIES["keyboard"].save_command, bytes([0x50, 0x55]))
+
+    def test_every_capability_in_the_model_has_a_module(self):
+        for device in squire.DEVICES.devices:
+            for name in device.data["capabilities"]:
+                self.assertIn(name, capabilities.CLASSES_BY_NAME, f"{device.id}: {name}")
 
     def test_never_switch_profile_or_debounce(self):
         for kind in ("keyboard", "mouse"):
