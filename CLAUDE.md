@@ -93,8 +93,8 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
-## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 on `refactor-transport` (PR #14), checked on Linux + Mac)
-Stage 3 (branch `refactor-capabilities`, Python, 2026-11-28, pushed): squirelib/capabilities/ has one class per
+## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 merged 2026-11-27 (PR #14), stage 3 + 1b merged 2026-11-28 (PR #15); next: stage 4)
+Stage 3 (Python, 2026-11-28, merged in PR #15): squirelib/capabilities/ has one class per
 devices.json capability (battery, led_zones, dpi, polling, sensor, surface, power, kb_profile, kb_layout, kb_lighting,
 kb_sleep, kb_warning, per_key), each built from the Device with its params. A capability holds its write builders
 (asserting the whole device allowlist), `allows()` = the byte check for the writes whose prefix it owns (longest
@@ -129,8 +129,8 @@ Swift MouseSettings has one named constant per offset, DeviceModels decodes `off
 compares them (the LED speed byte is not parsed in Swift). Test: all offsets +1 in a copy parse a reply shifted by one
 byte to the same settings (every protocol.json mouse_settings capture). Checked: 261 tests, snapshot unchanged, device
 runs identical to main. Still hard-coded: packet layouts in the builders and byte checks (they follow the command
-names in devices.json, not offsets), keyboard battery-reply guards (len 14 / mouse 20). Next: the Swift capability
-split (SquireCore types per capability, like squirelib/capabilities), then stage 4 (windows on editors).
+names in devices.json, not offsets), keyboard battery-reply guards (len 14 / mouse 20). The Swift capability
+split followed (below); next: stage 4 (windows on editors).
 Stage 2 state (Python, 2026-11-27): transport / route / protocol split into squirelib (see Layout).
 protocol.exchange() writes only what its `build` callable returns; Sessions.exchange() passes Sessions.packet() (the
 allowlist) since stage 3. Target got `connection` + `interface` (no more
@@ -144,7 +144,7 @@ the fresh-IOHIDDevice rule; gets finished packets + a `done` check, knows no com
 HIDReader.swift = sessions only (builds every packet via Packet.build). No SwiftPM target split (pragmatic scope).
 Checked on the Mac (2026-11-27, Omni, read-only): swift test (118 tests in 20 suites) green, `squire-probe`, `--settings`,
 `--keyboard-settings` parse as before, `--repeat 60` no crash; the app (menu bar, popover, settings window reads)
-confirmed by the owner. Next: merge #14, then stage 3 (capabilities).
+confirmed by the owner. Merged (PR #14).
 Stage 1 state: devices.json + squirelib/registry.py (checker) exist; squire.py reads VID/PIDs, TARGETS, interfaces,
 report IDs, the read allowlist (confirmed reads only), confirmed write prefixes (is_allowed_write requires one),
 battery offsets (wired mouse now filtered to interface 0 like the others; confirmed on the Mac 2026-11-27:
@@ -157,8 +157,9 @@ Ubuntu 26.04: tray + settings window work). Owner's decision: merge each stage v
 refactoring is done. Test each stage like stage 1: build the .deb (`linux/build-packages.sh deb`, or the PR's `linux`
 artifact), check /usr/share/squire-gear has every new file, run squire --version / --list / --debug / --settings /
 --keyboard-settings (read-only), tray + Settings… window with both devices. Stage 2 (PR #14) checked on Linux and
-the Mac; NEXT: merge #14, then stage 3.
-Swift capability split (branch `refactor-capabilities`, 2026-11-28, on the Mac, committed):
+the Mac; merged. Stage 3 + 1b (PR #15): .deb installed and tested by the owner on Ubuntu 26.04 (CLI, tray,
+Settings… window with both devices), merged 2026-11-28.
+Swift capability split (2026-11-28, on the Mac, merged in PR #15):
 macos/Sources/SquireCore/Capabilities/ mirrors squirelib/capabilities: Capabilities.LEDZones, DPI, Polling, Sensor,
 Surface, Power, Profile (mouse) and KBProfile, KBLayout, KBSleep, KBWarning (KeyboardBasics.swift), KBLighting, PerKey
 (keyboard), each built from the model with its parameters and reply offsets (ModelError when one is missing); each
@@ -188,7 +189,7 @@ mutation on both devices, every mouse/keyboard builder over input grids incl. er
 parse, SettingChange against the demo state) is identical to 7348d64; Release app build, --demo mouse + keyboard pages
 render; on the device via the Omni (read-only): squire-probe, --settings, --keyboard-settings print the same as
 before the split, --repeat 20 no crash. App with the devices not tried yet.
-Stage 1b (Swift runtime loading, branch `refactor-capabilities`, 2026-11-28, done on the Mac, pushed):
+Stage 1b (Swift runtime loading, 2026-11-28, on the Mac, merged in PR #15):
 macos/Sources/SquireCore/Resources/devices.json = a copy of the root file, a SwiftPM resource (Bundle.module; in the
 app it lands in Squire.app/Contents/Resources/Squire_SquireCore.bundle). A Swift test and a Python test
 (test_devices.py) fail when the copy differs: after editing devices.json, `cp devices.json
@@ -682,6 +683,8 @@ git tag -a vX.Y.Z -m "Squire X.Y.Z" && git push origin vX.Y.Z
 ```
 - Release notes template: `.github/release-notes.md` (`{{VERSION}}` is replaced). Re-running the workflow for an
   existing release replaces its files.
+- GitHub deletes a PR's head branch on merge (repo setting "Automatically delete head branches", on since
+  2026-11-28); delete the local branch with `git branch -d` and `git fetch --prune`.
 - PRs that touch the build files run the same builds without a release (files under the run's Artifacts, kept
   7 days). Their file names carry `+pr<N>.<YYYYMMDD>.<sha7>` (BUILD_SUFFIX) so they are not mixed up with releases.
 - `.github/workflows/ci.yml`: Python tests (Linux + macOS) and `swift test` on every push and PR.
