@@ -21,13 +21,13 @@ import json
 import os
 import subprocess
 import sys
-import time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # squirelib/ sits next to squire.py (repo and installs)
-from squirelib import capabilities, protocol, registry, routes, transport  # noqa: E402
+from squirelib import capabilities, registry, routes, session, transport  # noqa: E402
+from squirelib.session import Battery, WriteResult  # noqa: E402,F401
 from squirelib.capabilities import kb_lighting  # noqa: E402
 from squirelib.protocol import Exchange, find_echo, is_error, MAX_READS  # noqa: E402,F401
 from squirelib.routes import CONNECTION_LABELS, Target, connection_label  # noqa: E402,F401
@@ -65,18 +65,6 @@ DEFAULT_LOW_WARNING = 20   # used when a device does not report a plausible warn
 
 
 STATE_FILE = state_dir() / "notified.json"
-
-
-@dataclass
-class Battery:
-    device: str              # "keyboard" | "mouse"
-    name: str
-    connection: str          # "omni" | "wired" | "bluetooth" (level only: no charging flag, no warning level)
-    percent: Optional[int]   # None = not reachable
-    charging: bool = False
-    status: str = "ok"       # ok | asleep | no-response | no-access | error
-    low_warning: Optional[int] = None  # device-configured low-battery warning level in %
-    raw: str = ""
 
 
 # Every HID route (Omni first, then the cable) from devices.json; see squirelib/routes.py.
@@ -220,26 +208,6 @@ def is_allowed_write(command: bytes, device: str) -> bool:
     return caps is not None and caps.is_allowed_write(command)
 
 
-def packet(report_id: Optional[int], command: bytes, length: int, write: bool = False, *, device: str) -> bytes:
-    """The only place packets are built. Reads must be on ALLOWED_READS[device]; writes must pass
-    is_allowed_write(command, device) AND be sent with write=True, so a read path can never send a write.
-    The report ID must be the device's own on the Omni (or None, wired)."""
-    if device not in REPORT_IDS:
-        raise ValueError(f"unknown device {device!r}")
-    if report_id is not None and report_id != REPORT_IDS[device]:
-        raise ValueError(f"report ID {report_id:02x} is not the {device}'s")
-    if write:
-        if not is_allowed_write(command, device):
-            raise ValueError(f"write {command.hex(' ')} is not on the {device} allowlist")
-    elif command not in ALLOWED_READS[device]:
-        raise ValueError(f"command {command.hex(' ')} is not on the {device} allowlist")
-    return protocol.frame(report_id, command, length)
-
-
-def build_packet(target: Target, length: int) -> bytes:
-    return packet(target.report_id, target.query, length, device=target.device)
-
-
 # Battery reply layout per device (devices.json capabilities.battery, capabilities/battery.py).
 BATTERY_LAYOUT = {kind: caps["battery"].params for kind, caps in CAPABILITIES.items()}
 
@@ -251,39 +219,6 @@ def parse(device: str, reply: bytes, base: int) -> tuple[Optional[int], bool]:
 def parse_warning(device: str, reply: bytes, base: int) -> Optional[int]:
     """Low-battery warning level (%) configured on the device, or None if absent/implausible."""
     return CAPABILITIES[device]["battery"].warning(reply, base)
-
-
-def exchange(dev, target: Target, command: bytes, debug: bool = False, match: Optional[int] = None,
-             write: bool = False) -> protocol.Exchange:
-    """Send one allowlisted command and wait for the reply that echoes it (first `match` bytes), or for its
-    acknowledgement where the device answers with other bytes (reply_expected: per-key colours). Every packet is
-    built by packet(), so the allowlist of the target's device applies to each candidate length."""
-    return protocol.exchange(
-        dev, target, command,
-        lambda length: packet(target.report_id, command, length, write=write, device=target.device),
-        expect=reply_expected(command), debug=debug, match=match)
-
-
-def query(dev, target: Target, debug: bool = False) -> Battery:
-    result = Battery(target.device, target.name, target.connection, None)
-    ex = exchange(dev, target, target.query, debug)
-    result.raw = ex.raw
-    if ex.status != "ok":
-        result.status = ex.status
-        return result
-    pct, charging = parse(target.device, ex.reply, ex.base)
-    if pct is None or (pct == 0 and not charging):
-        result.status = "asleep"   # G-Helper treats 0 % + not charging as disconnected
-        return result
-    result.percent, result.charging = pct, charging
-    result.low_warning = parse_warning(target.device, ex.reply, ex.base)
-    return result
-
-
-def enumerate_paths(hid, pid: int) -> list[bytes]:
-    """Unique HID paths for vendor-defined collections of a product, on the vendor interface of its route
-    (devices.json: Omni 2, wired keyboard 1, wired mouse 0)."""
-    return transport.enumerate_paths(hid, VID, pid, HID_INTERFACES.get(pid))
 
 
 def read_all(debug: bool = False, hid=None, bluetooth: Optional[Callable[[bool], list]] = None) -> list[Battery]:
@@ -355,40 +290,6 @@ def read_bluetooth(debug: bool = False) -> list[Battery]:
     return results
 
 
-def _read_all(debug: bool = False, hid=None) -> list[Battery]:
-    hid = hid or load_backend()
-    found: dict[str, Battery] = {}
-    for target in TARGETS:
-        if target.device in found and found[target.device].percent is not None:
-            continue  # already have a value (e.g. via Omni); skip other connection
-        for path in enumerate_paths(hid, target.pid):
-            dev = hid.device()
-            if debug:
-                print(f"[{target.device}] open {path!r} (report id {target.report_id})", file=sys.stderr)
-            try:
-                dev.open_path(path)
-            except (OSError, IOError) as error:
-                if debug:
-                    print(f"[{target.device}] open {path!r} failed: {error}", file=sys.stderr)
-                if isinstance(error, PermissionError) and target.device not in found:
-                    # Linux without the udev rule: say so instead of "not found"
-                    found[target.device] = Battery(target.device, target.name,
-                                                   target.connection, None,
-                                                   status="no-access", raw=str(error))
-                continue
-            try:
-                result = query(dev, target, debug)
-            finally:
-                dev.close()
-            previous = found.get(target.device)
-            if previous is None or (previous.percent is None and result.percent is not None):
-                found[target.device] = result
-            if result.percent is not None:
-                break
-            time.sleep(0.05)
-    return [found[k] for k in ("keyboard", "mouse") if k in found]
-
-
 # --- Mouse settings (read-only) ------------------------------------------------------------------------------
 # Each capability parses its part of the replies (capabilities/*.py: parse); profile + firmware are read here.
 
@@ -444,44 +345,7 @@ def read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
     """Current settings of the Keris II Origin (active profile only; never switches profiles).
 
     Sends only the read commands in MOUSE_SETTINGS_QUERIES plus the battery query."""
-    with device_lock():
-        return _read_mouse_settings(debug, hid)
-
-
-def _read_mouse_settings(debug: bool = False, hid=None) -> MouseSettings:
-    hid = hid or load_backend()
-    result = MouseSettings("ROG Keris II Origin", "", status="not-found")
-    for target in (t for t in TARGETS if t.device == "mouse"):
-        for path in enumerate_paths(hid, target.pid):
-            dev = hid.device()
-            try:
-                dev.open_path(path)
-            except (OSError, IOError) as error:
-                if debug:
-                    print(f"[mouse] open {path!r} failed: {error}", file=sys.stderr)
-                if isinstance(error, PermissionError):
-                    result.status = "no-access"
-                continue
-            try:
-                settings = MouseSettings(target.name, target.connection)
-                battery = exchange(dev, target, target.query, debug)
-                if battery.status != "ok":
-                    result = settings
-                    result.status = battery.status
-                    continue   # asleep here; maybe it is on the other connection
-                settings.raw["battery"] = battery.payload.hex(" ")
-                parse_mouse_settings(settings, "battery", battery.payload)
-                for name, command in MOUSE_SETTINGS_QUERIES.items():
-                    ex = exchange(dev, target, command, debug, match=3 if command[1] == 0x04 else 2)
-                    if ex.status != "ok":
-                        settings.raw[name] = ex.status
-                        continue
-                    settings.raw[name] = ex.payload.hex(" ")
-                    parse_mouse_settings(settings, name, ex.payload)
-                return settings
-            finally:
-                dev.close()
-    return result
+    return SESSIONS.read_settings("mouse", debug, hid)
 
 
 # --- Keyboard settings (Falchion RX Low Profile), read-only ---
@@ -514,40 +378,21 @@ def parse_keyboard_settings(s: KeyboardSettings, name: str, p: bytes) -> None:
 
 
 def read_keyboard_settings(debug: bool = False, hid=None) -> KeyboardSettings:
-    with device_lock():
-        hid = hid or load_backend()
-        result = KeyboardSettings("ROG Falchion RX LP", "", status="not-found")
-        for target in (t for t in TARGETS if t.device == "keyboard"):
-            for path in enumerate_paths(hid, target.pid):
-                dev = hid.device()
-                try:
-                    dev.open_path(path)
-                except (OSError, IOError) as error:
-                    if debug:
-                        print(f"[keyboard] open {path!r} failed: {error}", file=sys.stderr)
-                    if isinstance(error, PermissionError):
-                        result.status = "no-access"
-                    continue
-                try:
-                    settings = KeyboardSettings(target.name, target.connection)
-                    battery = exchange(dev, target, target.query, debug)
-                    if battery.status != "ok":
-                        result = settings
-                        result.status = battery.status
-                        continue   # asleep here; maybe it is on the other connection
-                    settings.raw["battery"] = battery.payload.hex(" ")
-                    parse_keyboard_settings(settings, "battery", battery.payload)
-                    for name, command in KEYBOARD_SETTINGS_QUERIES.items():
-                        ex = exchange(dev, target, command, debug)
-                        if ex.status != "ok":
-                            settings.raw[name] = ex.status
-                            continue
-                        settings.raw[name] = ex.payload.hex(" ")
-                        parse_keyboard_settings(settings, name, ex.payload)
-                    return settings
-                finally:
-                    dev.close()
-        return result
+    return SESSIONS.read_settings("keyboard", debug, hid)
+
+
+# --- Sessions (squirelib/session.py): every packet is built by SESSIONS.packet, the allowlist gate ---
+SESSIONS = session.Sessions(DEVICES, CAPABILITIES, TARGETS, {
+    "mouse": session.SettingsReader(lambda name, connection: MouseSettings(name, connection), parse_mouse_settings),
+    "keyboard": session.SettingsReader(lambda name, connection: KeyboardSettings(name, connection),
+                                       parse_keyboard_settings),
+})
+packet, build_packet, exchange, query = SESSIONS.packet, SESSIONS.build_packet, SESSIONS.exchange, SESSIONS.query
+enumerate_paths, write_verified = SESSIONS.enumerate_paths, SESSIONS.write_verified
+
+
+def _read_all(debug: bool = False, hid=None) -> list[Battery]:
+    return SESSIONS.read_batteries(debug, hid)
 
 
 def print_keyboard_settings(s: KeyboardSettings) -> None:
@@ -562,16 +407,6 @@ def print_keyboard_settings(s: KeyboardSettings) -> None:
     print(f"  Lighting:     {s.light_mode} (the colour cannot be read)")
     sleep = "never sleeps" if s.sleep_minutes is None else f"sleep after {s.sleep_minutes} min"
     print(f"  Power:        {sleep}, low-battery warning {warning_text(s.low_warning)}")
-
-
-@dataclass
-class WriteResult:
-    status: str                    # ok | mismatch | asleep | no-response | no-access | not-found | error | dry-run
-    sent: list = field(default_factory=list)       # hex of every packet sent (or that would be sent)
-    before: Optional[dict] = None  # LED state read before the write
-    after: Optional[dict] = None   # LED state read back after the write
-    saved: bool = False
-    message: str = ""
 
 
 def _apply(change, save: bool, dry_run: bool, debug: bool, hid, device: str = "mouse") -> WriteResult:
@@ -862,116 +697,6 @@ def set_keyboard_warning(percent: int, save: bool = False, dry_run: bool = False
                          hid=None) -> WriteResult:
     """Low-battery warning level (10..50 %, 0 = never), read back from 12 01 [9]."""
     return _apply(_kb_warning.change(percent), save, dry_run, debug, hid, device="keyboard")
-
-
-# What write_verified needs per device: the save command, how a read name maps to a get request, and how its reply
-# is parsed into a fresh settings object.
-WRITE_DEVICES = {
-    "mouse": dict(save=_M.save_command, reads=lambda name: MOUSE_QUERY if name == "battery" else MOUSE_SETTINGS_QUERIES[name],
-                  settings=lambda connection: MouseSettings("", connection), parse=lambda s, n, p: parse_mouse_settings(s, n, p)),
-    "keyboard": dict(save=_K.save_command,
-                     reads=lambda name: KEYBOARD_QUERY if name == "battery" else KEYBOARD_SETTINGS_QUERIES[name],
-                     settings=lambda connection: KeyboardSettings("", connection),
-                     parse=lambda s, n, p: parse_keyboard_settings(s, n, p)),
-}
-
-
-def write_verified(command, read_name, extract, matches, save: bool = False, dry_run: bool = False,
-                   debug: bool = False, hid=None, device: str = "mouse") -> WriteResult:
-    """The one write path: check the device is awake, read the setting, write, read it back, and save (mouse 50 03,
-    keyboard 50 55) only when asked and only if the read-back matched. `extract` picks the value from parsed
-    settings; `matches(after, before)` judges the read-back. `command` is the bytes, or a function of the value read
-    before (lift-off keeps the surface it reads), checked against the device's allowlist once it is built. A list of
-    commands (the keyboard's gradient chunks) is sent in order, each must be echoed, then read back once."""
-    spec = WRITE_DEVICES[device]
-    save_command = spec["save"]
-    build = command if callable(command) else None
-    commands = None if build else ([command] if isinstance(command, (bytes, bytearray)) else list(command))
-    for c in commands or ():
-        if not is_allowed_write(c, device):
-            raise ValueError(f"not on the {device} write allowlist: {c.hex(' ')}")
-    read_names = (read_name,) if isinstance(read_name, str) else tuple(read_name)   # DPI: X/Y and colours
-    if dry_run and build is None:
-        rid, sent = REPORT_IDS[device], []
-        for c in commands:
-            sent += [packet(rid, c, 64, write=True, device=device)[:len(c) + 1].hex(" ") + " … (Omni, 64 bytes)"]
-        for c in commands:
-            sent += [packet(None, c, 65, write=True, device=device)[:len(c) + 1].hex(" ") + " … (wired, 65 bytes)"]
-        if save:
-            sent += [packet(rid, save_command, 64, write=True, device=device)[:3].hex(" ") + " … (Omni, 64 bytes)",
-                     packet(None, save_command, 65, write=True, device=device)[:3].hex(" ") + " … (wired, 65 bytes)"]
-        return WriteResult("dry-run", sent, message="nothing sent")
-
-    def read_value(dev, target):
-        tmp = spec["settings"](target.connection)
-        for name in read_names:
-            read_command = spec["reads"](name)
-            ex = exchange(dev, target, read_command, debug, match=3 if read_command[1] == 0x04 else 2)
-            if ex.status != "ok":
-                return None
-            spec["parse"](tmp, name, ex.payload)
-        return extract(tmp)
-
-    def sent(target, data):
-        return packet(target.report_id, data, target.report_lens[0], write=True, device=device)
-
-    with device_lock():
-        hid = hid or load_backend()
-        result = WriteResult("not-found")
-        for target in (t for t in TARGETS if t.device == device):
-            for path in enumerate_paths(hid, target.pid):
-                dev = hid.device()
-                try:
-                    dev.open_path(path)
-                except (OSError, IOError) as error:
-                    if isinstance(error, PermissionError):
-                        result.status = "no-access"
-                    continue
-                try:
-                    awake = exchange(dev, target, target.query, debug)
-                    if awake.status != "ok":
-                        result = WriteResult(awake.status, message=f"{device} not awake: nothing written")
-                        continue
-                    result = WriteResult("error")
-                    result.before = read_value(dev, target)
-                    if build is not None:
-                        if result.before is None:
-                            result.message = "could not read the current value: nothing written"
-                            return result
-                        command = build(result.before)       # raises ValueError if not allowed
-                        if not is_allowed_write(command, device):
-                            raise ValueError(f"not on the {device} write allowlist: {command.hex(' ')}")
-                        commands = [command]
-                    if dry_run:
-                        result.status, result.message = "dry-run", "nothing sent"
-                        for c in commands:
-                            result.sent.append(sent(target, c)[:len(c) + 1].hex(" ") + f" … ({target.report_lens[0]} bytes)")
-                        if save:
-                            result.sent.append(sent(target, save_command)[:3].hex(" ") + " …")
-                        return result
-                    for c in commands:
-                        # a chunk is matched on command + effect + chunk index, so a late echo of the previous one
-                        # is not taken for it
-                        ex = exchange(dev, target, c, debug, match=4 if len(commands) > 1 else 2, write=True)
-                        result.sent.append(sent(target, c)[:len(c) + 1].hex(" "))
-                        if ex.status == "error" or ((len(commands) > 1 or reply_expected(c)) and ex.status != "ok"):
-                            result.message = ex.raw or f"chunk {c[:4].hex(' ')}: {ex.status}; nothing saved"
-                            return result
-                    result.after = read_value(dev, target)
-                    result.status = "ok" if matches(result.after, result.before) else "mismatch"
-                    if result.status == "ok" and save:
-                        saved = exchange(dev, target, save_command, debug, match=2, write=True)
-                        result.sent.append(sent(target, save_command)[:3].hex(" "))
-                        # saved only when the device echoes the save; ff aa or silence = not confirmed
-                        result.saved = saved.status == "ok"
-                        if not result.saved:
-                            reason = {"asleep": "it answered ff aa", "no-response": "no reply"}.get(
-                                saved.status, saved.raw or saved.status)
-                            result.message = f"written, but the save ({save_command.hex(' ')}) was not confirmed: {reason}"
-                    return result
-                finally:
-                    dev.close()
-        return result
 
 
 def print_mouse_settings(s: MouseSettings) -> None:

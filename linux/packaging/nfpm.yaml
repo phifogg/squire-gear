@@ -104,6 +104,9 @@ contents:
   - src: squirelib/routes.py
     dst: /usr/share/squire-gear/squirelib/routes.py
     file_info: {mode: 0644}
+  - src: squirelib/session.py
+    dst: /usr/share/squire-gear/squirelib/session.py
+    file_info: {mode: 0644}
   - src: squirelib/state.py
     dst: /usr/share/squire-gear/squirelib/state.py
     file_info: {mode: 0644}

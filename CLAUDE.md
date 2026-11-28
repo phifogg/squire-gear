@@ -31,7 +31,9 @@ squirelib/         registry.py: loads devices.json and checks it (stdlib only; `
                    timeouts), protocol.py (frame, echo search, ff aa, exchange), routes.py (Target per route from
                    devices.json, connection labels, best_reading = Bluetooth merge), state.py (state_dir),
                    capabilities/ (one module per devices.json capability: builders, byte check, reply parser,
-                   read-back Change; DeviceCapabilities = a device's allowlist, squire.CAPABILITIES[kind]);
+                   read-back Change; DeviceCapabilities = a device's allowlist, squire.CAPABILITIES[kind]),
+                   session.py (Sessions = squire.SESSIONS: packet() gate, exchange, query, read_batteries,
+                   read_settings(kind), write_verified; Battery, WriteResult);
                    squire.py re-exports every moved name. Installers copy squirelib/ (with subpackages, `find`) +
                    devices.json next to squire.py; nfpm.yaml lists each file (a test checks it)
 test_devices.py    checker + model tests (broken files refused, unconfirmed commands never sent, installers copy it)
@@ -90,7 +92,7 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
 ## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 on `refactor-transport` (PR #14), checked on Linux + Mac)
-Stage 3 (branch `refactor-capabilities`, Python, 2026-11-28, not committed yet): squirelib/capabilities/ has one class per
+Stage 3 (branch `refactor-capabilities`, Python, 2026-11-28, pushed): squirelib/capabilities/ has one class per
 devices.json capability (battery, led_zones, dpi, polling, sensor, surface, power, kb_profile, kb_layout, kb_lighting,
 kb_sleep, kb_warning, per_key), each built from the Device with its params. A capability holds its write builders
 (asserting the whole device allowlist), `allows()` = the byte check for the writes whose prefix it owns (longest
@@ -103,12 +105,17 @@ packet(), write_verified() (the session; set_* = _apply(cap.change(...))), key p
 Checked: 258 tests green; a behaviour snapshot (96k allowlist decisions on protocol.json bytes + mutations, every
 builder incl. error messages, every parse of the captures) is identical to main; on the device (Omni, read-only) --json,
 --settings, --keyboard-settings, --list and three --dry-runs print the same as main; --demo window renders.
-Next in stage 3: move write_verified / the read sessions out of squire.py (squirelib/session.py), mouse profile +
-firmware offsets into devices.json; then the Swift side (SquireCore capability types, CI builds it).
+Step 1 done (same day): squirelib/session.py holds the device sessions (Sessions, built once as squire.SESSIONS from
+the registry, CAPABILITIES, TARGETS and a SettingsReader per kind): packet() (the gate: confirmed reads, capabilities'
+writes with write=True, the device's report ID), exchange, query, read_batteries, one read_settings(kind) for mouse and
+keyboard (was two copies), write_verified. squire.py keeps the old names as bound methods, the settings dataclasses +
+their parse dispatch, Bluetooth, key presets, CLI. Checked: 258 tests, snapshot unchanged, device runs incl. --debug
+traces (same packets, same order) and seven --dry-runs identical to main.
+Next in stage 3: mouse profile + firmware offsets into devices.json (a capability instead of parse_mouse_settings'
+special case); then the Swift side (SquireCore capability types, CI builds it).
 Stage 2 state (Python, 2026-11-27): transport / route / protocol split into squirelib (see Layout).
-protocol.exchange() writes only what its `build` callable returns; squire.exchange() passes squire.packet() (the
-allowlist), so the allowlist, reply_expected, battery parsing, the per-device read/write sessions and
-write_verified stay in squire.py until stage 3 (capabilities). Target got `connection` + `interface` (no more
+protocol.exchange() writes only what its `build` callable returns; Sessions.exchange() passes Sessions.packet() (the
+allowlist) since stage 3. Target got `connection` + `interface` (no more
 `pid == PID_OMNI` checks). Tests: 256 green, incl. a layer test (transport + protocol import without the registry).
 Checked on the device (Omni, read-only): --json, --settings, --keyboard-settings, --list and six --dry-run writes
 print the same as main. Owner installed the .deb on Ubuntu 26.04: tray + window work.
