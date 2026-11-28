@@ -3,8 +3,12 @@ import Foundation
 // devices.json (repo root): the device models, shared with squire.py (squirelib/registry.py checks the file in
 // Python). Decoding is strict on types and formats: a hex value that is not hex, a number given as a string or a
 // missing required field fails, so the Swift tests catch a broken file. Unknown keys are ignored here; the Python
-// checker refuses them for capabilities. For now the tests hold the Swift tables to this file; the app does not
-// read it at runtime yet.
+// checker refuses them for capabilities.
+//
+// At runtime SquireCore reads its bundled copy (Resources/devices.json, Bundle.module; tests keep it equal to the
+// root file): routes (Target), PIDs, Bluetooth ids, report IDs and the allowlist gate (confirmed reads, confirmed
+// write prefixes) come from it. Capability parameters (zones, ranges, effect tables) are still Swift tables that
+// DeviceModelTests holds to the file, until the capability split.
 
 /// A byte written as two hex digits ("0f").
 public struct HexByte: Codable, Hashable, Sendable {
@@ -81,6 +85,61 @@ public struct DeviceModels: Codable, Sendable {
         return found.count == 1 ? found[0] : nil
     }
 
+    /// The copy bundled with SquireCore, decoded once. The tests decode the same file, so a broken copy fails
+    /// `swift test` long before it could reach the app; here it stops with the decoding error.
+    /// Where the bundled copy lives (nil only for a broken build).
+    public static var bundledURL: URL? { Bundle.module.url(forResource: "devices", withExtension: "json") }
+
+    public static let bundled: DeviceModels = {
+        guard let url = bundledURL else { fatalError("devices.json missing from the SquireCore bundle") }
+        do {
+            let models = try decode(try Data(contentsOf: url))
+            _ = try models.hidTargets()   // every route the transport needs must be complete
+            return models
+        } catch {
+            fatalError("devices.json: \(error)")
+        }
+    }()
+
+    /// The model of a kind, for code that still keys on keyboard / mouse.
+    public func required(_ kind: Battery.Device) -> Model {
+        guard let model = model(kind) else { fatalError("devices.json: no single \(kind.rawValue) model") }
+        return model
+    }
+
+    /// HID routes of every device, in file order (devices, then routes: Omni first, cable as fallback).
+    /// Bluetooth routes have no vendor collection and are left out (Bluetooth.productIDs).
+    public func hidTargets() throws -> [Target] {
+        func fail(_ text: String) -> DecodingError {
+            DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: text))
+        }
+        return try devices.flatMap { model -> [Target] in
+            guard let device = Battery.Device(rawValue: model.kind) else { throw fail("\(model.id): kind \(model.kind)") }
+            guard let query = model.command(model.capabilities.battery.read)?.bytes?.bytes else {
+                throw fail("\(model.id): no battery read")
+            }
+            return try model.routes.compactMap { route -> Target? in
+                guard let connection = Battery.Connection(rawValue: route.connection) else {
+                    throw fail("\(model.id): connection \(route.connection)")
+                }
+                if connection == .bluetooth { return nil }
+                if let receiverID = route.receiver {
+                    guard let receiver = receiver(receiverID), let reportID = route.reportID else {
+                        throw fail("\(model.id): \(route.connection) route incomplete")
+                    }
+                    return Target(device: device, name: model.name, connection: connection,
+                                  productID: receiver.pid.value, reportID: reportID.value, query: query,
+                                  reportLengths: receiver.reportLengths)
+                }
+                guard let pid = route.pid, let lengths = route.reportLengths, !lengths.isEmpty else {
+                    throw fail("\(model.id): \(route.connection) route incomplete")
+                }
+                return Target(device: device, name: model.name, connection: connection, productID: pid.value,
+                              reportID: route.reportID?.value, query: query, reportLengths: lengths)
+            }
+        }
+    }
+
     public func receiver(_ id: String) -> Receiver? { receivers.first { $0.id == id } }
 
     public struct Receiver: Codable, Sendable {
@@ -147,6 +206,7 @@ public struct DeviceModels: Codable, Sendable {
         public let sensor: Sensor?
         public let surface: Surface?
         public let power: Power?
+        public let profile: Profile?
         public let kbProfile: KBProfile?
         public let kbLayout: KBLayout?
         public let kbLighting: KBLighting?
@@ -154,7 +214,7 @@ public struct DeviceModels: Codable, Sendable {
         public let kbWarning: KBWarning?
         public let perKey: PerKey?
         enum CodingKeys: String, CodingKey {
-            case battery, ledZones = "led_zones", dpi, polling, sensor, surface, power, kbProfile = "kb_profile"
+            case battery, ledZones = "led_zones", dpi, polling, sensor, surface, power, profile, kbProfile = "kb_profile"
             case kbLayout = "kb_layout", kbLighting = "kb_lighting", kbSleep = "kb_sleep", kbWarning = "kb_warning"
             case perKey = "per_key"
         }
@@ -199,6 +259,7 @@ public struct DeviceModels: Codable, Sendable {
         public let save: String
         public let zones: [Zone]
         public let modes: [Mode]
+        public let offsets: [String: Int]
     }
 
     public struct DPI: Codable, Sendable {
@@ -207,6 +268,7 @@ public struct DeviceModels: Codable, Sendable {
         public let min: Int
         public let max: Int
         public let step: Int
+        public let offsets: [String: Int]
     }
 
     public struct Polling: Codable, Sendable {
@@ -217,7 +279,8 @@ public struct DeviceModels: Codable, Sendable {
         public let write: String
         public let readRatesHz: [Int]
         public let rates: [Rate]
-        enum CodingKeys: String, CodingKey { case write, readRatesHz = "read_rates_hz", rates }
+        public let offsets: [String: Int]
+        enum CodingKeys: String, CodingKey { case write, readRatesHz = "read_rates_hz", rates, offsets }
     }
 
     public struct Sensor: Codable, Sendable {
@@ -227,7 +290,8 @@ public struct DeviceModels: Codable, Sendable {
             public let step: Int
         }
         public let angleTuning: Tuning
-        enum CodingKeys: String, CodingKey { case angleTuning = "angle_tuning" }
+        public let offsets: [String: Int]
+        enum CodingKeys: String, CodingKey { case angleTuning = "angle_tuning", offsets }
     }
 
     public struct Surface: Codable, Sendable {
@@ -241,7 +305,8 @@ public struct DeviceModels: Codable, Sendable {
         public let liftoff: [Named]
         public let noSurface: HexByte
         public let surfaces: [Preset]
-        enum CodingKeys: String, CodingKey { case write, read, liftoff, noSurface = "no_surface", surfaces }
+        public let offsets: [String: Int]
+        enum CodingKeys: String, CodingKey { case write, read, liftoff, noSurface = "no_surface", surfaces, offsets }
     }
 
     public struct Power: Codable, Sendable {
@@ -255,11 +320,37 @@ public struct DeviceModels: Codable, Sendable {
         }
     }
 
+    /// Firmware offset per connection in the profile read (3 bytes build / minor / major).
+    public struct FirmwareOffsets: Codable, Sendable {
+        public let omni: Int?
+        public let wired: Int?
+    }
+
+    /// The profile read (12 00): active profile (`profileBase` 0 = counted from 0), firmware, receiver firmware.
+    public struct Profile: Codable, Sendable {
+        public let read: String
+        public let profile: Int
+        public let profileBase: Int
+        public let profiles: Int?
+        public let firmware: FirmwareOffsets
+        public let receiverFirmware: Int
+        enum CodingKeys: String, CodingKey {
+            case read, profile, profileBase = "profile_base", profiles, firmware, receiverFirmware = "receiver_firmware"
+        }
+    }
+
     public struct KBProfile: Codable, Sendable {
         public let read: String
         public let profiles: Int
         public let effect: Int
         public let profile: Int
+        public let profileBase: Int
+        public let firmware: FirmwareOffsets
+        public let receiverFirmware: Int
+        enum CodingKeys: String, CodingKey {
+            case read, profiles, effect, profile, profileBase = "profile_base", firmware
+            case receiverFirmware = "receiver_firmware"
+        }
     }
 
     public struct KBLayout: Codable, Sendable {

@@ -1,12 +1,13 @@
 """devices.json: the checker accepts the real file and refuses broken ones; squire.py's tables come from it."""
 import copy
+import dataclasses
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
 import squire
-from squirelib import registry
+from squirelib import capabilities, registry
 
 ROOT = Path(__file__).parent
 DATA = json.loads((ROOT / "devices.json").read_text())
@@ -76,6 +77,24 @@ class CheckerTests(unittest.TestCase):
         data = self.broken()
         device(data, "keyboard")["capabilities"]["per_key"]["layouts"]["iso"][0][0] = "00"   # row 0 does not exist
         self.assertProblem(data, "outside the 15 columns")
+        data = self.broken()
+        device(data, "mouse")["capabilities"]["profile"]["firmware"]["omni"] = 62   # 3 bytes do not fit
+        self.assertProblem(data, "profile.firmware.omni")
+        data = self.broken()
+        device(data, "mouse")["capabilities"]["profile"]["firmware"]["bluetooth"] = 4
+        self.assertProblem(data, "unknown connection 'bluetooth'")
+        data = self.broken()
+        device(data, "keyboard")["capabilities"]["kb_profile"]["profile_base"] = 2
+        self.assertProblem(data, "kb_profile.profile_base")
+        data = self.broken()
+        device(data, "mouse")["capabilities"]["dpi"]["offsets"]["dpi_xy"] = 49   # 4 stages x 4 bytes do not fit
+        self.assertProblem(data, "dpi.offsets.dpi_xy")
+        data = self.broken()
+        device(data, "mouse")["capabilities"]["sensor"]["offsets"]["debounce_ms"] = 14
+        self.assertProblem(data, "unknown offset 'debounce_ms'")
+        data = self.broken()
+        del device(data, "mouse")["capabilities"]["surface"]["offsets"]["params"]
+        self.assertProblem(data, "missing 'params'")
 
     def test_unique_pids_ids_and_commands(self):
         data = self.broken()
@@ -148,14 +167,83 @@ class ModelTests(unittest.TestCase):
         self.assertNotIn(bytes([0x51, 0x31, 0x04]), mouse.confirmed_write_prefixes())
 
     def test_write_must_have_a_confirmed_prefix(self):
-        original = squire.WRITE_PREFIXES["mouse"]
         polling = squire.polling_command(500)
-        try:
-            squire.WRITE_PREFIXES["mouse"] = tuple(p for p in original if p != bytes([0x51, 0x31, 0x04]))
-            self.assertFalse(squire.is_allowed_write(polling, "mouse"))
-        finally:
-            squire.WRITE_PREFIXES["mouse"] = original
         self.assertTrue(squire.is_allowed_write(polling, "mouse"))
+        data = copy.deepcopy(DATA)
+        command(data, "mouse", "polling")["status"] = "unconfirmed"
+        caps = capabilities.for_device(registry.Registry(data).by_kind("mouse"))
+        self.assertFalse(caps.is_allowed_write(polling))      # same bytes, but the model has not confirmed them
+        with self.assertRaises(AssertionError):
+            caps["polling"].command(500)                      # the builder refuses too
+        self.assertTrue(caps.is_allowed_write(squire.angle_snapping_command(True)))   # the rest is unaffected
+
+    def test_allowlist_is_the_capabilities(self):
+        """Every confirmed write prefix belongs to a capability, and every write a builder makes is accepted by
+        exactly the capability that owns its prefix (so a device's allowlist = its capabilities' commands)."""
+        for kind, caps in squire.CAPABILITIES.items():
+            for prefix in caps.confirmed_prefixes:
+                self.assertIsNotNone(caps.owner_of(prefix), f"{kind} {prefix.hex(' ')} has no capability")
+        self.assertIs(squire.CAPABILITIES["mouse"].owner_of(squire.polling_command(500)).name, "polling")
+        self.assertIs(squire.CAPABILITIES["mouse"].owner_of(squire.dpi_command(1, 800, "#ff0000")).name, "dpi")
+        self.assertIs(squire.CAPABILITIES["mouse"].owner_of(squire.angle_tuning_command(5)).name, "sensor")
+        self.assertIsNone(squire.CAPABILITIES["keyboard"].owner_of(squire.polling_command(500)))
+        self.assertEqual(squire.CAPABILITIES["mouse"].save_command, bytes([0x50, 0x03]))
+        self.assertEqual(squire.CAPABILITIES["keyboard"].save_command, bytes([0x50, 0x55]))
+
+    def test_every_capability_in_the_model_has_a_module(self):
+        for device in squire.DEVICES.devices:
+            for name in device.data["capabilities"]:
+                self.assertIn(name, capabilities.CLASSES_BY_NAME, f"{device.id}: {name}")
+
+    def test_profile_offsets_come_from_the_model(self):
+        """Moving the profile / firmware offsets in devices.json moves what the parser reads (no hard-coded copy)."""
+        p = bytes([0x12, 0x00, 0, 0, 0x08, 0x00, 0x07, 0, 0, 0, 0x02, 0, 0, 0, 0x0a, 0x00, 0x01, 0, 0, 0, 0x03] + [0] * 43)
+        s = squire.MouseSettings("", "omni")
+        squire.CAPABILITIES["mouse"]["profile"].parse(s, "profile", p)
+        self.assertEqual((s.profile, s.firmware, s.receiver_firmware), (3, "01.00.0A", "07.00.08"))
+        data = copy.deepcopy(DATA)
+        device(data, "mouse")["capabilities"]["profile"].update(profile=20, profile_base=1, receiver_firmware=14,
+                                                                firmware={"omni": 4, "wired": 4})
+        self.assertEqual(registry.check(data), [])
+        caps = capabilities.for_device(registry.Registry(data).by_kind("mouse"))
+        s = squire.MouseSettings("", "omni")
+        caps["profile"].parse(s, "profile", p)
+        self.assertEqual((s.profile, s.firmware, s.receiver_firmware), (3, "07.00.08", "01.00.0A"))
+        wired = squire.MouseSettings("", "wired")
+        caps["profile"].parse(wired, "profile", p)
+        self.assertEqual((wired.firmware, wired.receiver_firmware), ("07.00.08", None))   # no receiver on the cable
+
+    def test_reply_offsets_come_from_the_model(self):
+        """Every mouse reply parser reads its offsets from devices.json: shift all of them by one in a copy and a
+        reply shifted by one byte parses to the same settings."""
+        captures = json.loads((ROOT / "protocol.json").read_text())["mouse_settings"]["captures"]
+        data = copy.deepcopy(DATA)
+        caps_data = device(data, "mouse")["capabilities"]
+        for name in ("led_zones", "dpi", "polling", "sensor", "surface"):
+            caps_data[name]["offsets"] = {k: v + 1 for k, v in caps_data[name]["offsets"].items()}
+        self.assertEqual(registry.check(data), [])
+        shifted = capabilities.for_device(registry.Registry(data).by_kind("mouse"))
+        checked = 0
+        for capture in captures:
+            read = capture["command"]
+            if read in ("profile", "battery"):
+                continue                                   # the profile capability has its own test
+            p = bytes.fromhex(capture["reply"])[1:]        # payload from the echo on (Omni: report ID first)
+            expected, got = squire.MouseSettings("", "omni"), squire.MouseSettings("", "omni")
+            squire.parse_mouse_settings(expected, read, p)
+            for cap in shifted:
+                if cap.name not in ("battery", "profile", "power"):
+                    cap.parse(got, read, p[:4] + b"\0" + p[4:])
+            self.assertEqual(dataclasses.asdict(got), dataclasses.asdict(expected), read)
+            self.assertNotEqual(dataclasses.asdict(got), dataclasses.asdict(squire.MouseSettings("", "omni")), read)
+            checked += 1
+        self.assertGreaterEqual(checked, 7)
+
+    def test_profile_count_limits_the_profile(self):
+        p = bytes([0x12, 0x00] + [0] * 8 + [6] + [0] * 53)       # keyboard reports profile 6 of 5
+        s = squire.KeyboardSettings("", "omni")
+        squire.parse_keyboard_settings(s, "profile", p)
+        self.assertIsNone(s.profile)
 
     def test_never_switch_profile_or_debounce(self):
         for kind in ("keyboard", "mouse"):
@@ -247,6 +335,13 @@ class PackagingTests(unittest.TestCase):
             with self.subTest(file=name):
                 self.assertIn(f"src: squirelib/{name}", text)
                 self.assertIn(f"dst: /usr/share/squire-gear/squirelib/{name}", text)
+
+    def test_swift_bundle_copy_equals_the_root_file(self):
+        # SquireCore loads macos/Sources/SquireCore/Resources/devices.json at runtime (SwiftPM cannot reach the root
+        # file); after an edit of devices.json, copy it there too.
+        copy_ = ROOT / "macos/Sources/SquireCore/Resources/devices.json"
+        self.assertEqual(copy_.read_bytes(), (ROOT / "devices.json").read_bytes(),
+                         "cp devices.json macos/Sources/SquireCore/Resources/devices.json")
 
 
 if __name__ == "__main__":

@@ -29,7 +29,11 @@ devices.json       device models (ids, routes, commands + confirmation status, c
 squirelib/         registry.py: loads devices.json and checks it (stdlib only; `python3 -m squirelib.registry`);
                    transport/ (hidraw.py, lock.py = device_lock, bluez.py = busctl; load_backend, enumerate_paths,
                    timeouts), protocol.py (frame, echo search, ff aa, exchange), routes.py (Target per route from
-                   devices.json, connection labels, best_reading = Bluetooth merge), state.py (state_dir);
+                   devices.json, connection labels, best_reading = Bluetooth merge), state.py (state_dir),
+                   capabilities/ (one module per devices.json capability: builders, byte check, reply parser,
+                   read-back Change; DeviceCapabilities = a device's allowlist, squire.CAPABILITIES[kind]),
+                   session.py (Sessions = squire.SESSIONS: packet() gate, exchange, query, read_batteries,
+                   read_settings(kind), write_verified; Battery, WriteResult);
                    squire.py re-exports every moved name. Installers copy squirelib/ (with subpackages, `find`) +
                    devices.json next to squire.py; nfpm.yaml lists each file (a test checks it)
 test_devices.py    checker + model tests (broken files refused, unconfirmed commands never sent, installers copy it)
@@ -45,7 +49,9 @@ linux/             squire_settings.py (GTK 4 + libadwaita settings window, own p
                    build-packages.sh + packaging/nfpm.yaml (ONE config for .deb and .rpm, arch all; /usr/share/
                    squire-gear, /usr/bin/squire + squire-tray wrappers, rule in /usr/lib/udev/rules.d)
 macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project (project.yml)
-  Sources/SquireCore   pure logic: targets, command allowlist + packets (Commands.swift), reply parsing,
+  Sources/SquireCore   pure logic: Capabilities/ (one type per devices.json capability, like squirelib/capabilities:
+                       builders, byte check, parser; MouseCapabilities / KeyboardCapabilities = a device's set,
+                       built from the bundled devices.json), targets, command allowlist + packets (Commands.swift), reply parsing,
                        mouse settings parsing (MouseSettings.swift), settings window logic (SettingsEditing.swift),
                        keyboard writes + allowlist + remembered lighting (KeyboardWrites.swift), keyboard page logic
                        (KeyboardEditing.swift),
@@ -88,10 +94,46 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
 ## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 on `refactor-transport` (PR #14), checked on Linux + Mac)
+Stage 3 (branch `refactor-capabilities`, Python, 2026-11-28, pushed): squirelib/capabilities/ has one class per
+devices.json capability (battery, led_zones, dpi, polling, sensor, surface, power, kb_profile, kb_layout, kb_lighting,
+kb_sleep, kb_warning, per_key), each built from the Device with its params. A capability holds its write builders
+(asserting the whole device allowlist), `allows()` = the byte check for the writes whose prefix it owns (longest
+prefix wins: 51 31 04 polling, 51 31 06/0b sensor, 51 31 00..03/09/0a dpi), `parse()` for its part of the read
+replies, `reply_expected()` (per_key c0 82) and `change(...)` -> Change(command | chunks | build(before), reads,
+extract, matches) = the read-back check. DeviceCapabilities: is_allowed_write = confirmed prefix + owning capability's
+allows(); save_command from the capability with "save". squire.py keeps every old name (constants and functions point
+into the capabilities), the settings dataclasses, the mouse profile/firmware parse (no capability in devices.json),
+packet(), write_verified() (the session; set_* = _apply(cap.change(...))), key presets and keyboard-lighting.json.
+Checked: 258 tests green; a behaviour snapshot (96k allowlist decisions on protocol.json bytes + mutations, every
+builder incl. error messages, every parse of the captures) is identical to main; on the device (Omni, read-only) --json,
+--settings, --keyboard-settings, --list and three --dry-runs print the same as main; --demo window renders.
+Step 1 done (same day): squirelib/session.py holds the device sessions (Sessions, built once as squire.SESSIONS from
+the registry, CAPABILITIES, TARGETS and a SettingsReader per kind): packet() (the gate: confirmed reads, capabilities'
+writes with write=True, the device's report ID), exchange, query, read_batteries, one read_settings(kind) for mouse and
+keyboard (was two copies), write_verified. squire.py keeps the old names as bound methods, the settings dataclasses +
+their parse dispatch, Bluetooth, key presets, CLI. Checked: 258 tests, snapshot unchanged, device runs incl. --debug
+traces (same packets, same order) and seven --dry-runs identical to main.
+Step 2 (same day, 21455a5, CI green incl. swift test): the profile read 12 00 is data-driven for both devices. devices.json: mouse
+capability `profile` (profile 10, profile_base 0, firmware {omni 14, wired 4}, receiver_firmware 4), kb_profile got
+profile_base 1, firmware {omni 11, wired 4}, receiver_firmware 4 (checker: _check_profile, every key required). Python:
+capabilities/profile.py (Profile; KbProfile subclasses it + the effect); parse_mouse_settings has no special case
+left. Swift (written on Linux, CI compiles): DeviceModels.Profile / FirmwareOffsets, KBProfile got the same fields;
+MouseSettings / KeyboardSettings parse with named offsets (profileOffset, firmwareOffsetOmni, ...) that
+DeviceModelTests holds to the file. Checked: 260 tests, snapshot + device runs identical to main.
+Step 3 (same day, not committed yet): every mouse reply offset is in devices.json: `offsets` in led_zones (mode 4,
+brightness 5, color 6, speed 12), dpi (active_stage 11, stage_count 18 in 12 00; dpi 4, dpi_xy 4, dpi_colors 4),
+polling (12), sensor (debounce 14, angle_snapping 16, angle_tuning 18), surface (surface 6, liftoff 7, params 8).
+Checker: registry.OFFSETS lists the names + byte widths per capability (exactly those names; multi-byte fields must
+fit in 64 bytes). Python parsers read them (LED zones map their read name via zones[].read; DPI loops over `stages`);
+Swift MouseSettings has one named constant per offset, DeviceModels decodes `offsets: [String: Int]`, DeviceModelTests
+compares them (the LED speed byte is not parsed in Swift). Test: all offsets +1 in a copy parse a reply shifted by one
+byte to the same settings (every protocol.json mouse_settings capture). Checked: 261 tests, snapshot unchanged, device
+runs identical to main. Still hard-coded: packet layouts in the builders and byte checks (they follow the command
+names in devices.json, not offsets), keyboard battery-reply guards (len 14 / mouse 20). Next: the Swift capability
+split (SquireCore types per capability, like squirelib/capabilities), then stage 4 (windows on editors).
 Stage 2 state (Python, 2026-11-27): transport / route / protocol split into squirelib (see Layout).
-protocol.exchange() writes only what its `build` callable returns; squire.exchange() passes squire.packet() (the
-allowlist), so the allowlist, reply_expected, battery parsing, the per-device read/write sessions and
-write_verified stay in squire.py until stage 3 (capabilities). Target got `connection` + `interface` (no more
+protocol.exchange() writes only what its `build` callable returns; Sessions.exchange() passes Sessions.packet() (the
+allowlist) since stage 3. Target got `connection` + `interface` (no more
 `pid == PID_OMNI` checks). Tests: 256 green, incl. a layer test (transport + protocol import without the registry).
 Checked on the device (Omni, read-only): --json, --settings, --keyboard-settings, --list and six --dry-run writes
 print the same as main. Owner installed the .deb on Ubuntu 26.04: tray + window work.
@@ -109,17 +151,57 @@ battery offsets (wired mouse now filtered to interface 0 like the others; confir
 battery + every --settings read over the cable, keyboard via Omni) and the capability tables (LED zones/modes, DPI, polling, power, surfaces, keyboard effects/speeds/
 gradients/directions, layouts, key ids, sleep/warning) from it; all names stay as module constants. Still hard-coded:
 mouse settings reply offsets (parse_mouse_settings), packet builders and byte checks (stage 3). Swift: DeviceModels.swift
-decodes strictly and tests compare every SquireCore table to the file; the app does not load it at runtime yet.
+decodes strictly and tests compare every SquireCore table to the file; since stage 1b the app loads its bundled copy.
 Where we are (2026-11-27): stage 1 merged (PR #13, 7862be0) after the owner's Linux test (local .deb of c325c95 on
 Ubuntu 26.04: tray + settings window work). Owner's decision: merge each stage via PR, no release until the whole
 refactoring is done. Test each stage like stage 1: build the .deb (`linux/build-packages.sh deb`, or the PR's `linux`
 artifact), check /usr/share/squire-gear has every new file, run squire --version / --list / --debug / --settings /
 --keyboard-settings (read-only), tray + Settings… window with both devices. Stage 2 (PR #14) checked on Linux and
 the Mac; NEXT: merge #14, then stage 3.
-Stage 1b (Swift runtime loading) postponed by the owner, Linux first: copy devices.json to
-macos/Sources/SquireCore/Resources/ as a SwiftPM resource (Bundle.module; SwiftPM cannot reach ../devices.json, a
-symlink is unreliable), a test that the copy equals the root file, then build Target.all / Allowlist / Command tables
-from the loaded model with a before/after comparison like the Python one. Needs a Mac build to confirm.
+Swift capability split (branch `refactor-capabilities`, 2026-11-28, on the Mac, committed):
+macos/Sources/SquireCore/Capabilities/ mirrors squirelib/capabilities: Capabilities.LEDZones, DPI, Polling, Sensor,
+Surface, Power, Profile (mouse) and KBProfile, KBLayout, KBSleep, KBWarning (KeyboardBasics.swift), KBLighting, PerKey
+(keyboard), each built from the model with its parameters and reply offsets (ModelError when one is missing); each
+holds its builders, `allows()` byte check for the prefixes it owns and `parse(read, payload, into:)`.
+MouseCapabilities / KeyboardCapabilities (`.bundled`) put them together; DeviceCapabilities.isAllowedWrite = confirmed
+prefix + the owner by longest prefix (51 31 04 polling, 51 31 06/0b sensor, 51 31 00..03/09/0a dpi), like Python.
+Every old name stays as a forward (Command.setLED/..., Command tables, KeyboardLighting.*, KeyboardDirect.*,
+KeyboardSettings.lightModes/layouts, KeyboardLayout.isoIDs/ansiIDs, SettingsQuery/KeyboardQuery.command from the
+model); MouseSettings/KeyboardSettings.apply(_:_:capabilities:) dispatch to the parsers; the offset constants are gone.
+Packet layouts per effect group (single colour, options, gradient, quicksand) stay code in KBLighting. Battery
+parsing stays in ReplyParser.
+Read-back checks (same day, committed): Change<Settings> (Capability.swift) = squirelib Change: reads (read
+names, "battery" = 12 07 / 12 01), needsCurrent, isSaved, build(current) -> [Command], matches(after, before),
+applied(to:). Each capability makes its own (LEDZones.change, Power.change, Sensor.snapping/tuningChange,
+Polling.change, Surface.liftoff/surfaceChange incl. the "unknown surface is not replaced" guard, DPI.change /
+activeStageChange / stageCountChange incl. the X != Y and count guards, KBSleep/KBWarning/KBLighting/PerKey.change;
+PerKey isSaved false). Mouse/KeyboardCapabilities.commands(change, current:) checks every built command against the
+allowlist. SettingChange / KeyboardChange stay the values the window and HIDReader use and only dispatch
+(`.change`); LEDState.matches = Capabilities.LEDZones.matches. Test: every change reads only confirmed reads of its
+device. Checked: swift test 127, behaviour snapshot (now also every SettingChange / KeyboardChange judged against 20+
+states with every before, commands, reads, isSaved) identical to 34c5971, Release app build + --demo. Apply in the app
+confirmed by the owner on both devices via the Omni (2026-11-28); reads via the Omni unchanged.
+Capability split checked: swift test 125 tests in 22 suites (new: shifted offsets +1 for mouse and keyboard
+parse a reply shifted by one byte to the same settings; a model without a capability is refused); a behaviour
+snapshot (throwaway test, SWIFT_DETERMINISTIC_HASHING=1: allowlist decisions for 846 seed writes x every single-byte
+mutation on both devices, every mouse/keyboard builder over input grids incl. errors, packets, every protocol.json
+parse, SettingChange against the demo state) is identical to 7348d64; Release app build, --demo mouse + keyboard pages
+render; on the device via the Omni (read-only): squire-probe, --settings, --keyboard-settings print the same as
+before the split, --repeat 20 no crash. App with the devices not tried yet.
+Stage 1b (Swift runtime loading, branch `refactor-capabilities`, 2026-11-28, done on the Mac, pushed):
+macos/Sources/SquireCore/Resources/devices.json = a copy of the root file, a SwiftPM resource (Bundle.module; in the
+app it lands in Squire.app/Contents/Resources/Squire_SquireCore.bundle). A Swift test and a Python test
+(test_devices.py) fail when the copy differs: after editing devices.json, `cp devices.json
+macos/Sources/SquireCore/Resources/devices.json`. DeviceModels.bundled (decoded once, fatalError on a broken copy)
+gives Target.all / keyboardTargets / mouseTargets / omni* / wired* (DeviceModels.hidTargets(), file order),
+SquireProtocol.vendorID, Bluetooth.productIDs + device(forName:) (gatt_name), Allowlist reads, reportIDs and
+writePrefixes; Allowlist.isAllowedWrite now requires a confirmed prefix first, then the device's byte check (like
+squire.is_allowed_write). SquireProtocol's PID constants are gone. Before/after: BundledModelTests compares every
+derived table with the old hand-written values. Capability parameters (zones, ranges, effect tables, offsets) are
+still Swift tables held to the file by DeviceModelConsistencyTests; they move with the capability split.
+Checked: swift test 122 tests in 21 suites, python 262, Release app build + `--demo --screenshot` renders; on the
+device via Omni (read-only): squire-probe (both batteries), --settings, --keyboard-settings parse as before. App with
+the devices not tried yet.
 Goal: support more devices without touching code everywhere. Today device knowledge (PIDs, report IDs, zones,
 ranges, effect tables) is spread as constants, "keyboard"/"mouse" are hard-wired (`ALLOWED_READS[device]`,
 `Battery.Device`), `Target` mixes device and connection, Omni and Bluetooth are special cases, and both settings
@@ -161,7 +243,7 @@ tests keep working; it keeps `__version__` (release.yml, install.sh and build-pa
 Checklist for every new file / folder (squirelib/ subpackages, linux/settings/, devices.json): copy it in
 linux/install.sh, linux/packaging/nfpm.yaml (one entry per file) and the macOS install.sh (SwiftBar venv folder);
 add build inputs to `.github/workflows/release.yml` `paths:` (devices.json + squirelib/** are there). Stage 1b:
-devices.json as a resource in macos/Package.swift (SquireCore, Bundle.module) and macos/project.yml (App). Decided by the owner 2026-11-26, for as long as the
+devices.json is a resource in macos/Package.swift (SquireCore, Bundle.module; a copy, kept equal by the tests). Decided by the owner 2026-11-26, for as long as the
 Python core lives (until the Rust-or-similar decision). Linux window: linux/settings/ (window.py, editors/, drawings/). Swift: SquireCore split into SquireProtocol,
 SquireDevices (registry + capabilities), SquireTransport (IOKit, CoreBluetooth); App gets Settings/Editors and
 Settings/Drawings.

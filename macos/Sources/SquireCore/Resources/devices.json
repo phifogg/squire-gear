@@ -1,0 +1,245 @@
+{
+  "$comment": [
+    "Device models: what Squire knows about each supported device, read by squire.py (squirelib/registry.py, which also checks it) and by the Swift tests (DeviceModels.swift, strict Codable).",
+    "Hex values are strings: ids and byte values as two (or four) hex digits, commands as space-separated bytes like protocol.json. Byte offsets are relative to the echoed command (no report ID).",
+    "kind (keyboard / mouse) is only for icons and wording; code that keeps state keys on id.",
+    "commands: every request Squire may send to the device. Reads are exact bytes, writes are prefixes (the capability code checks the rest). Only status 'confirmed' is ever sent; anything else is --dry-run only.",
+    "Sources: CLAUDE.md (Rules, Protocol), protocol.json captures, G-Helper (GPL-3.0, facts only), Armoury Crate captures."
+  ],
+  "schema": 1,
+  "vendor_id": "0b05",
+  "receivers": [
+    {
+      "id": "rog-omni",
+      "name": "ROG Omni receiver",
+      "pid": "1ace",
+      "interface": 2,
+      "report_lengths": [64]
+    }
+  ],
+  "devices": [
+    {
+      "id": "falchion-rx-lp",
+      "name": "ROG Falchion RX LP",
+      "kind": "keyboard",
+      "routes": [
+        {"connection": "omni", "receiver": "rog-omni", "report_id": "02"},
+        {"connection": "wired", "pid": "1b04", "interface": 1, "report_lengths": [65]},
+        {"connection": "bluetooth", "pid": "1b08", "gatt_name": "FALCHION RX LOW PROFILE"}
+      ],
+      "commands": [
+        {"name": "battery", "bytes": "12 01", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "profile", "bytes": "12 00", "status": "confirmed", "approved": "2026-11-13"},
+        {"name": "layout", "bytes": "12 12", "status": "confirmed", "approved": "2026-11-13"},
+        {"name": "save", "write": true, "prefixes": ["50 55"], "status": "confirmed", "approved": "2026-11-22"},
+        {"name": "lighting", "write": true, "prefixes": ["51 2c"], "status": "confirmed", "approved": "2026-11-22"},
+        {"name": "sleep", "write": true, "prefixes": ["51 38"], "status": "confirmed", "approved": "2026-11-22"},
+        {"name": "warning", "write": true, "prefixes": ["51 3a"], "status": "confirmed", "approved": "2026-11-22"},
+        {"name": "per_key", "write": true, "prefixes": ["c0 81"], "reply": "c0 82", "status": "confirmed",
+         "approved": "2026-11-25", "note": "RAM only, never saved (50 55 stores nothing)"}
+      ],
+      "capabilities": {
+        "battery": {"read": "battery", "percent": [10, 5], "charging": 8, "warning": 9, "warning_min": 0},
+        "kb_profile": {"read": "profile", "profiles": 5, "effect": 9, "profile": 10, "profile_base": 1,
+                       "firmware": {"omni": 11, "wired": 4}, "receiver_firmware": 4},
+        "kb_layout": {
+          "read": "layout",
+          "layout": 5,
+          "layouts": [
+            {"id": 3, "name": "DE", "iso": true},
+            {"id": 4, "name": "UK", "iso": true},
+            {"id": 5, "name": "FR", "iso": true},
+            {"id": 7, "iso": true},
+            {"id": 8, "iso": true},
+            {"id": 11, "iso": true},
+            {"id": 12, "iso": true},
+            {"id": 15, "iso": true},
+            {"id": 17, "name": "US", "iso": false},
+            {"id": 18, "iso": true},
+            {"id": 19, "iso": true},
+            {"id": 20, "iso": true},
+            {"id": 23, "iso": true},
+            {"id": 25, "name": "CH-DE", "iso": true}
+          ]
+        },
+        "kb_lighting": {
+          "write": "lighting",
+          "save": "save",
+          "effects": [
+            {"name": "static", "id": "00", "speeds": [{"name": "none", "value": "ff"}]},
+            {"name": "breathing", "id": "01", "speeds": [{"name": "fast", "value": "0f"}, {"name": "normal", "value": "1e"}, {"name": "slow", "value": "2a"}]},
+            {"name": "color-cycle", "id": "02", "speeds": [{"name": "fast", "value": "12"}, {"name": "normal", "value": "1f"}, {"name": "slow", "value": "3e"}]},
+            {"name": "reactive", "id": "03", "speeds": [{"name": "fast", "value": "08"}, {"name": "normal", "value": "0f"}, {"name": "slow", "value": "16"}]},
+            {"name": "rainbow", "id": "04", "speeds": [{"name": "fast", "value": "23"}, {"name": "normal", "value": "3e"}, {"name": "slow", "value": "55"}]},
+            {"name": "ripple", "id": "05", "speeds": [{"name": "fast", "value": "50"}, {"name": "normal", "value": "64"}, {"name": "slow", "value": "78"}]},
+            {"name": "starry-night", "id": "06", "speeds": [{"name": "fast", "value": "0a"}, {"name": "normal", "value": "0f"}, {"name": "slow", "value": "19"}]},
+            {"name": "quicksand", "id": "07", "speeds": [{"name": "fast", "value": "0c"}, {"name": "normal", "value": "0f"}, {"name": "slow", "value": "14"}]},
+            {"name": "current", "id": "08", "speeds": [{"name": "fast", "value": "07"}, {"name": "normal", "value": "0a"}, {"name": "slow", "value": "0c"}]},
+            {"name": "raindrop", "id": "09", "speeds": [{"name": "fast", "value": "0e"}, {"name": "normal", "value": "14"}, {"name": "slow", "value": "1b"}]},
+            {"name": "host-driven", "id": "f1", "writable": false}
+          ],
+          "off_brightness": 4,
+          "colour_modes": [{"name": "single", "value": "00"}, {"name": "double", "value": "10"}, {"name": "random", "value": "01"}],
+          "gradient_stops": {"min": 2, "max": 7},
+          "gradients": [
+            {"name": "red", "stops": [[14, "ff0029"], [100, "ff0029"]]},
+            {"name": "blue-red", "stops": [[14, "0018f0"], [100, "ff0031"]]},
+            {"name": "sunset", "stops": [[14, "febe3f"], [57, "fe3f7d"], [100, "f91d1d"]]},
+            {"name": "lime-cyan", "stops": [[14, "d1fe3f"], [45, "00dcff"], [72, "00dcff"], [100, "d1fe3f"]]},
+            {"name": "yellow-magenta", "stops": [[14, "f1ff00"], [36, "ff00ed"], [57, "f1ff00"], [79, "ff00ed"], [100, "f1ff00"]]},
+            {"name": "pink-purple", "stops": [[14, "ff0091"], [32, "8c00ff"], [49, "4b00d9"], [66, "4b00d9"], [83, "8c00ff"], [100, "ff0091"]]},
+            {"name": "spectrum", "stops": [[14, "f500ff"], [29, "0006ff"], [43, "00faff"], [57, "01ff00"], [72, "fff600"], [86, "ff7807"], [100, "ff000d"]]}
+          ],
+          "directions": [
+            {"effect": "rainbow", "values": [
+              {"name": "right", "value": "00"}, {"name": "down-right", "value": "01"}, {"name": "down", "value": "02"},
+              {"name": "down-left", "value": "03"}, {"name": "left", "value": "04"}, {"name": "up-left", "value": "05"},
+              {"name": "up", "value": "06"}, {"name": "up-right", "value": "07"}, {"name": "outwards", "value": "08"}]},
+            {"effect": "ripple", "values": [{"name": "none", "value": "ff"}]},
+            {"effect": "quicksand", "values": [{"name": "down", "value": "02"}, {"name": "up", "value": "06"}]}
+          ],
+          "thickness": [{"name": "strong", "value": "02"}, {"name": "normal", "value": "01"}, {"name": "low", "value": "00"}],
+          "quicksand_scale": ["fff600", "01ff00", "00faff", "0006ff", "f500ff", "ff000d"],
+          "quicksand_modes": [{"name": "scale", "value": "00"}, {"name": "random", "value": "01"}]
+        },
+        "kb_sleep": {
+          "write": "sleep",
+          "read": "battery",
+          "offset": 6,
+          "power_off": [
+            {"minutes": 1, "value": "00"}, {"minutes": 2, "value": "01"}, {"minutes": 3, "value": "02"},
+            {"minutes": 5, "value": "03"}, {"minutes": 10, "value": "04"}, {"minutes": null, "value": "ff"}
+          ]
+        },
+        "kb_warning": {"write": "warning", "read": "battery", "offset": 9, "levels": [0, 10, 20, 30, 40, 50]},
+        "per_key": {
+          "write": "per_key",
+          "per_packet": 14,
+          "columns": 15,
+          "rows": {"min": 1, "max": 5},
+          "layouts": {
+            "iso": [
+              ["01", "09", "11", "19", "21", "29", "31", "39", "41", "49", "51", "59", "61", "69", "71"],
+              ["02", "0a", "12", "1a", "22", "2a", "32", "3a", "42", "4a", "52", "5a", "62", "6b", "72"],
+              ["03", "0b", "13", "1b", "23", "2b", "33", "3b", "43", "4b", "53", "5b", "63", "6b", "73"],
+              ["04", "0c", "14", "1c", "24", "2c", "34", "3c", "44", "4c", "54", "5c", "64", "6c", "74"],
+              ["05", "0d", "15", "35", "4d", "55", "5d", "65", "6d", "75"]
+            ],
+            "ansi": [
+              ["01", "09", "11", "19", "21", "29", "31", "39", "41", "49", "51", "59", "61", "69", "71"],
+              ["02", "0a", "12", "1a", "22", "2a", "32", "3a", "42", "4a", "52", "5a", "62", "6a", "72"],
+              ["03", "0b", "13", "1b", "23", "2b", "33", "3b", "43", "4b", "53", "5b", "6b", "73"],
+              ["04", "14", "1c", "24", "2c", "34", "3c", "44", "4c", "54", "5c", "64", "6c", "74"],
+              ["05", "0d", "15", "35", "4d", "55", "5d", "65", "6d", "75"]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "keris-ii-origin",
+      "name": "ROG Keris II Origin",
+      "kind": "mouse",
+      "routes": [
+        {"connection": "omni", "receiver": "rog-omni", "report_id": "03"},
+        {"connection": "wired", "pid": "1c0c", "interface": 0, "report_lengths": [65, 64]},
+        {"connection": "bluetooth", "pid": "1c0f", "gatt_name": "KERIS II ORIGIN"}
+      ],
+      "commands": [
+        {"name": "battery", "bytes": "12 07", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "profile", "bytes": "12 00", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "settings", "bytes": "12 04 00", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "dpi_xy", "bytes": "12 04 02", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "dpi_colors", "bytes": "12 04 03", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "led_logo", "bytes": "12 03 00", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "led_wheel", "bytes": "12 03 01", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "led_side", "bytes": "12 03 02", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "liftoff", "bytes": "12 06", "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "save", "write": true, "prefixes": ["50 03"], "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "led", "write": true, "prefixes": ["51 28"], "status": "confirmed", "approved": "2026-11-10"},
+        {"name": "power", "write": true, "prefixes": ["51 37"], "status": "confirmed", "approved": "2026-11-12"},
+        {"name": "angle_snapping", "write": true, "prefixes": ["51 31 06"], "status": "confirmed", "approved": "2026-11-12"},
+        {"name": "angle_tuning", "write": true, "prefixes": ["51 31 0b"], "status": "confirmed", "approved": "2026-11-12"},
+        {"name": "liftoff_surface", "write": true, "prefixes": ["51 35"], "status": "confirmed", "approved": "2026-11-13"},
+        {"name": "polling", "write": true, "prefixes": ["51 31 04"], "status": "confirmed", "approved": "2026-11-13"},
+        {"name": "dpi", "write": true, "prefixes": ["51 31 00", "51 31 01", "51 31 02", "51 31 03"], "status": "confirmed", "approved": "2026-11-13"},
+        {"name": "active_stage", "write": true, "prefixes": ["51 31 09"], "status": "confirmed", "approved": "2026-11-13"},
+        {"name": "stage_count", "write": true, "prefixes": ["51 31 0a"], "status": "confirmed", "approved": "2026-11-13"}
+      ],
+      "capabilities": {
+        "battery": {"read": "battery", "percent": [4], "charging": 9, "warning": 6, "warning_min": 1},
+        "profile": {"read": "profile", "profile": 10, "profile_base": 0,
+                    "firmware": {"omni": 14, "wired": 4}, "receiver_firmware": 4},
+        "led_zones": {
+          "offsets": {"mode": 4, "brightness": 5, "color": 6, "speed": 12},
+          "write": "led",
+          "save": "save",
+          "zones": [
+            {"name": "logo", "index": "00", "read": "led_logo"},
+            {"name": "wheel", "index": "01", "read": "led_wheel"},
+            {"name": "side", "index": "02", "read": "led_side"}
+          ],
+          "modes": [
+            {"name": "static", "value": "00", "writable": true},
+            {"name": "breathing", "value": "01", "writable": true},
+            {"name": "color-cycle", "value": "02", "writable": true},
+            {"name": "rainbow", "value": "03", "writable": false},
+            {"name": "react", "value": "04", "writable": true},
+            {"name": "comet", "value": "05", "writable": false},
+            {"name": "battery", "value": "06", "writable": true},
+            {"name": "off", "value": "f0", "writable": true}
+          ]
+        },
+        "dpi": {"write": "dpi", "stages": 4, "min": 100, "max": 42000, "step": 50,
+                "offsets": {"active_stage": 11, "stage_count": 18, "dpi": 4, "dpi_xy": 4, "dpi_colors": 4}},
+        "polling": {
+          "offsets": {"polling": 12},
+          "write": "polling",
+          "read_rates_hz": [125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+          "rates": [{"hz": 125, "value": "00"}, {"hz": 250, "value": "01"}, {"hz": 500, "value": "02"}, {"hz": 1000, "value": "03"}]
+        },
+        "sensor": {"angle_tuning": {"min": -20, "max": 20, "step": 5},
+                   "offsets": {"debounce": 14, "angle_snapping": 16, "angle_tuning": 18}},
+        "surface": {
+          "offsets": {"surface": 6, "liftoff": 7, "params": 8},
+          "write": "liftoff_surface",
+          "read": "liftoff",
+          "liftoff": [{"name": "low", "value": "00"}, {"name": "high", "value": "01"}],
+          "no_surface": "ff",
+          "surfaces": [
+            {"id": "00", "name": "ROG Whetstone", "params": "1c 34 16"},
+            {"id": "01", "name": "ROG Sheath", "params": "1c 34 16"},
+            {"id": "07", "name": "ROG Scabbard", "params": "1c 34 16"},
+            {"id": "08", "name": "ROG Strix Edge", "params": "1c 34 16"},
+            {"id": "0a", "name": "Balteus", "params": "1a 32 20"},
+            {"id": "0b", "name": "Balteus Qi", "params": "1a 32 20"},
+            {"id": "0c", "name": "ROG Scabbard II", "params": "1c 34 16"},
+            {"id": "0d", "name": "ROG Sheath Gundam LTD", "params": "1c 34 16"},
+            {"id": "0e", "name": "ROG Strix Edge Call of Duty Black Ops 4 Edition", "params": "1c 34 16"},
+            {"id": "0f", "name": "ROG Sheath BLK LTD", "params": "1c 34 16"},
+            {"id": "10", "name": "ROG Sheath PNK LTD", "params": "1c 34 16"},
+            {"id": "11", "name": "ROG Sheath Electro Punk", "params": "1c 34 16"},
+            {"id": "12", "name": "ROG Hone Ace Aim Lab Edition", "params": "1c 34 16"},
+            {"id": "13", "name": "ROG Scabbard II EVA Edition", "params": "1c 34 16"},
+            {"id": "14", "name": "ROG Moonstone Ace L", "params": "37 2b 0e"},
+            {"id": "15", "name": "ROG Moonstone Ace L (2)", "params": "18 35 23"},
+            {"id": "16", "name": "ROG Hone Ace XXL", "params": "1c 34 16"},
+            {"id": "17", "name": "ROG Scabbard II Arctic Grey XXL", "params": "21 23 12"},
+            {"id": "18", "name": "TUF Gaming P1 Hatsune Miku Edition", "params": "1c 42 24"},
+            {"id": "19", "name": "ROG Sheath II XXL", "params": "1e 34 19"}
+          ]
+        },
+        "power": {
+          "write": "power",
+          "read": "battery",
+          "offset": 5,
+          "power_off": [
+            {"minutes": 1, "value": "00"}, {"minutes": 2, "value": "01"}, {"minutes": 3, "value": "02"},
+            {"minutes": 5, "value": "03"}, {"minutes": 10, "value": "04"}, {"minutes": null, "value": "ff"}
+          ],
+          "warning_levels": [10, 20, 30, 40, 50]
+        }
+      }
+    }
+  ]
+}

@@ -9,14 +9,12 @@
 // Protocol layer (same as squirelib/protocol.py): framing, echo search, provisional ff aa, battery reply parsing.
 // Routes (Target) are in Routes.swift; the IOKit transport is in SquireHID.
 //
-// Only commands on the allowlist in Commands.swift are ever sent: the battery queries above, the mouse settings
-// reads, and the two approved writes (51 28 set LED, 50 03 save), the writes only after an explicit Apply.
+// Only commands on the allowlist in Commands.swift are ever sent: the confirmed reads and write prefixes in
+// devices.json, each write also checked byte by byte, and writes only after an explicit Apply.
 
 public enum SquireProtocol {
-    public static let vendorID: UInt16 = 0x0B05
-    public static let omniReceiverPID: UInt16 = 0x1ACE
-    public static let falchionRXLowProfilePID: UInt16 = 0x1B04   // keyboard, wired
-    public static let kerisIIOriginPID: UInt16 = 0x1C0C          // mouse, wired
+    /// From devices.json (0b05).
+    public static let vendorID: UInt16 = DeviceModels.bundled.vendorID.value
     /// Only vendor-defined HID collections (usage page >= 0xFF00) may be opened.
     public static let minVendorUsagePage = 0xFF00
     /// Used when a device does not report a plausible warning level.

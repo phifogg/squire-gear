@@ -14,11 +14,12 @@ public enum KeyboardQuery: String, CaseIterable, Sendable {
     // raw values = the names in squire.py (KEYBOARD_SETTINGS_QUERIES) and protocol.json
     case profile, layout
 
+    /// The read's bytes from devices.json (only confirmed reads pass Packet.build).
     public var command: Command {
-        switch self {
-        case .profile: return Command([0x12, 0x00])
-        case .layout: return Command([0x12, 0x12])
+        guard let bytes = KeyboardCapabilities.bundled.model.command(rawValue)?.bytes?.bytes else {
+            fatalError("devices.json: no keyboard read \(rawValue)")
         }
+        return Command(bytes)
     }
 }
 
@@ -46,44 +47,26 @@ public struct KeyboardSettings: Equatable, Sendable {
         self.status = status
     }
 
-    public static let profileCount = 5
-
+    static var caps: KeyboardCapabilities { .bundled }
+    /// Profiles on the keyboard (devices.json kb_profile).
+    public static var profileCount: Int { caps.profile.profiles }
     /// Effect ids in 12 00 [9] (G-Helper KeyboardLightingMode); 0xf1 = the host drives the LEDs directly.
-    public static let lightModes: [UInt8: String] = [
-        0x00: "static", 0x01: "breathing", 0x02: "color-cycle", 0x03: "reactive", 0x04: "rainbow", 0x05: "ripple",
-        0x06: "starry-night", 0x07: "quicksand", 0x08: "current", 0x09: "raindrop", 0xF1: "host-driven",
-    ]
-    /// Factory layout ids in 12 12 [5]: 3/4/5/17 from G-Helper, 25 = CH-DE confirmed by the owner.
-    public static let layouts: [Int: String] = [3: "DE", 4: "UK", 5: "FR", 17: "US", 25: "CH-DE"]
+    public static var lightModes: [UInt8: String] { caps.lighting.lightModes }
+    /// Factory layout ids in 12 12 [5] with a name (devices.json kb_layout).
+    public static var layouts: [Int: String] { caps.layout.names }
     /// Layout ids G-Helper draws as ISO (an extra key left of Z, tall Enter).
-    public static let isoLayouts: Set<Int> = [3, 4, 5, 7, 8, 11, 12, 15, 18, 19, 20, 23, 25]
+    public static var isoLayouts: Set<Int> { caps.layout.iso }
 
-    /// Fill from the battery reply (12 01).
-    public mutating func applyBattery(_ p: [UInt8]) {
+    /// Fill from the battery reply (12 01): sleep and warning.
+    public mutating func applyBattery(_ p: [UInt8], capabilities: KeyboardCapabilities = .bundled) {
         guard p.count >= 14 else { return }
-        sleepMinutes = MouseSettings.powerOffMinutes[p[6]]
-        lowWarning = p[9] <= 100 ? Int(p[9]) : nil          // 0 = never (AC, 2026-11-22)
+        capabilities.parse("battery", p, into: &self)
     }
 
-    /// Fill from one settings reply payload `p` (starting at the echoed command).
-    public mutating func apply(_ query: KeyboardQuery, _ p: [UInt8]) {
+    /// Fill from one settings reply payload `p` (starting at the echoed command); each capability reads its part.
+    public mutating func apply(_ query: KeyboardQuery, _ p: [UInt8], capabilities: KeyboardCapabilities = .bundled) {
         guard p.count >= 14 else { return }
-        switch query {
-        case .profile:
-            lightMode = Self.lightModes[p[9]] ?? "0x" + ReplyParser.hex([p[9]])
-            profile = (1...Self.profileCount).contains(Int(p[10])) ? Int(p[10]) : nil
-            if connection != .wired, p[4..<7].contains(where: { $0 != 0 }) {
-                receiverFirmware = [p[6], p[5], p[4]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
-            }
-            let fw = connection == .wired ? Array(p[4..<7]) : Array(p[11..<14])   // cable: [4..6] (2026-11-21)
-            if fw.contains(where: { $0 != 0 }) {
-                firmware = [fw[2], fw[1], fw[0]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
-            }
-        case .layout:
-            layoutID = Int(p[5])
-            layout = Self.layouts[Int(p[5])]
-            iso = Self.isoLayouts.contains(Int(p[5]))
-        }
+        capabilities.parse(query.rawValue, p, into: &self)
     }
 
     /// The effect as shown in the window.
@@ -194,26 +177,16 @@ public enum KeyboardLayout {
     /// ISO unless the keyboard reports an ANSI layout.
     public static func rows(for k: KeyboardSettings?) -> [[Key]] { k?.iso == false ? ansi : iso }
 
-    // Key id of each key, row by row, as drawn (same count per row as `iso` / `ansi`). Same as
-    // squire.KEYBOARD_KEY_IDS: G-Helper AuraKeyboardLayouts.cs "FalchionRX" / "FalchionRXISO" (facts only).
+    // Key id of each key, row by row, as drawn (same count per row as `iso` / `ansi`): devices.json per_key.layouts,
+    // same as squire.KEYBOARD_KEY_IDS (G-Helper AuraKeyboardLayouts.cs "FalchionRX" / "FalchionRXISO", facts only).
     // ISO Enter spans two rows and has one id (6b), listed in both.
-    private static let idRow0: [UInt8] = [0x01, 0x09, 0x11, 0x19, 0x21, 0x29, 0x31, 0x39, 0x41, 0x49, 0x51, 0x59, 0x61,
-                                          0x69, 0x71]
-    private static let idRow4: [UInt8] = [0x05, 0x0D, 0x15, 0x35, 0x4D, 0x55, 0x5D, 0x65, 0x6D, 0x75]
-    public static let isoIDs: [[UInt8]] = [
-        idRow0,
-        [0x02, 0x0A, 0x12, 0x1A, 0x22, 0x2A, 0x32, 0x3A, 0x42, 0x4A, 0x52, 0x5A, 0x62, 0x6B, 0x72],
-        [0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B, 0x33, 0x3B, 0x43, 0x4B, 0x53, 0x5B, 0x63, 0x6B, 0x73],
-        [0x04, 0x0C, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C, 0x44, 0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74],
-        idRow4,
-    ]
-    public static let ansiIDs: [[UInt8]] = [
-        idRow0,
-        [0x02, 0x0A, 0x12, 0x1A, 0x22, 0x2A, 0x32, 0x3A, 0x42, 0x4A, 0x52, 0x5A, 0x62, 0x6A, 0x72],
-        [0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B, 0x33, 0x3B, 0x43, 0x4B, 0x53, 0x5B, 0x6B, 0x73],
-        [0x04, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C, 0x44, 0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74],
-        idRow4,
-    ]
+    public static var isoIDs: [[UInt8]] { layoutIDs("iso") }
+    public static var ansiIDs: [[UInt8]] { layoutIDs("ansi") }
+
+    private static func layoutIDs(_ name: String) -> [[UInt8]] {
+        guard let ids = KeyboardCapabilities.bundled.perKey.layouts[name] else { fatalError("devices.json: no per_key layout \(name)") }
+        return ids
+    }
 
     public static func ids(for k: KeyboardSettings?) -> [[UInt8]] { k?.iso == false ? ansiIDs : isoIDs }
 

@@ -40,7 +40,8 @@
       ],
       "capabilities": {
         "battery": {"read": "battery", "percent": [10, 5], "charging": 8, "warning": 9, "warning_min": 0},
-        "kb_profile": {"read": "profile", "profiles": 5, "effect": 9, "profile": 10},
+        "kb_profile": {"read": "profile", "profiles": 5, "effect": 9, "profile": 10, "profile_base": 1,
+                       "firmware": {"omni": 11, "wired": 4}, "receiver_firmware": 4},
         "kb_layout": {
           "read": "layout",
           "layout": 5,
@@ -167,7 +168,10 @@
       ],
       "capabilities": {
         "battery": {"read": "battery", "percent": [4], "charging": 9, "warning": 6, "warning_min": 1},
+        "profile": {"read": "profile", "profile": 10, "profile_base": 0,
+                    "firmware": {"omni": 14, "wired": 4}, "receiver_firmware": 4},
         "led_zones": {
+          "offsets": {"mode": 4, "brightness": 5, "color": 6, "speed": 12},
           "write": "led",
           "save": "save",
           "zones": [
@@ -186,14 +190,18 @@
             {"name": "off", "value": "f0", "writable": true}
           ]
         },
-        "dpi": {"write": "dpi", "stages": 4, "min": 100, "max": 42000, "step": 50},
+        "dpi": {"write": "dpi", "stages": 4, "min": 100, "max": 42000, "step": 50,
+                "offsets": {"active_stage": 11, "stage_count": 18, "dpi": 4, "dpi_xy": 4, "dpi_colors": 4}},
         "polling": {
+          "offsets": {"polling": 12},
           "write": "polling",
           "read_rates_hz": [125, 250, 500, 1000, 2000, 4000, 8000, 16000],
           "rates": [{"hz": 125, "value": "00"}, {"hz": 250, "value": "01"}, {"hz": 500, "value": "02"}, {"hz": 1000, "value": "03"}]
         },
-        "sensor": {"angle_tuning": {"min": -20, "max": 20, "step": 5}},
+        "sensor": {"angle_tuning": {"min": -20, "max": 20, "step": 5},
+                   "offsets": {"debounce": 14, "angle_snapping": 16, "angle_tuning": 18}},
         "surface": {
+          "offsets": {"surface": 6, "liftoff": 7, "params": 8},
           "write": "liftoff_surface",
           "read": "liftoff",
           "liftoff": [{"name": "low", "value": "00"}, {"name": "high", "value": "01"}],

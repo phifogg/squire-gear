@@ -41,7 +41,190 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
     }
 }
 
-/// The Swift tables until the app reads devices.json itself: each must match the file squire.py reads.
+/// The copy SquireCore loads at runtime (Resources/devices.json, Bundle.module) and what it derives from it.
+@Suite struct BundledModelTests {
+    @Test func copyEqualsRootFile() throws {
+        let url = try #require(DeviceModels.bundledURL)
+        #expect(try Data(contentsOf: url) == (try Data(contentsOf: devicesURL())),
+                "macos/Sources/SquireCore/Resources/devices.json differs from devices.json: copy the root file")
+        #expect(DeviceModels.bundled.devices.map(\.id) == (try models()).devices.map(\.id))
+    }
+
+    /// Before / after stage 1b: the hand-written tables the app used until then, value for value.
+    @Test func sameRoutesAsTheHandWrittenTables() {
+        let before = [
+            Target(device: .keyboard, name: "ROG Falchion RX LP", connection: .omni, productID: 0x1ACE,
+                   reportID: 0x02, query: [0x12, 0x01], reportLengths: [64]),
+            Target(device: .keyboard, name: "ROG Falchion RX LP", connection: .wired, productID: 0x1B04,
+                   reportID: nil, query: [0x12, 0x01], reportLengths: [65]),
+            Target(device: .mouse, name: "ROG Keris II Origin", connection: .omni, productID: 0x1ACE,
+                   reportID: 0x03, query: [0x12, 0x07], reportLengths: [64]),
+            Target(device: .mouse, name: "ROG Keris II Origin", connection: .wired, productID: 0x1C0C,
+                   reportID: nil, query: [0x12, 0x07], reportLengths: [65, 64]),
+        ]
+        #expect(Target.all == before)
+        #expect(Target.keyboardTargets == Array(before[0...1]))
+        #expect(Target.mouseTargets == Array(before[2...3]))
+        #expect([Target.omniKeyboard, .wiredKeyboard, .omniMouse, .wiredMouse] == before)
+        #expect(SquireProtocol.vendorID == 0x0B05)
+        #expect(Bluetooth.productIDs == [0x1B08: .keyboard, 0x1C0F: .mouse])
+        #expect(Bluetooth.device(forName: "ROG FALCHION RX LOW PROFILE") == .keyboard)
+        #expect(Bluetooth.device(forName: "ROG Keris II Origin") == .mouse)
+        #expect(Bluetooth.device(forName: "ROG Harpe") == nil)
+        #expect(Bluetooth.device(forName: nil) == nil)
+    }
+
+    @Test func sameAllowlistAsTheHandWrittenTables() {
+        #expect(Allowlist.mouseReads == Set([[0x12, 0x07], [0x12, 0x00], [0x12, 0x04, 0x00], [0x12, 0x04, 0x02],
+                                             [0x12, 0x04, 0x03], [0x12, 0x03, 0x00], [0x12, 0x03, 0x01],
+                                             [0x12, 0x03, 0x02], [0x12, 0x06]]))
+        #expect(Allowlist.keyboardReads == Set([[0x12, 0x01], [0x12, 0x00], [0x12, 0x12]]))
+        #expect(Allowlist.mouseReads == Set([Command.mouseBattery.bytes] + SettingsQuery.allCases.map(\.command.bytes)))
+        #expect(Allowlist.keyboardReads == Set([Command.keyboardBattery.bytes] + KeyboardQuery.allCases.map(\.command.bytes)))
+        #expect(Allowlist.reportIDs == [.keyboard: 0x02, .mouse: 0x03])
+        #expect(Set(Allowlist.writePrefixes[.keyboard] ?? []) == Set([[0x50, 0x55], [0x51, 0x2C], [0x51, 0x38],
+                                                                    [0x51, 0x3A], [0xC0, 0x81]]))
+        #expect(Set(Allowlist.writePrefixes[.mouse] ?? []) == Set([
+            [0x50, 0x03], [0x51, 0x28], [0x51, 0x37], [0x51, 0x31, 0x06], [0x51, 0x31, 0x0B], [0x51, 0x35],
+            [0x51, 0x31, 0x04], [0x51, 0x31, 0x00], [0x51, 0x31, 0x01], [0x51, 0x31, 0x02], [0x51, 0x31, 0x03],
+            [0x51, 0x31, 0x09], [0x51, 0x31, 0x0A]]))
+    }
+
+    /// A command whose status is not "confirmed" is never sent, even when its bytes pass the device's check.
+    @Test func unconfirmedWriteIsRefused() throws {
+        let text = try devicesText()
+        let led = "\"name\": \"led\", \"write\": true, \"prefixes\": [\"51 28\"], \"status\": \"confirmed\""
+        #expect(text.contains(led))
+        let unconfirmed = try DeviceModels.decode(Data(text.replacingOccurrences(
+            of: led, with: led.replacingOccurrences(of: "\"confirmed\"", with: "\"captured\"")).utf8))
+        let write = try Command.setLED(.logo, LEDState(mode: .static, brightness: 100, color: RGB(0, 0, 255)))
+        #expect(Allowlist.isAllowedWrite(write.bytes, for: .mouse))
+        let prefixes = try #require(unconfirmed.model(.mouse)).confirmedWritePrefixes
+        #expect(!Allowlist.isAllowedWrite(write.bytes, for: .mouse, prefixes: prefixes))
+        #expect(!Allowlist.isAllowedWrite(write.bytes, for: .keyboard))   // never the other device's command
+    }
+}
+
+/// The capabilities read their reply offsets from the model, not from constants.
+@Suite struct MouseCapabilityModelTests {
+    private func shiftedModel() throws -> DeviceModels.Model {
+        // every reply offset +1, in a copy of the file
+        var json = try JSONSerialization.jsonObject(with: Data(try devicesText().utf8)) as! [String: Any]
+        var devices = json["devices"] as! [[String: Any]]
+        let i = devices.firstIndex { $0["kind"] as? String == "mouse" }!
+        var caps = devices[i]["capabilities"] as! [String: Any]
+        for (name, value) in caps {
+            guard var cap = value as? [String: Any] else { continue }
+            if var offsets = cap["offsets"] as? [String: Int] {
+                for (k, v) in offsets { offsets[k] = v + 1 }
+                cap["offsets"] = offsets
+            }
+            if name == "profile" {
+                cap["profile"] = (cap["profile"] as! Int) + 1
+                cap["receiver_firmware"] = (cap["receiver_firmware"] as! Int) + 1
+                cap["firmware"] = (cap["firmware"] as! [String: Int]).mapValues { $0 + 1 }
+            }
+            if name == "power" { cap["offset"] = (cap["offset"] as! Int) + 1 }
+            if name == "battery" { cap["warning"] = (cap["warning"] as! Int) + 1 }
+            caps[name] = cap
+        }
+        devices[i]["capabilities"] = caps
+        json["devices"] = devices
+        let data = try JSONSerialization.data(withJSONObject: json)
+        return try #require(try DeviceModels.decode(data).model(.mouse))
+    }
+
+    @Test func shiftedOffsetsParseAShiftedReply() throws {
+        let shifted = try MouseCapabilities(model: try shiftedModel())
+        let captures = try ProtocolCaptures.load(devicesURL().deletingLastPathComponent().appendingPathComponent("protocol.json"))
+        var plain = MouseSettings(connection: .omni), moved = MouseSettings(connection: .omni)
+        for capture in captures.settingsCaptures {
+            let query = try #require(SettingsQuery(rawValue: capture.command))
+            let p = Array(capture.bytes.dropFirst())
+            plain.apply(query, p)
+            moved.apply(query, Array(p.prefix(4)) + [0xEE] + Array(p.dropFirst(4)), capabilities: shifted)
+        }
+        let battery = Array(try #require(captures.vectors.first { $0.device == "mouse" && $0.reportId == 3 }).bytes.dropFirst())
+        plain.applyBattery(battery)
+        moved.applyBattery(Array(battery.prefix(4)) + [0xEE] + Array(battery.dropFirst(4)), capabilities: shifted)
+        #expect(plain.dpiXY.count == 4 && plain.leds.count == 3 && plain.surfaceID != nil && plain.lowWarning != nil)
+        #expect(moved == plain)
+    }
+
+    @Test func keyboardShiftedOffsetsParseAShiftedReply() throws {
+        var json = try JSONSerialization.jsonObject(with: Data(try devicesText().utf8)) as! [String: Any]
+        var devices = json["devices"] as! [[String: Any]]
+        let i = devices.firstIndex { $0["kind"] as? String == "keyboard" }!
+        var caps = devices[i]["capabilities"] as! [String: Any]
+        var profile = caps["kb_profile"] as! [String: Any]
+        for key in ["effect", "profile", "receiver_firmware"] { profile[key] = (profile[key] as! Int) + 1 }
+        profile["firmware"] = (profile["firmware"] as! [String: Int]).mapValues { $0 + 1 }
+        caps["kb_profile"] = profile
+        for (name, key) in [("kb_layout", "layout"), ("kb_sleep", "offset"), ("kb_warning", "offset")] {
+            var cap = caps[name] as! [String: Any]
+            cap[key] = (cap[key] as! Int) + 1
+            caps[name] = cap
+        }
+        devices[i]["capabilities"] = caps
+        json["devices"] = devices
+        let model = try #require(try DeviceModels.decode(JSONSerialization.data(withJSONObject: json)).model(.keyboard))
+        let shifted = try KeyboardCapabilities(model: model)
+        let captures = try ProtocolCaptures.load(devicesURL().deletingLastPathComponent().appendingPathComponent("protocol.json"))
+        func shift(_ p: [UInt8]) -> [UInt8] { Array(p.prefix(4)) + [0xEE] + Array(p.dropFirst(4)) }
+        for connection in [Battery.Connection.omni, .wired] {
+            var plain = KeyboardSettings(connection: connection), moved = KeyboardSettings(connection: connection)
+            for capture in captures.keyboardCaptures {
+                let query = try #require(KeyboardQuery(rawValue: capture.command))
+                let p = Array(capture.bytes.dropFirst())
+                plain.apply(query, p)
+                moved.apply(query, shift(p), capabilities: shifted)
+            }
+            let battery = Array(try #require(captures.vectors.first { $0.device == "keyboard" && $0.reportId == 2 }).bytes.dropFirst())
+            plain.applyBattery(battery)
+            moved.applyBattery(shift(battery), capabilities: shifted)
+            #expect(plain.profile != nil && plain.layoutID != nil && plain.lightMode != nil && plain.firmware != nil)
+            #expect(moved == plain)
+        }
+    }
+
+    /// Every change reads back only confirmed reads of its own device (the battery read included), so no read name
+    /// can silently fall back to the battery query.
+    @Test func changesReadOnlyConfirmedReads() throws {
+        let mouseChanges: [SettingChange] = LEDZone.allCases.map { .led($0, LEDState(mode: .static, brightness: 50, color: RGB(1, 2, 3))) }
+            + [.power(PowerSetting(offMinutes: 3, lowWarning: 20)), .angleSnapping(true), .angleTuning(5), .liftoff("low"),
+               .surface(0x01), .polling(500), .dpi(stage: 1, DPIStage(dpi: 800, color: RGB(0, 0, 0))), .activeStage(1), .stageCount(2)]
+        let mouse = MouseCapabilities.bundled.model
+        for change in mouseChanges {
+            #expect(!change.change.reads.isEmpty)
+            for read in change.change.reads {
+                let bytes = try #require(mouse.command(read)?.bytes?.bytes, "\(change): \(read)")
+                #expect(Allowlist.mouseReads.contains(bytes), "\(change): \(read)")
+            }
+        }
+        #expect(SettingChange.power(PowerSetting(offMinutes: 3, lowWarning: 20)).reads == [nil])
+        #expect(SettingChange.dpi(stage: 1, DPIStage(dpi: 800, color: RGB(0, 0, 0))).reads == [.dpiXY, .dpiColors])
+
+        let keyboardChanges: [KeyboardChange] = [.sleep(3), .warning(20), .light(KeyboardLight(effect: "static")), .keys([1: "#ff0000"])]
+        let keyboard = KeyboardCapabilities.bundled.model
+        for change in keyboardChanges {
+            for read in change.change.reads {
+                let bytes = try #require(keyboard.command(read)?.bytes?.bytes, "\(change): \(read)")
+                #expect(Allowlist.keyboardReads.contains(bytes), "\(change): \(read)")
+            }
+        }
+        #expect(KeyboardChange.keys([1: "#ff0000"]).isSaved == false)
+        #expect(KeyboardChange.light(KeyboardLight(effect: "static")).readBack == .profile)
+        #expect(KeyboardChange.sleep(3).readBack == nil)
+    }
+
+    @Test func modelWithoutACapabilityIsRefused() throws {
+        let text = try devicesText().replacingOccurrences(of: "\"polling\": {", with: "\"polling_gone\": {")
+        let model = try #require(try DeviceModels.decode(Data(text.utf8)).model(.mouse))
+        #expect(throws: ModelError.self) { try MouseCapabilities(model: model) }
+    }
+}
+
+/// Capability tables still written in Swift: each must match the file squire.py reads.
 @Suite struct DeviceModelConsistencyTests {
     @Test func targets() throws {
         let m = try models()
@@ -62,9 +245,6 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
                 #expect(target.reportID == nil)
             }
         }
-        #expect(SquireProtocol.omniReceiverPID == m.receiver("rog-omni")?.pid.value)
-        #expect(SquireProtocol.falchionRXLowProfilePID == (try keyboard()).route(.wired)?.pid?.value)
-        #expect(SquireProtocol.kerisIIOriginPID == (try mouse()).route(.wired)?.pid?.value)
     }
 
     @Test func bluetooth() throws {
@@ -92,6 +272,10 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
 
     @Test func mouseParameters() throws {
         let caps = (try mouse()).capabilities
+        let profile = try #require(caps.profile)
+        #expect(profile.read == "profile")
+        #expect(profile.profiles == nil)
+
         let leds = try #require(caps.ledZones)
         #expect(leds.zones.map(\.name) == LEDZone.allCases.map(\.rawValue))
         #expect(leds.zones.map(\.index.value) == LEDZone.allCases.map(\.index))
@@ -129,6 +313,9 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
         let caps = (try keyboard()).capabilities
         let profile = try #require(caps.kbProfile)
         #expect(profile.profiles == KeyboardSettings.profileCount)
+        let mouseCaps = (try mouse()).capabilities
+        #expect(mouseCaps.kbProfile == nil)
+        #expect(caps.profile == nil)
 
         let layout = try #require(caps.kbLayout)
         #expect(Dictionary(uniqueKeysWithValues: layout.layouts.compactMap { l in l.name.map { (l.id, $0) } })
