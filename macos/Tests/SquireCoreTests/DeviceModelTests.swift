@@ -92,6 +92,15 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
 
     @Test func mouseParameters() throws {
         let caps = (try mouse()).capabilities
+        let profile = try #require(caps.profile)
+        #expect(profile.read == "profile")
+        #expect(profile.profile == MouseSettings.profileOffset)
+        #expect(profile.profileBase == MouseSettings.profileBase)
+        #expect(profile.profiles == nil)
+        #expect(profile.firmware.omni == MouseSettings.firmwareOffsetOmni)
+        #expect(profile.firmware.wired == MouseSettings.firmwareOffsetWired)
+        #expect(profile.receiverFirmware == MouseSettings.receiverFirmwareOffset)
+
         let leds = try #require(caps.ledZones)
         #expect(leds.zones.map(\.name) == LEDZone.allCases.map(\.rawValue))
         #expect(leds.zones.map(\.index.value) == LEDZone.allCases.map(\.index))
@@ -129,6 +138,15 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
         let caps = (try keyboard()).capabilities
         let profile = try #require(caps.kbProfile)
         #expect(profile.profiles == KeyboardSettings.profileCount)
+        #expect(profile.effect == KeyboardSettings.effectOffset)
+        #expect(profile.profile == KeyboardSettings.profileOffset)
+        #expect(profile.profileBase == KeyboardSettings.profileBase)
+        #expect(profile.firmware.omni == KeyboardSettings.firmwareOffsetOmni)
+        #expect(profile.firmware.wired == KeyboardSettings.firmwareOffsetWired)
+        #expect(profile.receiverFirmware == KeyboardSettings.receiverFirmwareOffset)
+        let mouseCaps = (try mouse()).capabilities
+        #expect(mouseCaps.kbProfile == nil)
+        #expect(caps.profile == nil)
 
         let layout = try #require(caps.kbLayout)
         #expect(Dictionary(uniqueKeysWithValues: layout.layouts.compactMap { l in l.name.map { (l.id, $0) } })

@@ -147,6 +147,7 @@ public struct DeviceModels: Codable, Sendable {
         public let sensor: Sensor?
         public let surface: Surface?
         public let power: Power?
+        public let profile: Profile?
         public let kbProfile: KBProfile?
         public let kbLayout: KBLayout?
         public let kbLighting: KBLighting?
@@ -154,7 +155,7 @@ public struct DeviceModels: Codable, Sendable {
         public let kbWarning: KBWarning?
         public let perKey: PerKey?
         enum CodingKeys: String, CodingKey {
-            case battery, ledZones = "led_zones", dpi, polling, sensor, surface, power, kbProfile = "kb_profile"
+            case battery, ledZones = "led_zones", dpi, polling, sensor, surface, power, profile, kbProfile = "kb_profile"
             case kbLayout = "kb_layout", kbLighting = "kb_lighting", kbSleep = "kb_sleep", kbWarning = "kb_warning"
             case perKey = "per_key"
         }
@@ -255,11 +256,37 @@ public struct DeviceModels: Codable, Sendable {
         }
     }
 
+    /// Firmware offset per connection in the profile read (3 bytes build / minor / major).
+    public struct FirmwareOffsets: Codable, Sendable {
+        public let omni: Int?
+        public let wired: Int?
+    }
+
+    /// The profile read (12 00): active profile (`profileBase` 0 = counted from 0), firmware, receiver firmware.
+    public struct Profile: Codable, Sendable {
+        public let read: String
+        public let profile: Int
+        public let profileBase: Int
+        public let profiles: Int?
+        public let firmware: FirmwareOffsets
+        public let receiverFirmware: Int
+        enum CodingKeys: String, CodingKey {
+            case read, profile, profileBase = "profile_base", profiles, firmware, receiverFirmware = "receiver_firmware"
+        }
+    }
+
     public struct KBProfile: Codable, Sendable {
         public let read: String
         public let profiles: Int
         public let effect: Int
         public let profile: Int
+        public let profileBase: Int
+        public let firmware: FirmwareOffsets
+        public let receiverFirmware: Int
+        enum CodingKeys: String, CodingKey {
+            case read, profiles, effect, profile, profileBase = "profile_base", firmware
+            case receiverFirmware = "receiver_firmware"
+        }
     }
 
     public struct KBLayout: Codable, Sendable {

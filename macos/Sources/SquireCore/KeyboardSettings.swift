@@ -47,6 +47,14 @@ public struct KeyboardSettings: Equatable, Sendable {
     }
 
     public static let profileCount = 5
+    /// 12 00 offsets (devices.json capabilities.kb_profile; DeviceModelTests holds them to the file): effect, profile
+    /// 1-based, firmware (3 bytes build / minor / major) per connection, the Omni receiver's firmware.
+    public static let effectOffset = 9
+    public static let profileOffset = 10
+    public static let profileBase = 1
+    public static let firmwareOffsetOmni = 11
+    public static let firmwareOffsetWired = 4
+    public static let receiverFirmwareOffset = 4
 
     /// Effect ids in 12 00 [9] (G-Helper KeyboardLightingMode); 0xf1 = the host drives the LEDs directly.
     public static let lightModes: [UInt8: String] = [
@@ -70,12 +78,17 @@ public struct KeyboardSettings: Equatable, Sendable {
         guard p.count >= 14 else { return }
         switch query {
         case .profile:
-            lightMode = Self.lightModes[p[9]] ?? "0x" + ReplyParser.hex([p[9]])
-            profile = (1...Self.profileCount).contains(Int(p[10])) ? Int(p[10]) : nil
-            if connection != .wired, p[4..<7].contains(where: { $0 != 0 }) {
-                receiverFirmware = [p[6], p[5], p[4]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
+            let effect = p[Self.effectOffset]
+            lightMode = Self.lightModes[effect] ?? "0x" + ReplyParser.hex([effect])
+            let number = Int(p[Self.profileOffset]) + 1 - Self.profileBase
+            profile = (1...Self.profileCount).contains(number) ? number : nil
+            let rf = Self.receiverFirmwareOffset
+            if connection != .wired, p[rf..<rf + 3].contains(where: { $0 != 0 }) {
+                receiverFirmware = [p[rf + 2], p[rf + 1], p[rf]].map { ReplyParser.hex([$0]).uppercased() }
+                    .joined(separator: ".")
             }
-            let fw = connection == .wired ? Array(p[4..<7]) : Array(p[11..<14])   // cable: [4..6] (2026-11-21)
+            let at = connection == .wired ? Self.firmwareOffsetWired : Self.firmwareOffsetOmni   // cable: [4..6] (2026-11-21)
+            let fw = Array(p[at..<at + 3])
             if fw.contains(where: { $0 != 0 }) {
                 firmware = [fw[2], fw[1], fw[0]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
             }

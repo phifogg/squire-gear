@@ -89,6 +89,9 @@ contents:
   - src: squirelib/capabilities/power.py
     dst: /usr/share/squire-gear/squirelib/capabilities/power.py
     file_info: {mode: 0644}
+  - src: squirelib/capabilities/profile.py
+    dst: /usr/share/squire-gear/squirelib/capabilities/profile.py
+    file_info: {mode: 0644}
   - src: squirelib/capabilities/sensor.py
     dst: /usr/share/squire-gear/squirelib/capabilities/sensor.py
     file_info: {mode: 0644}

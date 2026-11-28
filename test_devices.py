@@ -76,6 +76,15 @@ class CheckerTests(unittest.TestCase):
         data = self.broken()
         device(data, "keyboard")["capabilities"]["per_key"]["layouts"]["iso"][0][0] = "00"   # row 0 does not exist
         self.assertProblem(data, "outside the 15 columns")
+        data = self.broken()
+        device(data, "mouse")["capabilities"]["profile"]["firmware"]["omni"] = 62   # 3 bytes do not fit
+        self.assertProblem(data, "profile.firmware.omni")
+        data = self.broken()
+        device(data, "mouse")["capabilities"]["profile"]["firmware"]["bluetooth"] = 4
+        self.assertProblem(data, "unknown connection 'bluetooth'")
+        data = self.broken()
+        device(data, "keyboard")["capabilities"]["kb_profile"]["profile_base"] = 2
+        self.assertProblem(data, "kb_profile.profile_base")
 
     def test_unique_pids_ids_and_commands(self):
         data = self.broken()
@@ -175,6 +184,30 @@ class ModelTests(unittest.TestCase):
         for device in squire.DEVICES.devices:
             for name in device.data["capabilities"]:
                 self.assertIn(name, capabilities.CLASSES_BY_NAME, f"{device.id}: {name}")
+
+    def test_profile_offsets_come_from_the_model(self):
+        """Moving the profile / firmware offsets in devices.json moves what the parser reads (no hard-coded copy)."""
+        p = bytes([0x12, 0x00, 0, 0, 0x08, 0x00, 0x07, 0, 0, 0, 0x02, 0, 0, 0, 0x0a, 0x00, 0x01, 0, 0, 0, 0x03] + [0] * 43)
+        s = squire.MouseSettings("", "omni")
+        squire.CAPABILITIES["mouse"]["profile"].parse(s, "profile", p)
+        self.assertEqual((s.profile, s.firmware, s.receiver_firmware), (3, "01.00.0A", "07.00.08"))
+        data = copy.deepcopy(DATA)
+        device(data, "mouse")["capabilities"]["profile"].update(profile=20, profile_base=1, receiver_firmware=14,
+                                                                firmware={"omni": 4, "wired": 4})
+        self.assertEqual(registry.check(data), [])
+        caps = capabilities.for_device(registry.Registry(data).by_kind("mouse"))
+        s = squire.MouseSettings("", "omni")
+        caps["profile"].parse(s, "profile", p)
+        self.assertEqual((s.profile, s.firmware, s.receiver_firmware), (3, "07.00.08", "01.00.0A"))
+        wired = squire.MouseSettings("", "wired")
+        caps["profile"].parse(wired, "profile", p)
+        self.assertEqual((wired.firmware, wired.receiver_firmware), ("07.00.08", None))   # no receiver on the cable
+
+    def test_profile_count_limits_the_profile(self):
+        p = bytes([0x12, 0x00] + [0] * 8 + [6] + [0] * 53)       # keyboard reports profile 6 of 5
+        s = squire.KeyboardSettings("", "omni")
+        squire.parse_keyboard_settings(s, "profile", p)
+        self.assertIsNone(s.profile)
 
     def test_never_switch_profile_or_debounce(self):
         for kind in ("keyboard", "mouse"):

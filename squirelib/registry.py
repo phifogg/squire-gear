@@ -208,11 +208,24 @@ def _check_power(c, cap, w, commands):
     _check_levels(c, cap, "warning_levels", w)
 
 
-def _check_kb_profile(c, cap, w, commands):
+def _check_profile(c, cap, w, commands, profiles_required: bool = False):
+    """The profile read (12 00): active profile offset, 0- or 1-based, optional profile count, and the firmware
+    (3 bytes build / minor / major) per connection, plus the receiver's on the Omni."""
     c.command_ref(cap, "read", w, commands, write=False)
-    c.field(cap, "profiles", w, int, low=1, high=16)
-    c.offset(cap, "effect", w)
+    c.field(cap, "profiles", w, int, profiles_required, low=1, high=16)
     c.offset(cap, "profile", w)
+    c.field(cap, "profile_base", w, int, low=0, high=1)
+    firmware = c.field(cap, "firmware", w, dict)
+    for connection, offset in (firmware or {}).items():
+        if connection not in ("omni", "wired"):
+            c.fail(f"{w}.firmware", f"unknown connection {connection!r}")
+        c.field(firmware, connection, f"{w}.firmware", int, low=0, high=61)   # 3 bytes
+    c.field(cap, "receiver_firmware", w, int, low=0, high=61)
+
+
+def _check_kb_profile(c, cap, w, commands):
+    _check_profile(c, cap, w, commands, profiles_required=True)
+    c.offset(cap, "effect", w)
 
 
 def _check_kb_layout(c, cap, w, commands):
@@ -321,6 +334,7 @@ CAPABILITIES = {
     "sensor": _check_sensor,
     "surface": _check_surface,
     "power": _check_power,
+    "profile": _check_profile,
     "kb_profile": _check_kb_profile,
     "kb_layout": _check_kb_layout,
     "kb_lighting": _check_kb_lighting,

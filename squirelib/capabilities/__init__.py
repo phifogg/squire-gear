@@ -120,9 +120,9 @@ class DeviceCapabilities:
 
 
 from . import (battery, dpi, kb_layout, kb_lighting, kb_profile, kb_sleep, kb_warning, led_zones,  # noqa: E402
-               per_key, polling, power, sensor, surface)
+               per_key, polling, power, profile, sensor, surface)
 
-CLASSES = (battery.Battery, led_zones.LedZones, dpi.Dpi, polling.Polling, sensor.Sensor, surface.Surface,
+CLASSES = (battery.Battery, profile.Profile, led_zones.LedZones, dpi.Dpi, polling.Polling, sensor.Sensor, surface.Surface,
            power.Power, kb_profile.KbProfile, kb_layout.KbLayout, kb_lighting.KbLighting, kb_sleep.KbSleep,
            kb_warning.KbWarning, per_key.PerKey)
 CLASSES_BY_NAME = {c.name: c for c in CLASSES}

@@ -159,6 +159,13 @@ public struct MouseSettings: Equatable, Sendable {
 
     public static let pollingRatesHz = [125, 250, 500, 1000, 2000, 4000, 8000, 16000]   // low 3 bits
     public static let powerOffMinutes: [UInt8: Int] = [0: 1, 1: 2, 2: 3, 3: 5, 4: 10]    // 0xff = never
+    /// 12 00 offsets (devices.json capabilities.profile; DeviceModelTests holds them to the file): profile 0-based,
+    /// firmware (3 bytes build / minor / major) per connection, the Omni receiver's firmware.
+    public static let profileOffset = 10
+    public static let profileBase = 0
+    public static let firmwareOffsetOmni = 14
+    public static let firmwareOffsetWired = 4
+    public static let receiverFirmwareOffset = 4
 
     /// Stages the DPI button uses (count from 12 00, else all read).
     public var activeDPI: [Int] {
@@ -179,7 +186,7 @@ public struct MouseSettings: Equatable, Sendable {
         func dpiValue(_ raw: Int) -> Int { raw * 50 + 50 }   // devices store (DPI - 50) / 50
         switch query {
         case .profile:
-            profile = Int(p[10]) + 1
+            profile = Int(p[Self.profileOffset]) + 1 - Self.profileBase
             dpiStage = p[11] == 0 ? nil : Int(p[11])
             dpiStageCount = (1...4).contains(p[18]) ? Int(p[18]) : nil
             // Firmware: 3 bytes, build.minor.major (shown major first, like libratbag). On the Keris II Origin the
@@ -190,10 +197,10 @@ public struct MouseSettings: Equatable, Sendable {
                     : [p[i + 2], p[i + 1], p[i]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
             }
             if connection == .wired {
-                firmware = version(4)
+                firmware = version(Self.firmwareOffsetWired)
             } else {
-                firmware = version(14)
-                receiverFirmware = version(4)
+                firmware = version(Self.firmwareOffsetOmni)
+                receiverFirmware = version(Self.receiverFirmwareOffset)
             }
         case .settings:
             // ff ff = not in this reply: separate-X/Y mice (like the Keris) report DPI only in dpi_xy

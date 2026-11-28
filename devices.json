@@ -40,7 +40,8 @@
       ],
       "capabilities": {
         "battery": {"read": "battery", "percent": [10, 5], "charging": 8, "warning": 9, "warning_min": 0},
-        "kb_profile": {"read": "profile", "profiles": 5, "effect": 9, "profile": 10},
+        "kb_profile": {"read": "profile", "profiles": 5, "effect": 9, "profile": 10, "profile_base": 1,
+                       "firmware": {"omni": 11, "wired": 4}, "receiver_firmware": 4},
         "kb_layout": {
           "read": "layout",
           "layout": 5,
@@ -167,6 +168,8 @@
       ],
       "capabilities": {
         "battery": {"read": "battery", "percent": [4], "charging": 9, "warning": 6, "warning_min": 1},
+        "profile": {"read": "profile", "profile": 10, "profile_base": 0,
+                    "firmware": {"omni": 14, "wired": 4}, "receiver_firmware": 4},
         "led_zones": {
           "write": "led",
           "save": "save",

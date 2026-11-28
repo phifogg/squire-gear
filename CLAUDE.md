@@ -111,8 +111,16 @@ writes with write=True, the device's report ID), exchange, query, read_batteries
 keyboard (was two copies), write_verified. squire.py keeps the old names as bound methods, the settings dataclasses +
 their parse dispatch, Bluetooth, key presets, CLI. Checked: 258 tests, snapshot unchanged, device runs incl. --debug
 traces (same packets, same order) and seven --dry-runs identical to main.
-Next in stage 3: mouse profile + firmware offsets into devices.json (a capability instead of parse_mouse_settings'
-special case); then the Swift side (SquireCore capability types, CI builds it).
+Step 2 (same day, not committed yet): the profile read 12 00 is data-driven for both devices. devices.json: mouse
+capability `profile` (profile 10, profile_base 0, firmware {omni 14, wired 4}, receiver_firmware 4), kb_profile got
+profile_base 1, firmware {omni 11, wired 4}, receiver_firmware 4 (checker: _check_profile, every key required). Python:
+capabilities/profile.py (Profile; KbProfile subclasses it + the effect); parse_mouse_settings has no special case
+left. Swift (written on Linux, CI compiles): DeviceModels.Profile / FirmwareOffsets, KBProfile got the same fields;
+MouseSettings / KeyboardSettings parse with named offsets (profileOffset, firmwareOffsetOmni, ...) that
+DeviceModelTests holds to the file. Checked: 260 tests, snapshot + device runs identical to main.
+Still hard-coded (Python + Swift): the other reply offsets (12 04 00 DPI / polling / debounce / angles, 12 04 02 / 03,
+12 03 LED, 12 06 surface, DPI active stage [11] / count [18] in 12 00), packet layouts in the builders. Next: those
+offsets the same way (optional), then the Swift capability split (SquireCore types per capability).
 Stage 2 state (Python, 2026-11-27): transport / route / protocol split into squirelib (see Layout).
 protocol.exchange() writes only what its `build` callable returns; Sessions.exchange() passes Sessions.packet() (the
 allowlist) since stage 3. Target got `connection` + `interface` (no more

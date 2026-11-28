@@ -291,7 +291,7 @@ def read_bluetooth(debug: bool = False) -> list[Battery]:
 
 
 # --- Mouse settings (read-only) ------------------------------------------------------------------------------
-# Each capability parses its part of the replies (capabilities/*.py: parse); profile + firmware are read here.
+# Each capability parses its part of the replies (capabilities/*.py: parse).
 
 
 @dataclass
@@ -324,20 +324,9 @@ class MouseSettings:
 
 
 def parse_mouse_settings(s: MouseSettings, name: str, p: bytes) -> None:
-    """Fill s from one reply payload p (starting at the echoed command)."""
+    """Fill s from one reply payload p (starting at the echoed command); each capability parses its part."""
     if len(p) < 20:
         return
-    if name == "profile":
-        s.profile = p[10] + 1
-        # Firmware: 3 bytes, build.minor.major (shown major first, like libratbag). On the Keris II Origin the
-        # mouse's own version is at [4..6] over the cable; via the Omni [4..6] is the receiver and the mouse moves
-        # to [14..16] (same bytes 09 00 01 = 01.00.09 both ways, 2026-11-12). libratbag's [13..15] is not it here.
-        def version(i: int) -> Optional[str]:
-            return f"{p[i + 2]:02X}.{p[i + 1]:02X}.{p[i]:02X}" if any(p[i:i + 3]) else None
-        if s.connection == "wired":
-            s.firmware = version(4)
-        else:
-            s.firmware, s.receiver_firmware = version(14), version(4)
     _M.parse(s, name, p)
 
 
