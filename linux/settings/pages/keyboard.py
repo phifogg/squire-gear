@@ -4,6 +4,7 @@ from typing import Optional
 
 import squire
 
+from .. import common
 from ..common import ROOT
 
 
@@ -205,9 +206,7 @@ class KeyboardPage:
     colours) with the Lighting card above, the Profile / Layout / Power cards below and, on the right, the editor of
     the selected card (kb_lighting with per_key, kb_power) or the values read. The keyboard reports only its effect,
     never its colour or brightness: `known` is what Squire last saved to the active profile."""
-    kind = "keyboard"
     noun = "keyboard"
-    title = "ROG Falchion RX LP"
     icon = "input-keyboard-symbolic"
     banner = "Lighting, sleep and the low-battery warning can be changed. Nothing is sent until you click Apply."
     status_texts = {
@@ -222,8 +221,9 @@ class KeyboardPage:
                      "mismatch": "The keyboard did not take the new value (read back differs). Nothing was saved.",
                      "no-response": "The keyboard did not answer. Press a key and click Apply again."}
 
-    def __init__(self, window):
+    def __init__(self, window, model):
         self.window = window
+        self.model = model                         # the devices.json model (id, name, kind)
         self.keyboard: Optional[squire.KeyboardSettings] = None
         self.selected = "kb_light"
         self.pending: dict = {}        # edits not sent yet (kb_sleep, kb_warning, kb_light, kb_keys)
@@ -239,11 +239,26 @@ class KeyboardPage:
     def data(self):
         return self.keyboard
 
-    def load(self, keyboard, demo: bool):
+    @property
+    def title(self) -> str:
+        return self.model.name
+
+    @property
+    def battery(self):
+        return self.window.batteries.get(self.model.kind)
+
+    def read(self):
+        """Read the settings (worker thread; --demo: the protocol.json captures)."""
+        return demo_keyboard() if common.DEMO else squire.read_keyboard_settings()
+
+    def error_data(self):
+        return squire.KeyboardSettings(self.title, "", status="error")
+
+    def load(self, keyboard):
         self.keyboard = keyboard
         ok = keyboard is not None and keyboard.status == "ok"
         self.known = squire.remembered_keyboard_light(keyboard.profile, keyboard.light_mode) \
-            if ok and not demo else None
+            if ok and not common.DEMO else None
 
     # stage ---------------------------------------------------------------------------------------------------
     def select(self, zone):
@@ -274,7 +289,7 @@ class KeyboardPage:
         k = self.keyboard
         fixed = Gtk.Fixed()
         fixed.set_size_request(STAGE_W, STAGE_H)
-        fixed.put(stage_title(k.name, self.window.batteries.get("keyboard")), 32, 24)
+        fixed.put(stage_title(k.name, self.battery), 32, 24)
 
         x, y = (STAGE_W - KB_W) // 2, 230
         per_key = self.per_key_mode()

@@ -581,10 +581,11 @@ class PageTests(unittest.TestCase):
         from settings.pages.keyboard import KeyboardPage
         from settings.pages.mouse import MousePage
         _, s = ui.demo_data()
-        self.mouse = MousePage(self.FakeWindow())
+        self.mouse = MousePage(self.FakeWindow(), squire.DEVICES.by_kind("mouse"))
         self.mouse.load(s)
-        self.keyboard = KeyboardPage(self.FakeWindow())
-        self.keyboard.load(ui.demo_keyboard(), demo=True)
+        self.keyboard = KeyboardPage(self.FakeWindow(), squire.DEVICES.by_kind("keyboard"))
+        self.keyboard.load(ui.demo_keyboard())          # common.DEMO is off: known comes from the saved file
+        self.keyboard.known = None
 
     def test_every_mouse_change_is_saved(self):
         self.mouse.pending = ui.edit_other(self.mouse.settings, {}, "polling_hz", 500)
@@ -630,6 +631,44 @@ class PageTests(unittest.TestCase):
         self.assertTrue(page.accept("kb_light", light, squire.WriteResult("ok", saved=True)))
         self.assertEqual((page.keyboard.light_mode, page.keys_active), ("static", None))
         self.assertEqual(page.known, ui.kb_light_sent(light))
+
+
+class SidebarTests(unittest.TestCase):
+    """The sidebar lists only the devices found (settings/pages: is_present, pick, sidebar_text)."""
+
+    def battery(self, status="ok", percent=80, connection="omni"):
+        return squire.Battery("mouse", "ROG Keris II Origin", connection, percent, status=status)
+
+    def settings(self, status):
+        return squire.MouseSettings("ROG Keris II Origin", "", status=status)
+
+    def test_found_by_the_battery_read_in_any_state(self):
+        from settings.pages import is_present
+        for b in (self.battery(), self.battery("asleep", None), self.battery("no-access", None),
+                  self.battery(connection="bluetooth")):
+            with self.subTest(status=b.status, connection=b.connection):
+                self.assertTrue(is_present(b, self.settings("not-found")))
+
+    def test_not_found_on_both_reads_is_not_listed(self):
+        from settings.pages import is_present
+        self.assertFalse(is_present(None, self.settings("not-found")))
+        self.assertFalse(is_present(None, None))
+        self.assertTrue(is_present(None, self.settings("ok")))
+        self.assertTrue(is_present(None, self.settings("error")))     # the page says the read failed
+
+    def test_selection_stays_while_listed(self):
+        from settings.pages import pick
+        self.assertEqual(pick(["falchion-rx-lp", "keris-ii-origin"], "keris-ii-origin"), "keris-ii-origin")
+        self.assertEqual(pick(["falchion-rx-lp"], "keris-ii-origin"), "falchion-rx-lp")
+        self.assertEqual(pick(["falchion-rx-lp", "keris-ii-origin"], None), "falchion-rx-lp")
+        self.assertIsNone(pick([], "keris-ii-origin"))
+
+    def test_sidebar_text(self):
+        from settings.pages import sidebar_text
+        self.assertEqual(sidebar_text(self.battery()), "Omni receiver · 80 %")
+        self.assertEqual(sidebar_text(self.battery("asleep", None)), "asleep")
+        self.assertEqual(sidebar_text(self.battery("no-access", None)), "no access")
+        self.assertEqual(sidebar_text(None), "not found")
 
 
 class LayeringTests(unittest.TestCase):

@@ -22,7 +22,7 @@ def build(page, prefs):
     from .power import POWER_OFF_CHOICES
     k = page.keyboard
     group = Adw.PreferencesGroup(title="Power", description="Battery")
-    b = page.window.batteries.get("keyboard")
+    b = page.battery
     if b and b.percent is not None:
         group.add(row("Battery", f"{b.percent} %", "charging" if b.charging else ""))
     p, _ = kb_preview(k, page.pending, page.known)

@@ -1,6 +1,7 @@
 """The settings window: devices on the left, the selected device's page (stage + editor) in the middle and on the
-right, the apply bar below the editor. Generic over the pages (pages/): the window reads every device, shows a
-status page when one cannot be read, and runs Apply the same way for each: write every change and read it back,
+right, the apply bar below the editor. Generic over the pages (pages/): one page per model in devices.json
+(the class by its kind), the sidebar lists the devices a read found, a page shows a status when its device cannot
+be read, and runs Apply the same way for each: write every change and read it back,
 save once with the last saved change and only if all of them matched, stop at the first failure.
 
 Imports GTK: only import it from squire_settings.run(), after unsnap_environment()."""
@@ -10,11 +11,13 @@ import threading
 import squire
 
 from . import common
-from .pages.keyboard import KB_ZONE_TITLES, KeyboardPage, demo_keyboard
+from .pages import NO_DEVICES, is_present, pick, sidebar_text
+from .pages.keyboard import KB_ZONE_TITLES, KeyboardPage
 from .pages.mouse import MousePage, demo_data
 from .widgets import Adw, Gdk, Gio, GLib, Gtk
 
 APP_ID = "io.github.phifogg.Squire.Settings"
+PAGE_CLASSES = {"mouse": MousePage, "keyboard": KeyboardPage}   # page class per model kind
 
 CSS = """
 .squire-stage { background: alpha(@view_fg_color, 0.03); }
@@ -37,9 +40,11 @@ CSS = """
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Squire", default_width=1320, default_height=800)
-        self.pages = {"mouse": MousePage(self), "keyboard": KeyboardPage(self)}
+        # one page per model, in devices.json order; keyed by the model id
+        self.pages = {m.id: PAGE_CLASSES[m.kind](self, m) for m in squire.DEVICES.devices if m.kind in PAGE_CLASSES}
         self.batteries: dict = {}
-        self.device = "mouse"
+        self.device = None             # model id of the page shown; None = no device found (or not read yet)
+        self.rebuilding = False
         self.loading = False
         self.applying = False
         self.apply_label = None
@@ -50,54 +55,64 @@ class Window(Adw.ApplicationWindow):
         self.refresh_button.connect("clicked", lambda _: self.refresh())
         header.pack_start(self.refresh_button)
         self.content_view.add_top_bar(header)
-        self.banner = Adw.Banner(title=self.pages["mouse"].banner, revealed=True)
+        self.banner = Adw.Banner(title="Nothing is sent until you click Apply.", revealed=False)   # per page
         self.content_view.add_top_bar(self.banner)
         split = Adw.NavigationSplitView(min_sidebar_width=240, max_sidebar_width=280)
         split.set_sidebar(self.build_sidebar())
         split.set_content(Adw.NavigationPage(title="Settings", child=self.content_view))
         self.toasts = Adw.ToastOverlay(child=split)
         self.set_content(self.toasts)
-        self.show_status("Reading the mouse…", "Squire reads the current settings. This takes about a second.",
+        self.show_status("Reading your devices…", "Squire reads the current settings. This takes about a second.",
                          spinner=True)
         self.refresh()
 
     def page(self):
-        return self.pages[self.device]
+        return self.pages.get(self.device)
+
+    def page_of_kind(self, kind):
+        return next(p for p in self.pages.values() if p.model.kind == kind)
 
     # sidebar -----------------------------------------------------------------------------------------------
     def build_sidebar(self):
+        """Filled by update_sidebar() after each read: only the devices found."""
         self.device_list = Gtk.ListBox(css_classes=["navigation-sidebar"])
-        self.device_rows = {}
-        for device, page in self.pages.items():
-            r = Adw.ActionRow(title=page.title, subtitle="…")
-            r.add_prefix(Gtk.Image(icon_name=page.icon))
-            r.device = device
-            self.device_list.append(r)
-            self.device_rows[device] = r
         self.device_list.connect("row-selected", self.on_device)
-        self.device_list.select_row(self.device_rows["mouse"])
+        self.device_rows = {}
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(Adw.HeaderBar(show_title=True))
         toolbar.set_content(self.device_list)
         return Adw.NavigationPage(title="Devices", child=toolbar)
 
     def on_device(self, _box, r):
-        if r is None:
+        if r is None or self.rebuilding:
             return
         self.device = r.device
         self.render()
 
+    def listed(self) -> list:
+        return [device for device, page in self.pages.items() if is_present(page.battery, page.data)]
+
     def update_sidebar(self):
-        for device, r in self.device_rows.items():
-            b = self.batteries.get(device)
-            if b is None:
-                text = "not found"
-            elif b.percent is None:
-                text = {"asleep": "asleep", "no-access": "no access"}.get(b.status, b.status)
-            else:
-                text = f"{squire.connection_label(b.connection)} · {b.percent} %" + \
-                       (" · charging" if b.charging else "")
-            r.set_subtitle(text)
+        """One row per device found, in devices.json order; keeps the selection while that device is listed."""
+        listed = self.listed()
+        self.device = pick(listed, self.device)
+        self.rebuilding = True
+        self.device_list.remove_all()
+        self.device_rows = {}
+        for device in listed:
+            page = self.pages[device]
+            r = Adw.ActionRow(title=page.title, subtitle=sidebar_text(page.battery))
+            r.add_prefix(Gtk.Image(icon_name=page.icon))
+            r.device = device
+            self.device_list.append(r)
+            self.device_rows[device] = r
+        if not listed:
+            self.device_list.append(Gtk.ListBoxRow(child=Gtk.Label(
+                label="No devices found", css_classes=["dim-label"], margin_top=12, margin_bottom=12),
+                activatable=False, selectable=False))
+        else:
+            self.device_list.select_row(self.device_rows[self.device])
+        self.rebuilding = False
 
     # reading -----------------------------------------------------------------------------------------------
     def refresh(self):
@@ -106,31 +121,31 @@ class Window(Adw.ApplicationWindow):
         self.loading = True
         self.refresh_button.set_sensitive(False)
 
+        pages = dict(self.pages)
+
         def worker():
             try:
-                if common.DEMO:
-                    batteries, settings = demo_data()
-                else:
-                    batteries = {b.device: b for b in squire.read_all()}
-                    settings = squire.read_mouse_settings()
+                batteries = demo_data()[0] if common.DEMO else {b.device: b for b in squire.read_all()}
             except Exception as error:  # keep the window alive whatever the device does
-                print(f"squire-settings: read failed: {error}", file=sys.stderr)
-                batteries, settings = {}, squire.MouseSettings("ROG Keris II Origin", "", status="error")
-            try:
-                keyboard = demo_keyboard() if common.DEMO else squire.read_keyboard_settings()
-            except Exception as error:
-                print(f"squire-settings: keyboard read failed: {error}", file=sys.stderr)
-                keyboard = squire.KeyboardSettings("ROG Falchion RX LP", "", status="error")
-            GLib.idle_add(self.loaded, batteries, settings, keyboard)
+                print(f"squire-settings: battery read failed: {error}", file=sys.stderr)
+                batteries = {}
+            data = {}
+            for device, page in pages.items():
+                try:
+                    data[device] = page.read()
+                except Exception as error:
+                    print(f"squire-settings: {page.noun} read failed: {error}", file=sys.stderr)
+                    data[device] = page.error_data()
+            GLib.idle_add(self.loaded, batteries, data)
 
         threading.Thread(target=worker, name="squire-read", daemon=True).start()
 
-    def loaded(self, batteries, settings, keyboard=None):
+    def loaded(self, batteries, data):
         self.loading = False
         self.refresh_button.set_sensitive(True)
         self.batteries = batteries
-        self.pages["mouse"].load(settings)
-        self.pages["keyboard"].load(keyboard, common.DEMO)
+        for device, page in self.pages.items():
+            page.load(data[device])
         self.update_sidebar()
         self.render()
         if common.SCREENSHOT:
@@ -141,14 +156,20 @@ class Window(Adw.ApplicationWindow):
         """--screenshot PATH [ZONE] [edit ...]: save the window as PNG and quit (development aid)."""
         path, zone = common.SCREENSHOT[0], (common.SCREENSHOT[1:] or [None])[0]
         flags = common.SCREENSHOT[2:]
-        mouse, keyboard = self.pages["mouse"], self.pages["keyboard"]
+        mouse, keyboard = self.page_of_kind("mouse"), self.page_of_kind("keyboard")
+        if zone and zone not in KB_ZONE_TITLES and zone != "keyboard" and self.device != mouse.model.id:
+            self.device_list.select_row(self.device_rows[mouse.model.id])     # a mouse zone
+            GLib.timeout_add(400, self.capture)
+            return False
         if zone in KB_ZONE_TITLES:       # a keyboard zone: kb_light, kb_profile, kb_layout, kb_power
             if keyboard.selected != zone:
                 keyboard.selected = zone
                 self.render()
+                GLib.timeout_add(400, self.capture)     # let the new page lay out before the snapshot
+                return False
             zone = "keyboard"
-        if zone == "keyboard" and self.device != "keyboard":
-            self.device_list.select_row(self.device_rows["keyboard"])
+        if zone == "keyboard" and self.device != keyboard.model.id:
+            self.device_list.select_row(self.device_rows[keyboard.model.id])
             GLib.timeout_add(400, self.capture)
             return False
         if zone == "keyboard" and keyboard.demo_edit(flags):                       # not sent
@@ -184,6 +205,12 @@ class Window(Adw.ApplicationWindow):
 
     def render(self):
         page = self.page()
+        if page is None:
+            if not self.loading:
+                self.banner.set_revealed(False)          # nothing to apply
+                self.show_status(*NO_DEVICES)
+            return
+        self.banner.set_revealed(True)
         self.banner.set_title(page.banner)
         data = page.data
         if data is None:
@@ -191,7 +218,7 @@ class Window(Adw.ApplicationWindow):
         if data.status != "ok":
             # no settings over Bluetooth (no vendor HID collection there), but the device is connected: say so
             # instead of "not found" / "asleep"
-            bluetooth = common.bluetooth_status(self.batteries.get(page.kind), page.noun)
+            bluetooth = common.bluetooth_status(page.battery, page.noun)
             if bluetooth:
                 self.banner.set_title("Connected over Bluetooth: battery level only, no settings.")
             title, text = bluetooth or page.status_texts.get(
@@ -246,7 +273,7 @@ class Window(Adw.ApplicationWindow):
     def update_preview(self):
         """After an edit: the page's drawing and cards, then the apply bar (status, buttons, planned bytes)."""
         page = self.page()
-        if page.data is None or page.data.status != "ok":
+        if page is None or page.data is None or page.data.status != "ok":
             return
         page.update_preview()
         if self.apply_label is not None:
@@ -258,13 +285,14 @@ class Window(Adw.ApplicationWindow):
             self.bytes_label.set_label("\n".join(lines) if lines else "Nothing to send.")
 
     def revert(self):
-        self.page().revert()
+        if self.page() is not None:
+            self.page().revert()
         self.render()
 
     # Apply -------------------------------------------------------------------------------------------------
     def apply_changes(self):
         page = self.page()
-        keys = page.changes() if page.data else []
+        keys = page.changes() if page is not None and page.data else []
         if self.applying or not keys:
             return
         self.applying = True

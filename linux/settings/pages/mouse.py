@@ -4,6 +4,7 @@ from typing import Optional
 
 import squire
 
+from .. import common
 from ..common import ROOT
 
 
@@ -204,9 +205,7 @@ class MousePage:
     """The mouse page: the drawing with hotspots and callouts, the chips below it and, on the right, the editor of
     the selected zone (one editor per capability: led_zones, dpi, sensor, power). The window owns the apply bar
     and the Apply flow; this page says what Apply writes and how a result is taken over."""
-    kind = "mouse"
     noun = "mouse"
-    title = "ROG Keris II Origin"
     icon = "input-mouse-symbolic"
     banner = "Lights, DPI, sensor and power settings can be changed. Nothing is sent until you click Apply."
     status_texts = {
@@ -221,8 +220,9 @@ class MousePage:
                      "mismatch": "The mouse did not take the new value (read back differs). Nothing was saved.",
                      "no-response": "The mouse did not answer. Move it and click Apply again."}
 
-    def __init__(self, window):
+    def __init__(self, window, model):
         self.window = window
+        self.model = model             # the devices.json model (id, name, kind)
         self.settings: Optional[squire.MouseSettings] = None
         self.selected = "logo"
         self.pending: dict = {}        # zone -> led dict not sent yet, plus OTHER_KEYS
@@ -235,6 +235,21 @@ class MousePage:
     @property
     def data(self):
         return self.settings
+
+    @property
+    def title(self) -> str:
+        return self.model.name
+
+    @property
+    def battery(self):
+        return self.window.batteries.get(self.model.kind)
+
+    def read(self):
+        """Read the settings (worker thread; --demo: the protocol.json captures)."""
+        return demo_data()[1] if common.DEMO else squire.read_mouse_settings()
+
+    def error_data(self):
+        return squire.MouseSettings(self.title, "", status="error")
 
     def load(self, settings):
         self.settings = settings
@@ -257,7 +272,7 @@ class MousePage:
         s = self.settings
         fixed = Gtk.Fixed()
         fixed.set_size_request(STAGE_W, STAGE_H)
-        fixed.put(stage_title(s.name, self.window.batteries.get("mouse")), 32, 24)
+        fixed.put(stage_title(s.name, self.battery), 32, 24)
 
         x, y, w, h = DRAWING
         drawing = Gtk.Picture.new_for_paintable(texture(mouse_svg(preview_settings(s, self.pending))))

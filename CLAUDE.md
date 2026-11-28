@@ -98,7 +98,7 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
 ## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 merged 2026-11-27 (PR #14), stage 3 + 1b merged 2026-11-28 (PR #15); stage 4 on `refactor-editors`)
-Stage 4 (branch `refactor-editors`, Linux window, 2026-11-28, not committed yet): linux/squire_settings.py (2115 lines)
+Stage 4 (branch `refactor-editors`, Linux window, 2026-11-28, step 1 = 8118a84, pushed): linux/squire_settings.py (2115 lines)
 is now an 84-line entry point; linux/settings/ holds the window (see Layout). The window is generic over page objects
 (MousePage, KeyboardPage: data/load, build_stage, build_inspector, update_preview, changes, saved_changes,
 planned_packets, apply_status, write, accept, change_title, success_title, status/failure texts, demo_edit); Apply
@@ -108,8 +108,16 @@ byte-identical to main (every zone, edits, per-key, rainbow, raindrop); a widget
 editor, linked zones, DPI stage rules, Apply/Revert on both devices in --demo, per-key paint/presets, device switch)
 dumps every visible label, combo, switch, button and drawing: identical to main, no exceptions. Packaged: nfpm lists
 each linux/settings file, linux/install.sh copies them (`find settings`), release.yml paths has linux/settings/**.
-Still to do in stage 4: the sidebar from the registry (devices found, keyed by model id, restricted states), a plain
-parameter page for a model without a drawing, then the macOS SettingsWindow.swift split (on the Mac).
+Step 2 (same day, owner tested it on the device: asleep keyboard listed, Omni unplugged = keyboard gone): one page per model in devices.json (window.PAGE_CLASSES picks the class by
+kind; page.model, page.title = model name, page.read() / error_data(), page.battery = batteries[model.kind] until
+two models of a kind exist), self.device = model id. The sidebar is rebuilt after each read and lists only devices
+found (pages.is_present: a battery reading in any state, incl. asleep / no access / Bluetooth only, or a settings
+read that did not say not-found), in devices.json order (keyboard first, like the tray), keeping the selection while
+it is listed (pages.pick); none found = "No devices found" in the sidebar + a status page with a hint, banner hidden.
+Checked: 275 tests; all 16 screenshots identical to main right of the sidebar (only the row order changed); the
+54-step drive identical except the start page; faked reads (no device, keyboard only, mouse over Bluetooth) render.
+Still to do in stage 4: a plain parameter page for a model without a drawing, then the macOS SettingsWindow.swift
+split (on the Mac).
 Stage 3 (Python, 2026-11-28, merged in PR #15): squirelib/capabilities/ has one class per
 devices.json capability (battery, led_zones, dpi, polling, sensor, surface, power, kb_profile, kb_layout, kb_lighting,
 kb_sleep, kb_warning, per_key), each built from the Device with its params. A capability holds its write builders
@@ -496,7 +504,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
 - [ ] Backlog (Swift app): battery history log (CSV in Application Support: time, percent, charging, mV per
       poll), to check whether the percentage steps down while the voltage drifts; later "time remaining".
       Observed: the keyboard stayed at 78 % for a day while mV went ~4088 -> ~4080.
-- [ ] Backlog (owner, 2026-11-22): settings window lists only the devices that are connected (today both are always
+- [ ] Backlog (owner, 2026-11-22; Linux done in stage 4 step 2, macOS open): settings window lists only the devices that are connected (today both are always
       listed, even when nothing is found); keep a hint when none is connected
 - [ ] Backlog (owner, 2026-11-22): animate the keyboard effects in the settings drawing (especially raindrop,
       rainbow, ripple, starry night, ...), using the chosen speed / direction / colours; static effects stay a glow

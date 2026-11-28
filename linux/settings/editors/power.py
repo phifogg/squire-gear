@@ -15,7 +15,7 @@ def build(page, group):
     from ..pages.mouse import current_other
     from ..widgets import Adw, Gtk, row
     s = page.settings
-    b = page.window.batteries.get("mouse")
+    b = page.battery
     if b and b.percent is not None:
         group.add(row("Battery", f"{b.percent} %", "charging" if b.charging else ""))
     if can_edit_power(s):
