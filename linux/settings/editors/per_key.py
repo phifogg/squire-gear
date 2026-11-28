@@ -47,7 +47,9 @@ def build(page, group):
     if page.keys_active is not None and "kb_keys" not in page.pending:
         group.add(row("On the keyboard", "Per-key colors",
                       "Sent from this window; Squire cannot tell whether the keyboard still shows them"))
-    brush = Adw.ActionRow(title="Brush color", subtitle="Click or drag over keys in the drawing to paint them")
+    brush = Adw.ActionRow(title="Brush color",
+                          subtitle="Click or drag over keys in the drawing to paint them" if page.drawing is not None
+                          else "No drawing of this keyboard yet: Fill, Off and presets set the keys")
     button = color_button(page.brush)
 
     def on_brush(btn, _p):

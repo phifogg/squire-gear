@@ -83,6 +83,21 @@ def stage_title(name: str, battery):
     return title
 
 
+def plain_stage(name: str, battery, cards: list, width: int = 660):
+    """The stage of a model without a drawing: name and battery, then one card per setting."""
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16, margin_top=24, margin_start=32, margin_end=32)
+    box.set_size_request(width - 64, -1)
+    box.append(stage_title(name, battery))
+    box.append(Gtk.Label(label="Squire has no drawing of this model yet. Pick a setting:", xalign=0,
+                         css_classes=["dim-label"]))
+    flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=3, min_children_per_line=3,
+                       column_spacing=10, row_spacing=10, homogeneous=True)
+    for card_button in cards:
+        flow.append(card_button)
+    box.append(flow)
+    return box
+
+
 def chip_row(hint: str, chips: list, width: int):
     """The hint and the chips below the drawing."""
     row_box = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER)

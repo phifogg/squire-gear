@@ -14,6 +14,29 @@ ZONE_TITLES = {"wheel": "Scroll wheel light", "logo": "Logo light", "side": "Sid
                "dpi": "DPI stages (button on the underside)", "sensor": "Sensor", "power": "Power"}
 ZONE_KINDS = {"wheel": "Lighting", "logo": "Lighting", "side": "Lighting", "dpi": "Performance",
               "sensor": "Performance", "power": "Battery"}
+ZONE_CARD_TITLES = {"wheel": "Scroll wheel", "logo": "Logo", "side": "Side", "dpi": "DPI", "sensor": "Sensor",
+                    "power": "Power"}
+
+
+def zone_title(zone: str) -> str:
+    """Inspector title; an LED zone of another model gets its name from devices.json."""
+    return ZONE_TITLES.get(zone) or f"{zone.capitalize()} light"
+
+
+def mouse_zones(model) -> list:
+    """(zone, card title) per setting the model's capabilities give, in page order: its LED zones (devices.json
+    order), DPI, sensor (polling, sensor, surface), power."""
+    zones = []
+    if model.has("led_zones"):
+        zones += [(z["name"], ZONE_CARD_TITLES.get(z["name"], z["name"].capitalize()))
+                  for z in model.capability("led_zones")["zones"]]
+    if model.has("dpi"):
+        zones.append(("dpi", "DPI"))
+    if any(model.has(c) for c in ("polling", "sensor", "surface")):
+        zones.append(("sensor", "Sensor"))
+    if model.has("power"):
+        zones.append(("power", "Power"))
+    return zones
 
 
 def mode_name(mode: str) -> str:
@@ -223,8 +246,9 @@ class MousePage:
     def __init__(self, window, model):
         self.window = window
         self.model = model             # the devices.json model (id, name, kind)
+        self.zones = mouse_zones(model)
         self.settings: Optional[squire.MouseSettings] = None
-        self.selected = "logo"
+        self.selected = "logo" if "logo" in dict(self.zones) else self.zones[0][0]
         self.pending: dict = {}        # zone -> led dict not sent yet, plus OTHER_KEYS
         self.link_zones = False        # "Same effect on all zones"
         self.value_labels: dict = {}   # zone -> callout/chip value label
@@ -266,6 +290,13 @@ class MousePage:
         return button
 
     def build_stage(self):
+        from ..drawings import has_drawing
+        from ..widgets import plain_stage
+        if common.PLAIN or not has_drawing(self.model):
+            self.drawing = None
+            return plain_stage(self.settings.name, self.battery,
+                               [self.card(zone, title, zone_summary(self.settings, zone), 190)
+                                for zone, title in self.zones])
         from ..drawings.mouse import CALLOUTS, CALLOUT_TITLES, CHIPS, DRAWING, HOTSPOTS, LINES, STAGE_H, STAGE_W, \
             mouse_svg
         from ..widgets import Gtk, chip_row, stage_title, texture
@@ -307,7 +338,7 @@ class MousePage:
         s = self.settings
         page = Adw.PreferencesPage(hexpand=False)
         zone = self.selected
-        group = Adw.PreferencesGroup(title=ZONE_TITLES[zone], description=ZONE_KINDS[zone])
+        group = Adw.PreferencesGroup(title=zone_title(zone), description=ZONE_KINDS.get(zone, "Lighting"))
         if zone in squire.LED_ZONES:
             led_zones.build(self, group, zone)
         elif zone == "dpi":

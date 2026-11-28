@@ -671,6 +671,44 @@ class SidebarTests(unittest.TestCase):
         self.assertEqual(sidebar_text(None), "not found")
 
 
+class PlainPageTests(unittest.TestCase):
+    """Zones come from the model's capabilities; a model without a drawing gets the plain page."""
+
+    class Model:
+        def __init__(self, model_id, capabilities):
+            self.id, self.name, self.capabilities = model_id, "Some mouse", capabilities
+
+        def has(self, capability):
+            return capability in self.capabilities
+
+        def capability(self, name):
+            return self.capabilities[name]
+
+    def test_zones_of_todays_models(self):
+        from settings.pages.keyboard import keyboard_zones
+        from settings.pages.mouse import mouse_zones
+        self.assertEqual(mouse_zones(squire.DEVICES.by_kind("mouse")),
+                         [("logo", "Logo"), ("wheel", "Scroll wheel"), ("side", "Side"), ("dpi", "DPI"),
+                          ("sensor", "Sensor"), ("power", "Power")])
+        self.assertEqual([z for z, _ in keyboard_zones(squire.DEVICES.by_kind("keyboard"))],
+                         ["kb_light", "kb_profile", "kb_layout", "kb_power"])
+
+    def test_todays_models_have_drawings(self):
+        from settings.drawings import has_drawing
+        for model in squire.DEVICES.devices:
+            self.assertTrue(has_drawing(model), model.id)
+
+    def test_a_new_model_gets_its_own_zones_and_no_drawing(self):
+        from settings.drawings import has_drawing
+        from settings.pages.mouse import MousePage, mouse_zones, zone_title
+        model = self.Model("some-mouse", {"led_zones": {"zones": [{"name": "wheel"}, {"name": "rear"}]},
+                                          "power": {}})
+        self.assertEqual(mouse_zones(model), [("wheel", "Scroll wheel"), ("rear", "Rear"), ("power", "Power")])
+        self.assertFalse(has_drawing(model))
+        self.assertEqual(zone_title("rear"), "Rear light")
+        self.assertEqual(MousePage(PageTests.FakeWindow(), model).selected, "wheel")   # no logo: the first zone
+
+
 class LayeringTests(unittest.TestCase):
     """Only settings/widgets.py and settings/window.py load GTK; the rest stays importable without it."""
 

@@ -8,6 +8,7 @@ APP_DIR = Path(__file__).resolve().parents[1]
 # protocol.json (for --demo) is in the repository root, one folder up from linux/
 ROOT = APP_DIR.parent if (APP_DIR.parent / "protocol.json").exists() else APP_DIR
 DEMO = False            # --demo: show the captures from protocol.json instead of asking the devices; Apply sends nothing
+PLAIN = False           # --plain: the plain page (cards, no drawing) for every model, as for one without artwork
 SCREENSHOT: list = []   # --screenshot PATH [ZONE] [edit ...]: save a PNG and quit (squire_settings.main sets both)
 
 

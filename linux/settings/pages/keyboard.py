@@ -89,6 +89,14 @@ def keyboard_zone_summary(k: "squire.KeyboardSettings", zone: str, light: Option
     return ""
 
 
+def keyboard_zones(model) -> list:
+    """(zone, card title) per setting the model's capabilities give: lighting (effects or per-key colours),
+    profile, layout, power (sleep, warning)."""
+    wanted = (("kb_light", ("kb_lighting", "per_key")), ("kb_profile", ("kb_profile",)),
+              ("kb_layout", ("kb_layout",)), ("kb_power", ("kb_sleep", "kb_warning")))
+    return [(zone, KB_ZONE_TITLES[zone]) for zone, caps in wanted if any(model.has(c) for c in caps)]
+
+
 # Apply order: the saved ones first (the last of them carries the save), per-key colours after them, never saved
 KB_KEYS = ("kb_sleep", "kb_warning", "kb_light", "kb_keys")
 KB_SAVED_KEYS = ("kb_sleep", "kb_warning", "kb_light")
@@ -224,8 +232,9 @@ class KeyboardPage:
     def __init__(self, window, model):
         self.window = window
         self.model = model                         # the devices.json model (id, name, kind)
+        self.zones = keyboard_zones(model)
         self.keyboard: Optional[squire.KeyboardSettings] = None
-        self.selected = "kb_light"
+        self.selected = "kb_light" if "kb_light" in dict(self.zones) else self.zones[0][0]
         self.pending: dict = {}        # edits not sent yet (kb_sleep, kb_warning, kb_light, kb_keys)
         self.known: Optional[dict] = None          # the lighting Squire last saved to the active profile
         self.background: Optional[str] = None      # last background colour, kept while the switch is off
@@ -283,6 +292,11 @@ class KeyboardPage:
         return kb_shown_keys(self.pending, self.keys_active, self.per_key_mode())
 
     def build_stage(self):
+        from ..drawings import has_drawing
+        from ..widgets import plain_stage
+        if common.PLAIN or not has_drawing(self.model):
+            self.drawing = None
+            return plain_stage(self.keyboard.name, self.battery, [self.card(zone, 190) for zone, _ in self.zones])
         from ..drawings.keyboard import KB_H, KB_PAD, KB_W, keyboard_svg
         from ..drawings.mouse import STAGE_H, STAGE_W
         from ..widgets import Gdk, Gtk, chip_row, stage_title, texture

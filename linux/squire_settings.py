@@ -77,7 +77,8 @@ def main() -> int:
         common.SCREENSHOT.extend(a for a in args[i + 1:i + 5] if not a.startswith("-"))
         del args[i:i + 1 + len(common.SCREENSHOT)]
     common.DEMO = "--demo" in args
-    return run([sys.argv[0]] + [a for a in args if a not in ("--debug", "--demo")])
+    common.PLAIN = "--plain" in args        # the plain page for every model (as for one without a drawing)
+    return run([sys.argv[0]] + [a for a in args if a not in ("--debug", "--demo", "--plain")])
 
 
 if __name__ == "__main__":

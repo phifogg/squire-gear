@@ -92,7 +92,8 @@ python3 squire.py --list / --debug             # from the repo
 python3 linux/squire_tray.py --debug           # tray app from the repo, prints each read
 python3 squire.py --settings [--json] [--debug] # mouse DPI / LEDs / sensor / power, read-only
 python3 squire.py --keyboard-settings [--json]   # keyboard profile / layout / lighting effect, read-only
-python3 linux/squire_settings.py [--demo]       # settings window from the repo (--demo: no device access)
+python3 linux/squire_settings.py [--demo] [--plain]  # settings window from the repo (--demo: no device access;
+                                               # --plain: the page without drawing for every model)
 ./linux/install.sh [--no-udev] [--no-start]    # install for the current user
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
@@ -116,8 +117,15 @@ read that did not say not-found), in devices.json order (keyboard first, like th
 it is listed (pages.pick); none found = "No devices found" in the sidebar + a status page with a hint, banner hidden.
 Checked: 275 tests; all 16 screenshots identical to main right of the sidebar (only the row order changed); the
 54-step drive identical except the start page; faked reads (no device, keyboard only, mouse over Bluetooth) render.
-Still to do in stage 4: a plain parameter page for a model without a drawing, then the macOS SettingsWindow.swift
-split (on the Mac).
+Step 3 (same day, not committed yet): drawings belong to a model id (drawings.DRAWINGS, has_drawing), not a kind.
+A page's zones come from the model's capabilities (pages.mouse.mouse_zones: its LED zones in devices.json order,
+dpi, sensor = polling/sensor/surface, power; pages.keyboard.keyboard_zones: kb_light = kb_lighting/per_key,
+kb_profile, kb_layout, kb_power = kb_sleep/kb_warning); an LED zone of another model is titled from its name. A
+model without a drawing gets the plain stage (widgets.plain_stage: name, battery, one card per zone; same editors on
+the right; per-key colours then by Fill / Off / presets only). `--plain` forces it for every model (development aid,
+e.g. `--demo --plain --screenshot PATH sensor`). Checked: 277 tests (zones of both models, a made-up model with
+its own LED zone and no drawing); all 16 drawn screenshots still identical to main right of the sidebar.
+Still to do in stage 4: the macOS SettingsWindow.swift split (on the Mac).
 Stage 3 (Python, 2026-11-28, merged in PR #15): squirelib/capabilities/ has one class per
 devices.json capability (battery, led_zones, dpi, polling, sensor, surface, power, kb_profile, kb_layout, kb_lighting,
 kb_sleep, kb_warning, per_key), each built from the Device with its params. A capability holds its write builders
