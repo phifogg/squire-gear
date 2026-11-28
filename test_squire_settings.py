@@ -565,5 +565,86 @@ class KeyboardDrawingTests(unittest.TestCase):
         self.assertNotIn("kb-glow)", dark)
 
 
+class PageTests(unittest.TestCase):
+    """The page classes the window runs Apply with (settings/pages): order, save rule, taking over results."""
+
+    class FakeWindow:
+        batteries: dict = {}
+
+        def update_preview(self):
+            pass
+
+        def render(self):
+            pass
+
+    def setUp(self):
+        from settings.pages.keyboard import KeyboardPage
+        from settings.pages.mouse import MousePage
+        _, s = ui.demo_data()
+        self.mouse = MousePage(self.FakeWindow())
+        self.mouse.load(s)
+        self.keyboard = KeyboardPage(self.FakeWindow())
+        self.keyboard.load(ui.demo_keyboard(), demo=True)
+
+    def test_every_mouse_change_is_saved(self):
+        self.mouse.pending = ui.edit_other(self.mouse.settings, {}, "polling_hz", 500)
+        self.mouse.pending = ui.edit_other(self.mouse.settings, self.mouse.pending, "angle_snapping", True)
+        work = {key: self.mouse.pending[key] for key in self.mouse.changes()}
+        self.assertEqual(self.mouse.saved_changes(work), ["angle_snapping", "polling_hz"])
+
+    def test_per_key_colours_are_never_saved(self):
+        k = self.keyboard.keyboard
+        pending = ui.kb_edit(k, {}, "kb_sleep", 10)
+        pending = ui.kb_select_per_key(k, pending, None, "#000000")
+        self.keyboard.pending = pending
+        work = {key: pending[key] for key in self.keyboard.changes()}
+        self.assertEqual(list(work), ["kb_sleep", "kb_keys"])
+        self.assertEqual(self.keyboard.saved_changes(work), ["kb_sleep"])
+
+    def test_a_saved_result_is_taken_over(self):
+        page = self.mouse
+        page.pending = {"polling_hz": 500}
+        self.assertTrue(page.accept("polling_hz", 500, squire.WriteResult("ok", saved=True)))
+        self.assertEqual((page.settings.polling_hz, page.settings.polling_raw & 0x07, page.pending), (500, 2, {}))
+
+    def test_an_unsaved_or_failed_result_stays_pending(self):
+        page = self.mouse
+        page.pending = {"polling_hz": 500}
+        self.assertFalse(page.accept("polling_hz", 500, squire.WriteResult("ok", saved=False)))
+        self.assertFalse(page.accept("polling_hz", 500, squire.WriteResult("mismatch")))
+        self.assertEqual((page.settings.polling_hz, page.pending), (1000, {"polling_hz": 500}))
+
+    def test_per_key_colours_count_when_sent(self):
+        page = self.keyboard
+        keys = ui.kb_keys_start(page.keyboard, None, "#ff0000")
+        page.pending = {"kb_keys": keys}
+        self.assertTrue(page.accept("kb_keys", keys, squire.WriteResult("ok", saved=False)))
+        self.assertEqual((page.keys_active, page.pending), (keys, {}))
+        self.assertTrue(page.per_key_mode())
+
+    def test_a_saved_effect_ends_per_key_mode(self):
+        page = self.keyboard
+        page.keys_active = ui.kb_keys_start(page.keyboard, None, "#ff0000")
+        light = squire.keyboard_light_value("static", 50, "#00ff00")
+        page.pending = {"kb_light": light}
+        self.assertTrue(page.accept("kb_light", light, squire.WriteResult("ok", saved=True)))
+        self.assertEqual((page.keyboard.light_mode, page.keys_active), ("static", None))
+        self.assertEqual(page.known, ui.kb_light_sent(light))
+
+
+class LayeringTests(unittest.TestCase):
+    """Only settings/widgets.py and settings/window.py load GTK; the rest stays importable without it."""
+
+    def test_pages_editors_drawings_do_not_load_gtk(self):
+        import subprocess
+        code = ("import sys; sys.path[:0] = ['linux', '.']; import squire_settings, importlib, pathlib\n"
+                "for p in sorted(pathlib.Path('linux/settings').rglob('*.py')):\n"
+                "    name = '.'.join(p.relative_to('linux').with_suffix('').parts)\n"
+                "    if not name.endswith(('widgets', 'window')): importlib.import_module(name.removesuffix('.__init__'))\n"
+                "print('gi' in sys.modules)")
+        out = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).parent, capture_output=True, text=True)
+        self.assertEqual(out.stdout.strip(), "False", out.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

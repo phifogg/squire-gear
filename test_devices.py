@@ -336,6 +336,16 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn(f"src: squirelib/{name}", text)
                 self.assertIn(f"dst: /usr/share/squire-gear/squirelib/{name}", text)
 
+    def test_installers_copy_the_settings_window_package(self):
+        # squire_settings.py imports settings/ (window, pages, editors, drawings) from the folder it lives in
+        self.assertIn("find settings -name '*.py'", (ROOT / "linux/install.sh").read_text())
+        text = (ROOT / "linux/packaging/nfpm.yaml").read_text()
+        for path in sorted((ROOT / "linux/settings").rglob("*.py")):
+            name = path.relative_to(ROOT / "linux").as_posix()
+            with self.subTest(file=name):
+                self.assertIn(f"src: linux/{name}", text)
+                self.assertIn(f"dst: /usr/share/squire-gear/{name}", text)
+
     def test_swift_bundle_copy_equals_the_root_file(self):
         # SquireCore loads macos/Sources/SquireCore/Resources/devices.json at runtime (SwiftPM cannot reach the root
         # file); after an edit of devices.json, copy it there too.

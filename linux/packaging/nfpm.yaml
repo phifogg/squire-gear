@@ -131,6 +131,60 @@ contents:
   - src: linux/squire_settings.py
     dst: /usr/share/squire-gear/squire_settings.py
     file_info: {mode: 0644}
+  - src: linux/settings/__init__.py
+    dst: /usr/share/squire-gear/settings/__init__.py
+    file_info: {mode: 0644}
+  - src: linux/settings/common.py
+    dst: /usr/share/squire-gear/settings/common.py
+    file_info: {mode: 0644}
+  - src: linux/settings/drawings/__init__.py
+    dst: /usr/share/squire-gear/settings/drawings/__init__.py
+    file_info: {mode: 0644}
+  - src: linux/settings/drawings/keyboard.py
+    dst: /usr/share/squire-gear/settings/drawings/keyboard.py
+    file_info: {mode: 0644}
+  - src: linux/settings/drawings/mouse.py
+    dst: /usr/share/squire-gear/settings/drawings/mouse.py
+    file_info: {mode: 0644}
+  - src: linux/settings/editors/__init__.py
+    dst: /usr/share/squire-gear/settings/editors/__init__.py
+    file_info: {mode: 0644}
+  - src: linux/settings/editors/dpi.py
+    dst: /usr/share/squire-gear/settings/editors/dpi.py
+    file_info: {mode: 0644}
+  - src: linux/settings/editors/kb_lighting.py
+    dst: /usr/share/squire-gear/settings/editors/kb_lighting.py
+    file_info: {mode: 0644}
+  - src: linux/settings/editors/kb_power.py
+    dst: /usr/share/squire-gear/settings/editors/kb_power.py
+    file_info: {mode: 0644}
+  - src: linux/settings/editors/led_zones.py
+    dst: /usr/share/squire-gear/settings/editors/led_zones.py
+    file_info: {mode: 0644}
+  - src: linux/settings/editors/per_key.py
+    dst: /usr/share/squire-gear/settings/editors/per_key.py
+    file_info: {mode: 0644}
+  - src: linux/settings/editors/power.py
+    dst: /usr/share/squire-gear/settings/editors/power.py
+    file_info: {mode: 0644}
+  - src: linux/settings/editors/sensor.py
+    dst: /usr/share/squire-gear/settings/editors/sensor.py
+    file_info: {mode: 0644}
+  - src: linux/settings/pages/__init__.py
+    dst: /usr/share/squire-gear/settings/pages/__init__.py
+    file_info: {mode: 0644}
+  - src: linux/settings/pages/keyboard.py
+    dst: /usr/share/squire-gear/settings/pages/keyboard.py
+    file_info: {mode: 0644}
+  - src: linux/settings/pages/mouse.py
+    dst: /usr/share/squire-gear/settings/pages/mouse.py
+    file_info: {mode: 0644}
+  - src: linux/settings/widgets.py
+    dst: /usr/share/squire-gear/settings/widgets.py
+    file_info: {mode: 0644}
+  - src: linux/settings/window.py
+    dst: /usr/share/squire-gear/settings/window.py
+    file_info: {mode: 0644}
   - src: linux/icons/squire-gear-symbolic.svg
     dst: /usr/share/squire-gear/icons/squire-gear-symbolic.svg
     file_info: {mode: 0644}

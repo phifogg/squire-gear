@@ -21,6 +21,7 @@ on:
       - linux/build-packages.sh
       - devices.json
       - squirelib/**
+      - linux/settings/**
 
 permissions:
   contents: read

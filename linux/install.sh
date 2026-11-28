@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs Squire for the current user on Linux (tested on Ubuntu 26.04, GNOME):
 #   ~/.local/share/squire-gear/       squire.py (core + CLI) + squirelib/ + devices.json (device models),
-#                                     squire_tray.py (top bar app), squire_settings.py (settings window)
+#                                     squire_tray.py (top bar app), squire_settings.py + settings/ (settings window)
 #   ~/.local/bin/squire               command line wrapper (--json, --list, --debug, ...)
 #   ~/.local/share/applications/      "Squire" launcher
 #   /etc/udev/rules.d/70-squire-gear.rules   access to the vendor HID interfaces (asks before using sudo)
@@ -55,6 +55,11 @@ rm -rf "$APP_DIR/squirelib"
 done
 install -m 0755 "$HERE/squire_tray.py" "$APP_DIR/squire_tray.py"
 install -m 0755 "$HERE/squire_settings.py" "$APP_DIR/squire_settings.py"
+rm -rf "$APP_DIR/settings"
+(cd "$HERE" && find settings -name '*.py') | while read -r f; do   # the window's package (pages, editors, drawings)
+  mkdir -p "$APP_DIR/$(dirname "$f")"
+  install -m 0644 "$HERE/$f" "$APP_DIR/$f"
+done
 install -D -m 0644 "$HERE/icons/squire-gear-symbolic.svg" "$APP_DIR/icons/squire-gear-symbolic.svg"
 
 cat > "$BIN_DIR/squire" <<EOF

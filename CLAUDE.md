@@ -42,7 +42,11 @@ install.sh         on Linux hands over to linux/install.sh. macOS: venv + hidapi
 README.md          English, public
 linux/             squire_settings.py (GTK 4 + libadwaita settings window, own process, opened from the tray's
                    "Settings…"; mouse + keyboard editing with Apply; --demo shows protocol.json captures, --screenshot PATH [ZONE]
-                   saves a PNG and quits), squire_tray.py (AppIndicator + GTK 3 top bar app: one indicator, shield icon from
+                   saves a PNG and quits; the entry point + re-exports, the code is in linux/settings/: window.py = sidebar,
+                   status pages, apply bar, the one Apply flow; pages/mouse.py + keyboard.py = state logic + a page class
+                   per device kind; editors/ = one per capability (led_zones, dpi, sensor, power, kb_lighting, per_key,
+                   kb_power); drawings/ = SVG per model + stage layout; widgets.py = GTK helpers; only widgets.py and
+                   window.py import GTK at import time (a test checks it)), squire_tray.py (AppIndicator + GTK 3 top bar app: one indicator, shield icon from
                    linux/icons/ + text label "⌨︎ 78%  🖱︎ 80%" with U+FE0E so no colour emoji; same menu items
                    as the Mac popover; one indicator = one menu, so never split it per device), install.sh (to ~/.local/share/squire-gear, launcher, ~/.local/bin/
                    squire, asks before sudo for the udev rule), 70-squire-gear.rules (uaccess, vendor ifaces),
@@ -93,7 +97,19 @@ python3 linux/squire_settings.py [--demo]       # settings window from the repo 
 ```
 On Linux only the Python part and its tests apply; `macos/` needs macOS + Xcode.
 
-## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 merged 2026-11-27 (PR #14), stage 3 + 1b merged 2026-11-28 (PR #15); next: stage 4)
+## Architecture (agreed with the owner 2026-11-26; stage 1 merged 2026-11-27 (PR #13), stage 2 merged 2026-11-27 (PR #14), stage 3 + 1b merged 2026-11-28 (PR #15); stage 4 on `refactor-editors`)
+Stage 4 (branch `refactor-editors`, Linux window, 2026-11-28, not committed yet): linux/squire_settings.py (2115 lines)
+is now an 84-line entry point; linux/settings/ holds the window (see Layout). The window is generic over page objects
+(MousePage, KeyboardPage: data/load, build_stage, build_inspector, update_preview, changes, saved_changes,
+planned_packets, apply_status, write, accept, change_title, success_title, status/failure texts, demo_edit); Apply
+is one flow for both (save with the last saved change, only if all matched; per-key colours after them, never
+saved). Each inspector zone calls the editor of its capability. Checked: 270 tests; 16 --demo screenshots
+byte-identical to main (every zone, edits, per-key, rainbow, raindrop); a widget-driving script (54 steps: every
+editor, linked zones, DPI stage rules, Apply/Revert on both devices in --demo, per-key paint/presets, device switch)
+dumps every visible label, combo, switch, button and drawing: identical to main, no exceptions. Packaged: nfpm lists
+each linux/settings file, linux/install.sh copies them (`find settings`), release.yml paths has linux/settings/**.
+Still to do in stage 4: the sidebar from the registry (devices found, keyed by model id, restricted states), a plain
+parameter page for a model without a drawing, then the macOS SettingsWindow.swift split (on the Mac).
 Stage 3 (Python, 2026-11-28, merged in PR #15): squirelib/capabilities/ has one class per
 devices.json capability (battery, led_zones, dpi, polling, sensor, surface, power, kb_profile, kb_layout, kb_lighting,
 kb_sleep, kb_warning, per_key), each built from the Device with its params. A capability holds its write builders
@@ -484,7 +500,7 @@ Sources: G-Helper `app/Peripherals/Keyboard/AsusKeyboard.cs`, `Models/Falchion.c
       listed, even when nothing is found); keep a hint when none is connected
 - [ ] Backlog (owner, 2026-11-22): animate the keyboard effects in the settings drawing (especially raindrop,
       rainbow, ripple, starry night, ...), using the chosen speed / direction / colours; static effects stay a glow
-- [ ] Backlog (owner, 2026-11-22): refactoring: linux/squire_settings.py (~1800 lines) and macos/App/SettingsWindow.swift
+- [ ] Backlog (owner, 2026-11-22; Linux part done in stage 4, branch `refactor-editors`): refactoring: linux/squire_settings.py (~1800 lines) and macos/App/SettingsWindow.swift
       have grown large with only two devices. Split per device (mouse page, keyboard page, shared apply bar / editors),
       pure logic in its own module; do it before adding a third device. Ties in with the Rust-core decision.
 - [ ] Device configuration (0.3), Linux first, then macOS; see Direction. First step: branch `mouse-read`
