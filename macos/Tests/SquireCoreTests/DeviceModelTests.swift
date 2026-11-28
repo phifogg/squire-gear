@@ -105,7 +105,96 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
     }
 }
 
-/// Capability tables still written in Swift (until the capability split): each must match the file squire.py reads.
+/// The capabilities read their reply offsets from the model, not from constants.
+@Suite struct MouseCapabilityModelTests {
+    private func shiftedModel() throws -> DeviceModels.Model {
+        // every reply offset +1, in a copy of the file
+        var json = try JSONSerialization.jsonObject(with: Data(try devicesText().utf8)) as! [String: Any]
+        var devices = json["devices"] as! [[String: Any]]
+        let i = devices.firstIndex { $0["kind"] as? String == "mouse" }!
+        var caps = devices[i]["capabilities"] as! [String: Any]
+        for (name, value) in caps {
+            guard var cap = value as? [String: Any] else { continue }
+            if var offsets = cap["offsets"] as? [String: Int] {
+                for (k, v) in offsets { offsets[k] = v + 1 }
+                cap["offsets"] = offsets
+            }
+            if name == "profile" {
+                cap["profile"] = (cap["profile"] as! Int) + 1
+                cap["receiver_firmware"] = (cap["receiver_firmware"] as! Int) + 1
+                cap["firmware"] = (cap["firmware"] as! [String: Int]).mapValues { $0 + 1 }
+            }
+            if name == "power" { cap["offset"] = (cap["offset"] as! Int) + 1 }
+            if name == "battery" { cap["warning"] = (cap["warning"] as! Int) + 1 }
+            caps[name] = cap
+        }
+        devices[i]["capabilities"] = caps
+        json["devices"] = devices
+        let data = try JSONSerialization.data(withJSONObject: json)
+        return try #require(try DeviceModels.decode(data).model(.mouse))
+    }
+
+    @Test func shiftedOffsetsParseAShiftedReply() throws {
+        let shifted = try MouseCapabilities(model: try shiftedModel())
+        let captures = try ProtocolCaptures.load(devicesURL().deletingLastPathComponent().appendingPathComponent("protocol.json"))
+        var plain = MouseSettings(connection: .omni), moved = MouseSettings(connection: .omni)
+        for capture in captures.settingsCaptures {
+            let query = try #require(SettingsQuery(rawValue: capture.command))
+            let p = Array(capture.bytes.dropFirst())
+            plain.apply(query, p)
+            moved.apply(query, Array(p.prefix(4)) + [0xEE] + Array(p.dropFirst(4)), capabilities: shifted)
+        }
+        let battery = Array(try #require(captures.vectors.first { $0.device == "mouse" && $0.reportId == 3 }).bytes.dropFirst())
+        plain.applyBattery(battery)
+        moved.applyBattery(Array(battery.prefix(4)) + [0xEE] + Array(battery.dropFirst(4)), capabilities: shifted)
+        #expect(plain.dpiXY.count == 4 && plain.leds.count == 3 && plain.surfaceID != nil && plain.lowWarning != nil)
+        #expect(moved == plain)
+    }
+
+    @Test func keyboardShiftedOffsetsParseAShiftedReply() throws {
+        var json = try JSONSerialization.jsonObject(with: Data(try devicesText().utf8)) as! [String: Any]
+        var devices = json["devices"] as! [[String: Any]]
+        let i = devices.firstIndex { $0["kind"] as? String == "keyboard" }!
+        var caps = devices[i]["capabilities"] as! [String: Any]
+        var profile = caps["kb_profile"] as! [String: Any]
+        for key in ["effect", "profile", "receiver_firmware"] { profile[key] = (profile[key] as! Int) + 1 }
+        profile["firmware"] = (profile["firmware"] as! [String: Int]).mapValues { $0 + 1 }
+        caps["kb_profile"] = profile
+        for (name, key) in [("kb_layout", "layout"), ("kb_sleep", "offset"), ("kb_warning", "offset")] {
+            var cap = caps[name] as! [String: Any]
+            cap[key] = (cap[key] as! Int) + 1
+            caps[name] = cap
+        }
+        devices[i]["capabilities"] = caps
+        json["devices"] = devices
+        let model = try #require(try DeviceModels.decode(JSONSerialization.data(withJSONObject: json)).model(.keyboard))
+        let shifted = try KeyboardCapabilities(model: model)
+        let captures = try ProtocolCaptures.load(devicesURL().deletingLastPathComponent().appendingPathComponent("protocol.json"))
+        func shift(_ p: [UInt8]) -> [UInt8] { Array(p.prefix(4)) + [0xEE] + Array(p.dropFirst(4)) }
+        for connection in [Battery.Connection.omni, .wired] {
+            var plain = KeyboardSettings(connection: connection), moved = KeyboardSettings(connection: connection)
+            for capture in captures.keyboardCaptures {
+                let query = try #require(KeyboardQuery(rawValue: capture.command))
+                let p = Array(capture.bytes.dropFirst())
+                plain.apply(query, p)
+                moved.apply(query, shift(p), capabilities: shifted)
+            }
+            let battery = Array(try #require(captures.vectors.first { $0.device == "keyboard" && $0.reportId == 2 }).bytes.dropFirst())
+            plain.applyBattery(battery)
+            moved.applyBattery(shift(battery), capabilities: shifted)
+            #expect(plain.profile != nil && plain.layoutID != nil && plain.lightMode != nil && plain.firmware != nil)
+            #expect(moved == plain)
+        }
+    }
+
+    @Test func modelWithoutACapabilityIsRefused() throws {
+        let text = try devicesText().replacingOccurrences(of: "\"polling\": {", with: "\"polling_gone\": {")
+        let model = try #require(try DeviceModels.decode(Data(text.utf8)).model(.mouse))
+        #expect(throws: ModelError.self) { try MouseCapabilities(model: model) }
+    }
+}
+
+/// Capability tables still written in Swift: each must match the file squire.py reads.
 @Suite struct DeviceModelConsistencyTests {
     @Test func targets() throws {
         let m = try models()
@@ -155,12 +244,7 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
         let caps = (try mouse()).capabilities
         let profile = try #require(caps.profile)
         #expect(profile.read == "profile")
-        #expect(profile.profile == MouseSettings.profileOffset)
-        #expect(profile.profileBase == MouseSettings.profileBase)
         #expect(profile.profiles == nil)
-        #expect(profile.firmware.omni == MouseSettings.firmwareOffsetOmni)
-        #expect(profile.firmware.wired == MouseSettings.firmwareOffsetWired)
-        #expect(profile.receiverFirmware == MouseSettings.receiverFirmwareOffset)
 
         let leds = try #require(caps.ledZones)
         #expect(leds.zones.map(\.name) == LEDZone.allCases.map(\.rawValue))
@@ -190,20 +274,6 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
         #expect(Dictionary(uniqueKeysWithValues: surface.liftoff.map { ($0.name, $0.value.value) }) == Command.liftoffCodes)
         #expect(surface.noSurface.value == Command.noSurface)
         #expect(Dictionary(uniqueKeysWithValues: surface.surfaces.map { ($0.id.value, $0.name) }) == Command.surfaces)
-        #expect(surface.offsets == ["surface": MouseSettings.surfaceOffset, "liftoff": MouseSettings.liftoffOffset,
-                                    "params": MouseSettings.surfaceParamsOffset])
-        #expect(dpi.offsets == ["active_stage": MouseSettings.activeStageOffset, "stage_count": MouseSettings.stageCountOffset,
-                                "dpi": MouseSettings.dpiOffset, "dpi_xy": MouseSettings.dpiXYOffset,
-                                "dpi_colors": MouseSettings.dpiColorsOffset])
-        #expect(polling.offsets == ["polling": MouseSettings.pollingOffset])
-        let sensor = try #require(caps.sensor)
-        #expect(sensor.offsets == ["debounce": MouseSettings.debounceOffset,
-                                   "angle_snapping": MouseSettings.angleSnappingOffset,
-                                   "angle_tuning": MouseSettings.angleTuningOffset])
-        // Swift does not keep the LED speed byte (no effect on the Keris); the other three must match
-        #expect(leds.offsets["mode"] == MouseSettings.ledModeOffset)
-        #expect(leds.offsets["brightness"] == MouseSettings.ledBrightnessOffset)
-        #expect(leds.offsets["color"] == MouseSettings.ledColorOffset)
         var params: [UInt8: [UInt8]?] = [surface.noSurface.value: nil]
         for s in surface.surfaces { params[s.id.value] = s.params.bytes }
         #expect(params == Command.surfaceParams)
@@ -213,12 +283,6 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
         let caps = (try keyboard()).capabilities
         let profile = try #require(caps.kbProfile)
         #expect(profile.profiles == KeyboardSettings.profileCount)
-        #expect(profile.effect == KeyboardSettings.effectOffset)
-        #expect(profile.profile == KeyboardSettings.profileOffset)
-        #expect(profile.profileBase == KeyboardSettings.profileBase)
-        #expect(profile.firmware.omni == KeyboardSettings.firmwareOffsetOmni)
-        #expect(profile.firmware.wired == KeyboardSettings.firmwareOffsetWired)
-        #expect(profile.receiverFirmware == KeyboardSettings.receiverFirmwareOffset)
         let mouseCaps = (try mouse()).capabilities
         #expect(mouseCaps.kbProfile == nil)
         #expect(caps.profile == nil)

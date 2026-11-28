@@ -13,29 +13,20 @@ import Foundation
 // colours (50 55 stores nothing), so Squire never saves them and keeps presets of its own.
 
 public enum KeyboardDirect {
-    public static let write: [UInt8] = [0xC0, 0x81]
-    public static let ack: [UInt8] = [0xC0, 0x82]
-    public static let perPacket = 14
+    static var cap: Capabilities.PerKey { KeyboardCapabilities.bundled.perKey }
+    public static var write: [UInt8] { cap.write }
+    public static var ack: [UInt8] { cap.ack }
+    public static var perPacket: Int { cap.perPacket }
     /// 15 columns x rows 1...5 (01...75).
-    public static let keys: Set<UInt8> = Set((0..<15).flatMap { col in (1...5).map { UInt8(col * 8 + $0) } })
+    public static var keys: Set<UInt8> { cap.keys }
 
     /// Same rule as squire.is_allowed_keyboard_write for c0 81.
-    public static func isAllowed(_ c: [UInt8]) -> Bool {
-        guard c.count >= 4, c[0] == 0xC0, c[1] == 0x81 else { return false }
-        let n = Int(c[2])
-        return (1...perPacket).contains(n) && c[3] == 0 && c.count == 4 + 4 * n
-            && (0..<n).allSatisfy { keys.contains(c[4 + 4 * $0]) }
-    }
+    public static func isAllowed(_ c: [UInt8]) -> Bool { cap.allows(c) }
 
     /// c0 81 <n> 00 + n x <id> <r g b>, at most 14 keys per packet, in key id order.
     public static func commands(_ colours: [UInt8: RGB]) throws -> [Command] {
-        let items = colours.sorted { $0.key < $1.key }
-        guard !items.isEmpty else { throw CommandError.notAllowed("no keys") }
-        return try stride(from: 0, to: items.count, by: perPacket).map { start in
-            let chunk = items[start..<min(start + perPacket, items.count)]
-            let bytes = write + [UInt8(chunk.count), 0x00] + chunk.flatMap { [$0.key, $0.value.r, $0.value.g, $0.value.b] }
-            guard isAllowed(bytes) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
-            return Command(bytes, isWrite: true, echoLength: 4, reply: ack + [UInt8(chunk.count), 0x00])
+        try cap.packets(colours).map {
+            try KeyboardCapabilities.bundled.checked($0, echoLength: 4, reply: cap.ack + [$0[2], 0x00])
         }
     }
 

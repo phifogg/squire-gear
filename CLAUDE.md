@@ -49,7 +49,9 @@ linux/             squire_settings.py (GTK 4 + libadwaita settings window, own p
                    build-packages.sh + packaging/nfpm.yaml (ONE config for .deb and .rpm, arch all; /usr/share/
                    squire-gear, /usr/bin/squire + squire-tray wrappers, rule in /usr/lib/udev/rules.d)
 macos/             Swift: SwiftPM package (Package.swift) + XcodeGen app project (project.yml)
-  Sources/SquireCore   pure logic: targets, command allowlist + packets (Commands.swift), reply parsing,
+  Sources/SquireCore   pure logic: Capabilities/ (one type per devices.json capability, like squirelib/capabilities:
+                       builders, byte check, parser; MouseCapabilities / KeyboardCapabilities = a device's set,
+                       built from the bundled devices.json), targets, command allowlist + packets (Commands.swift), reply parsing,
                        mouse settings parsing (MouseSettings.swift), settings window logic (SettingsEditing.swift),
                        keyboard writes + allowlist + remembered lighting (KeyboardWrites.swift), keyboard page logic
                        (KeyboardEditing.swift),
@@ -156,6 +158,25 @@ refactoring is done. Test each stage like stage 1: build the .deb (`linux/build-
 artifact), check /usr/share/squire-gear has every new file, run squire --version / --list / --debug / --settings /
 --keyboard-settings (read-only), tray + Settings… window with both devices. Stage 2 (PR #14) checked on Linux and
 the Mac; NEXT: merge #14, then stage 3.
+Swift capability split (branch `refactor-capabilities`, 2026-11-28, on the Mac, committed):
+macos/Sources/SquireCore/Capabilities/ mirrors squirelib/capabilities: Capabilities.LEDZones, DPI, Polling, Sensor,
+Surface, Power, Profile (mouse) and KBProfile, KBLayout, KBSleep, KBWarning (KeyboardBasics.swift), KBLighting, PerKey
+(keyboard), each built from the model with its parameters and reply offsets (ModelError when one is missing); each
+holds its builders, `allows()` byte check for the prefixes it owns and `parse(read, payload, into:)`.
+MouseCapabilities / KeyboardCapabilities (`.bundled`) put them together; DeviceCapabilities.isAllowedWrite = confirmed
+prefix + the owner by longest prefix (51 31 04 polling, 51 31 06/0b sensor, 51 31 00..03/09/0a dpi), like Python.
+Every old name stays as a forward (Command.setLED/..., Command tables, KeyboardLighting.*, KeyboardDirect.*,
+KeyboardSettings.lightModes/layouts, KeyboardLayout.isoIDs/ansiIDs, SettingsQuery/KeyboardQuery.command from the
+model); MouseSettings/KeyboardSettings.apply(_:_:capabilities:) dispatch to the parsers; the offset constants are gone.
+Packet layouts per effect group (single colour, options, gradient, quicksand) stay code in KBLighting. Not moved:
+SettingChange / KeyboardChange read-back logic (Python has Change per capability; next step if wanted), battery
+parsing (ReplyParser). Checked: swift test 125 tests in 22 suites (new: shifted offsets +1 for mouse and keyboard
+parse a reply shifted by one byte to the same settings; a model without a capability is refused); a behaviour
+snapshot (throwaway test, SWIFT_DETERMINISTIC_HASHING=1: allowlist decisions for 846 seed writes x every single-byte
+mutation on both devices, every mouse/keyboard builder over input grids incl. errors, packets, every protocol.json
+parse, SettingChange against the demo state) is identical to 7348d64; Release app build, --demo mouse + keyboard pages
+render; on the device via the Omni (read-only): squire-probe, --settings, --keyboard-settings print the same as
+before the split, --repeat 20 no crash. App with the devices not tried yet.
 Stage 1b (Swift runtime loading, branch `refactor-capabilities`, 2026-11-28, done on the Mac, pushed):
 macos/Sources/SquireCore/Resources/devices.json = a copy of the root file, a SwiftPM resource (Bundle.module; in the
 app it lands in Squire.app/Contents/Resources/Squire_SquireCore.bundle). A Swift test and a Python test

@@ -1,5 +1,6 @@
-// Keris II Origin settings, read-only parsing. Same layout as squire.py parse_mouse_settings; indices relative to
-// the echoed command (no report ID). Confirmed with the captures in protocol.json `mouse_settings`.
+// Keris II Origin settings. The parsers live in the capabilities (Capabilities/, offsets from devices.json); this file
+// keeps the settings types. Indices relative to the echoed command (no report ID). Confirmed with the captures in
+// protocol.json `mouse_settings`.
 //
 //   12 00     [10] profile (0-based), [11] active DPI stage (1-based), [18] stage count, firmware [4..6] (cable) or [14..16] (Omni; [4..6] = receiver)
 //   12 04 00  [4..11] DPI (ff ff on this separate-X/Y mouse), [12] polling (low 3 bits), [14] debounce,
@@ -12,8 +13,12 @@
 
 public enum LEDZone: String, CaseIterable, Sendable {
     case logo, wheel, side
+    /// The zone byte in 51 28 / 12 03 (devices.json led_zones).
     public var index: UInt8 {
-        switch self { case .logo: return 0; case .wheel: return 1; case .side: return 2 }
+        guard let index = MouseCapabilities.bundled.ledZones.zoneIndex[rawValue] else {
+            fatalError("devices.json: no LED zone \(rawValue)")
+        }
+        return index
     }
 }
 
@@ -49,8 +54,8 @@ public enum LEDMode: Hashable, Sendable {
         }
     }
 
-    /// Effects Squire may write (G-Helper KerisIIOrigin). No rainbow/comet: they need direction/speed bytes.
-    public static let writable: [LEDMode] = [.static, .breathing, .colorCycle, .react, .battery, .off]
+    /// Effects Squire may write (devices.json led_zones, writable). No rainbow/comet: they need direction/speed bytes.
+    public static var writable: [LEDMode] { MouseCapabilities.bundled.ledZones.writable }
 
     /// Names as in squire.py / protocol.json.
     public var name: String {
@@ -157,103 +162,26 @@ public struct MouseSettings: Equatable, Sendable {
         self.status = status
     }
 
-    public static let pollingRatesHz = [125, 250, 500, 1000, 2000, 4000, 8000, 16000]   // low 3 bits
-    public static let powerOffMinutes: [UInt8: Int] = [0: 1, 1: 2, 2: 3, 3: 5, 4: 10]    // 0xff = never
-    /// 12 00 offsets (devices.json capabilities.profile; DeviceModelTests holds them to the file): profile 0-based,
-    /// firmware (3 bytes build / minor / major) per connection, the Omni receiver's firmware.
-    public static let profileOffset = 10
-    public static let profileBase = 0
-    public static let firmwareOffsetOmni = 14
-    public static let firmwareOffsetWired = 4
-    public static let receiverFirmwareOffset = 4
-    /// Reply offsets of the other reads (devices.json capabilities.<name>.offsets; DeviceModelTests holds them to the
-    /// file). dpi: 12 00 active stage / stage count, 12 04 00 DPI per stage, 12 04 02 X/Y, 12 04 03 colours.
-    public static let activeStageOffset = 11
-    public static let stageCountOffset = 18
-    public static let dpiOffset = 4
-    public static let dpiXYOffset = 4
-    public static let dpiColorsOffset = 4
-    /// polling + sensor: 12 04 00
-    public static let pollingOffset = 12
-    public static let debounceOffset = 14
-    public static let angleSnappingOffset = 16
-    public static let angleTuningOffset = 18
-    /// led_zones: 12 03 <zone>
-    public static let ledModeOffset = 4
-    public static let ledBrightnessOffset = 5
-    public static let ledColorOffset = 6
-    /// surface: 12 06
-    public static let surfaceOffset = 6
-    public static let liftoffOffset = 7
-    public static let surfaceParamsOffset = 8
+    /// Polling rate per index in the low 3 bits (devices.json polling.read_rates_hz).
+    public static var pollingRatesHz: [Int] { MouseCapabilities.bundled.polling.readRatesHz }
+    /// Power-off byte -> minutes (0xff = never has no entry).
+    public static var powerOffMinutes: [UInt8: Int] { MouseCapabilities.bundled.power.powerOffMinutes }
 
     /// Stages the DPI button uses (count from 12 00, else all read).
     public var activeDPI: [Int] {
         Array(dpi.prefix(dpiStageCount ?? dpi.count)).compactMap { $0 }
     }
 
-    /// Fill from the battery reply (12 07).
-    public mutating func applyBattery(_ p: [UInt8]) {
+    /// Fill from the battery reply (12 07): power-off and warning (Capabilities.Power).
+    public mutating func applyBattery(_ p: [UInt8], capabilities: MouseCapabilities = .bundled) {
         guard p.count >= 20 else { return }
-        powerOffMinutes = Self.powerOffMinutes[p[5]]
-        lowWarning = (1...100).contains(p[6]) ? Int(p[6]) : nil
+        capabilities.power.parse(capabilities.power.read, p, into: &self)
     }
 
-    /// Fill from one settings reply payload `p` (starting at the echoed command).
-    public mutating func apply(_ query: SettingsQuery, _ p: [UInt8]) {
+    /// Fill from one settings reply payload `p` (starting at the echoed command); each capability reads its part.
+    public mutating func apply(_ query: SettingsQuery, _ p: [UInt8], capabilities: MouseCapabilities = .bundled) {
         guard p.count >= 20 else { return }
-        func u16(_ i: Int) -> Int { Int(p[i]) | Int(p[i + 1]) << 8 }
-        func dpiValue(_ raw: Int) -> Int { raw * 50 + 50 }   // devices store (DPI - 50) / 50
-        switch query {
-        case .profile:
-            profile = Int(p[Self.profileOffset]) + 1 - Self.profileBase
-            let stage = p[Self.activeStageOffset], count = p[Self.stageCountOffset]
-            dpiStage = stage == 0 ? nil : Int(stage)
-            dpiStageCount = (1...4).contains(count) ? Int(count) : nil
-            // Firmware: 3 bytes, build.minor.major (shown major first, like libratbag). On the Keris II Origin the
-            // mouse's own version is at [4..6] over the cable; via the Omni [4..6] is the receiver and the mouse
-            // moves to [14..16] (same bytes 09 00 01 = 01.00.09 both ways). libratbag's [13..15] is not it here.
-            func version(_ i: Int) -> String? {
-                p[i..<i + 3].allSatisfy { $0 == 0 } ? nil
-                    : [p[i + 2], p[i + 1], p[i]].map { ReplyParser.hex([$0]).uppercased() }.joined(separator: ".")
-            }
-            if connection == .wired {
-                firmware = version(Self.firmwareOffsetWired)
-            } else {
-                firmware = version(Self.firmwareOffsetOmni)
-                receiverFirmware = version(Self.receiverFirmwareOffset)
-            }
-        case .settings:
-            // ff ff = not in this reply: separate-X/Y mice (like the Keris) report DPI only in dpi_xy
-            let at = Self.dpiOffset
-            dpi = (0..<4).map { u16(at + 2 * $0) == 0xFFFF ? nil : dpiValue(u16(at + 2 * $0)) }
-            let polling = p[Self.pollingOffset], debounce = p[Self.debounceOffset]
-            pollingRaw = polling
-            pollingHz = Self.pollingRatesHz[Int(polling & 0x07)]
-            debounceIndex = Int(debounce)
-            debounceMs = (1...7).contains(debounce) ? 4 + 4 * Int(debounce) : nil
-            angleSnapping = p[Self.angleSnappingOffset] == 1
-            let angle = u16(Self.angleTuningOffset)
-            angleTuning = angle & 0x8000 != 0 ? angle - 0x10000 : angle
-        case .dpiXY:
-            let at = Self.dpiXYOffset
-            dpiXY = (0..<4).map { [dpiValue(u16(at + 4 * $0)), dpiValue(u16(at + 2 + 4 * $0))] }
-            if dpi.isEmpty || dpi.contains(where: { $0 == nil }) { dpi = dpiXY.map { $0[0] } }
-        case .dpiColors:
-            let at = Self.dpiColorsOffset
-            dpiColors = (0..<4).map { RGB(p[at + 3 * $0], p[at + 1 + 3 * $0], p[at + 2 + 3 * $0]) }
-        case .ledLogo, .ledWheel, .ledSide:
-            let zone: LEDZone = query == .ledLogo ? .logo : query == .ledWheel ? .wheel : .side
-            let c = Self.ledColorOffset
-            leds[zone] = LEDState(mode: LEDMode(byte: p[Self.ledModeOffset]), brightness: Int(p[Self.ledBrightnessOffset]),
-                                  color: RGB(p[c], p[c + 1], p[c + 2]))
-        case .liftoff:
-            // [6] surface id (ff = none), [7] lift-off, [8..10] surface parameters (Armoury Crate captures)
-            let lift = p[Self.liftoffOffset], surface = p[Self.surfaceOffset], at = Self.surfaceParamsOffset
-            liftoff = lift == 0 ? "low" : lift == 1 ? "high" : "0x" + ReplyParser.hex([lift])
-            surfaceID = surface
-            surfaceParams = surface == Command.noSurface ? nil : Array(p[at..<at + 3])
-        }
+        capabilities.parse(query.rawValue, p, into: &self)
     }
 }
 
