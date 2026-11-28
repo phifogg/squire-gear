@@ -307,7 +307,7 @@ cd macos && swift test        # Swift core, reads the same protocol.json
 - Battery history log
 - Notarized builds, depending on interest
 - Linux: Waybar/Polybar module using `--json`, a PPA for automatic updates
-- Other ROG devices (send `--list` / `--debug` output or `swift run squire-probe` output to help)
+- Other ROG devices: see [CONTRIBUTING.md](CONTRIBUTING.md#reporting-a-new-device) for how to report one
 
 ## Disclaimer
 

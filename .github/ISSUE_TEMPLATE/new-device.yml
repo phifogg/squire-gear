@@ -1,0 +1,122 @@
+name: New device
+description: Report an ASUS ROG keyboard, mouse or receiver that Squire does not support yet
+title: "Device support: <model name>"
+labels: ["device support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping Squire support more devices! See [CONTRIBUTING.md](https://github.com/phifogg/squire-gear/blob/main/CONTRIBUTING.md#reporting-a-new-device)
+        for details. The commands below **only list devices and send nothing to them**, so they are safe to run.
+
+        Please do not attach Wireshark / USBPcap captures (`.pcapng`) here: they can contain your keystrokes.
+        We will ask for specific captures if they are needed.
+
+  - type: input
+    id: model
+    attributes:
+      label: Device model
+      description: The exact name from the box or the ASUS product page.
+      placeholder: ROG Keris II Ace
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Mouse
+        - Keyboard
+        - Receiver / dongle
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: connections
+    attributes:
+      label: How can it connect?
+      description: Tick every way the device supports, even if you only use one.
+      options:
+        - label: USB cable
+        - label: ROG Omni receiver (shared dongle)
+        - label: Its own 2.4 GHz dongle
+        - label: Bluetooth
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system you tested on
+      multiple: true
+      options:
+        - Linux
+        - macOS
+    validations:
+      required: true
+
+  - type: input
+    id: os_version
+    attributes:
+      label: OS version and desktop
+      placeholder: Ubuntu 26.04, GNOME 50 / macOS 26.1
+    validations:
+      required: true
+
+  - type: input
+    id: squire_version
+    attributes:
+      label: Squire version
+      description: "`squire --version`, or About in the menu bar / tray menu"
+      placeholder: 0.4.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: list_output
+    attributes:
+      label: "`squire --list` output"
+      description: |
+        Run it once for each way the device connects (cable, receiver, Bluetooth), with the device awake.
+        It lists the ASUS HID interfaces and sends nothing.
+
+        - Linux: `squire --list`
+        - macOS: `"$HOME/Library/Application Support/squire-gear/venv/bin/python" "$HOME/Library/Application Support/squire-gear/squire.py" --list`
+          (installed with `./install.sh`), or `swift run squire-probe` from `macos/` in a checkout
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: lsusb
+    attributes:
+      label: "Linux only: `lsusb -d 0b05:` output"
+      description: One line per ASUS USB device, no serial numbers.
+      render: text
+
+  - type: textarea
+    id: features
+    attributes:
+      label: What would you like Squire to show or change?
+      description: For example battery level, DPI, LED zones and their names, polling rate, per-key lighting.
+      placeholder: Battery in the top bar; LED zones logo and wheel; DPI stages
+    validations:
+      required: true
+
+  - type: textarea
+    id: other_tools
+    attributes:
+      label: Other tools that support it
+      description: |
+        Does Armoury Crate, G-Helper, OpenRGB or another tool support this device? Links to their device
+        definitions help a lot.
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Can you help test?
+      description: Nothing is sent to a new device without your OK; every new command is shown as bytes first.
+      options:
+        - label: I can run read-only commands Squire sends me and post the output
+        - label: I can try writes (lights, DPI, ...) after seeing the bytes
+        - label: I have Windows with Armoury Crate and could make USB captures (we will explain how)
