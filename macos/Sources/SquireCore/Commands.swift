@@ -220,19 +220,33 @@ public enum SettingsQuery: String, CaseIterable, Sendable {
 /// Per device, like squire.py (ALLOWED_READS, is_allowed_write(command, device), REPORT_IDS): the keyboard never
 /// gets a mouse command and the other way round, since the same bytes can mean something else on the other device.
 public enum Allowlist {
-    public static let mouseReads: Set<[UInt8]> = Set([Command.mouseBattery.bytes] + SettingsQuery.allCases.map(\.command.bytes))
-    public static let keyboardReads: Set<[UInt8]> = Set([Command.keyboardBattery.bytes]
-                                                        + KeyboardQuery.allCases.map(\.command.bytes))
+    /// Confirmed reads per device, from devices.json (status "confirmed"; anything else is never sent).
+    public static let mouseReads: Set<[UInt8]> = DeviceModels.bundled.required(.mouse).confirmedReads
+    public static let keyboardReads: Set<[UInt8]> = DeviceModels.bundled.required(.keyboard).confirmedReads
     /// All reads of both devices (for checks over both).
     public static let reads: Set<[UInt8]> = mouseReads.union(keyboardReads)
-    /// Report ID of each device on the Omni receiver; wired, both are unnumbered (nil).
-    public static let reportIDs: [Battery.Device: UInt8] = [.keyboard: 0x02, .mouse: 0x03]
+    /// Report ID of each device on the Omni receiver (devices.json omni routes); wired, both are unnumbered (nil).
+    public static let reportIDs: [Battery.Device: UInt8] = Dictionary(uniqueKeysWithValues: Target.all.compactMap { t in
+        t.connection == .omni ? t.reportID.map { (t.device, $0) } : nil
+    })
+    /// Confirmed write prefixes per device, from devices.json. A write must start with one of them AND pass the
+    /// byte check of its device below (squire.is_allowed_write: confirmed prefix + the capability's allows()).
+    public static let writePrefixes: [Battery.Device: [[UInt8]]] = [
+        .mouse: DeviceModels.bundled.required(.mouse).confirmedWritePrefixes,
+        .keyboard: DeviceModels.bundled.required(.keyboard).confirmedWritePrefixes,
+    ]
 
     public static func reads(for device: Battery.Device) -> Set<[UInt8]> {
         device == .mouse ? mouseReads : keyboardReads
     }
 
     public static func isAllowedWrite(_ c: [UInt8], for device: Battery.Device) -> Bool {
+        isAllowedWrite(c, for: device, prefixes: writePrefixes[device, default: []])
+    }
+
+    /// The gate with explicit prefixes (tests: a model whose command is not confirmed refuses it).
+    static func isAllowedWrite(_ c: [UInt8], for device: Battery.Device, prefixes: [[UInt8]]) -> Bool {
+        guard prefixes.contains(where: { c.starts(with: $0) }) else { return false }
         switch device {
         case .mouse: return isAllowedMouseWrite(c)
         case .keyboard: return isAllowedKeyboardWrite(c)   // KeyboardWrites.swift

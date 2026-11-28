@@ -336,6 +336,13 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn(f"src: squirelib/{name}", text)
                 self.assertIn(f"dst: /usr/share/squire-gear/squirelib/{name}", text)
 
+    def test_swift_bundle_copy_equals_the_root_file(self):
+        # SquireCore loads macos/Sources/SquireCore/Resources/devices.json at runtime (SwiftPM cannot reach the root
+        # file); after an edit of devices.json, copy it there too.
+        copy_ = ROOT / "macos/Sources/SquireCore/Resources/devices.json"
+        self.assertEqual(copy_.read_bytes(), (ROOT / "devices.json").read_bytes(),
+                         "cp devices.json macos/Sources/SquireCore/Resources/devices.json")
+
 
 if __name__ == "__main__":
     unittest.main()

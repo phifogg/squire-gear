@@ -149,17 +149,27 @@ battery offsets (wired mouse now filtered to interface 0 like the others; confir
 battery + every --settings read over the cable, keyboard via Omni) and the capability tables (LED zones/modes, DPI, polling, power, surfaces, keyboard effects/speeds/
 gradients/directions, layouts, key ids, sleep/warning) from it; all names stay as module constants. Still hard-coded:
 mouse settings reply offsets (parse_mouse_settings), packet builders and byte checks (stage 3). Swift: DeviceModels.swift
-decodes strictly and tests compare every SquireCore table to the file; the app does not load it at runtime yet.
+decodes strictly and tests compare every SquireCore table to the file; since stage 1b the app loads its bundled copy.
 Where we are (2026-11-27): stage 1 merged (PR #13, 7862be0) after the owner's Linux test (local .deb of c325c95 on
 Ubuntu 26.04: tray + settings window work). Owner's decision: merge each stage via PR, no release until the whole
 refactoring is done. Test each stage like stage 1: build the .deb (`linux/build-packages.sh deb`, or the PR's `linux`
 artifact), check /usr/share/squire-gear has every new file, run squire --version / --list / --debug / --settings /
 --keyboard-settings (read-only), tray + Settings… window with both devices. Stage 2 (PR #14) checked on Linux and
 the Mac; NEXT: merge #14, then stage 3.
-Stage 1b (Swift runtime loading) postponed by the owner, Linux first: copy devices.json to
-macos/Sources/SquireCore/Resources/ as a SwiftPM resource (Bundle.module; SwiftPM cannot reach ../devices.json, a
-symlink is unreliable), a test that the copy equals the root file, then build Target.all / Allowlist / Command tables
-from the loaded model with a before/after comparison like the Python one. Needs a Mac build to confirm.
+Stage 1b (Swift runtime loading, branch `refactor-capabilities`, 2026-11-28, done on the Mac, pushed):
+macos/Sources/SquireCore/Resources/devices.json = a copy of the root file, a SwiftPM resource (Bundle.module; in the
+app it lands in Squire.app/Contents/Resources/Squire_SquireCore.bundle). A Swift test and a Python test
+(test_devices.py) fail when the copy differs: after editing devices.json, `cp devices.json
+macos/Sources/SquireCore/Resources/devices.json`. DeviceModels.bundled (decoded once, fatalError on a broken copy)
+gives Target.all / keyboardTargets / mouseTargets / omni* / wired* (DeviceModels.hidTargets(), file order),
+SquireProtocol.vendorID, Bluetooth.productIDs + device(forName:) (gatt_name), Allowlist reads, reportIDs and
+writePrefixes; Allowlist.isAllowedWrite now requires a confirmed prefix first, then the device's byte check (like
+squire.is_allowed_write). SquireProtocol's PID constants are gone. Before/after: BundledModelTests compares every
+derived table with the old hand-written values. Capability parameters (zones, ranges, effect tables, offsets) are
+still Swift tables held to the file by DeviceModelConsistencyTests; they move with the capability split.
+Checked: swift test 122 tests in 21 suites, python 262, Release app build + `--demo --screenshot` renders; on the
+device via Omni (read-only): squire-probe (both batteries), --settings, --keyboard-settings parse as before. App with
+the devices not tried yet.
 Goal: support more devices without touching code everywhere. Today device knowledge (PIDs, report IDs, zones,
 ranges, effect tables) is spread as constants, "keyboard"/"mouse" are hard-wired (`ALLOWED_READS[device]`,
 `Battery.Device`), `Target` mixes device and connection, Omni and Bluetooth are special cases, and both settings
@@ -201,7 +211,7 @@ tests keep working; it keeps `__version__` (release.yml, install.sh and build-pa
 Checklist for every new file / folder (squirelib/ subpackages, linux/settings/, devices.json): copy it in
 linux/install.sh, linux/packaging/nfpm.yaml (one entry per file) and the macOS install.sh (SwiftBar venv folder);
 add build inputs to `.github/workflows/release.yml` `paths:` (devices.json + squirelib/** are there). Stage 1b:
-devices.json as a resource in macos/Package.swift (SquireCore, Bundle.module) and macos/project.yml (App). Decided by the owner 2026-11-26, for as long as the
+devices.json is a resource in macos/Package.swift (SquireCore, Bundle.module; a copy, kept equal by the tests). Decided by the owner 2026-11-26, for as long as the
 Python core lives (until the Rust-or-similar decision). Linux window: linux/settings/ (window.py, editors/, drawings/). Swift: SquireCore split into SquireProtocol,
 SquireDevices (registry + capabilities), SquireTransport (IOKit, CoreBluetooth); App gets Settings/Editors and
 Settings/Drawings.

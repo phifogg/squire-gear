@@ -3,8 +3,12 @@ import Foundation
 // devices.json (repo root): the device models, shared with squire.py (squirelib/registry.py checks the file in
 // Python). Decoding is strict on types and formats: a hex value that is not hex, a number given as a string or a
 // missing required field fails, so the Swift tests catch a broken file. Unknown keys are ignored here; the Python
-// checker refuses them for capabilities. For now the tests hold the Swift tables to this file; the app does not
-// read it at runtime yet.
+// checker refuses them for capabilities.
+//
+// At runtime SquireCore reads its bundled copy (Resources/devices.json, Bundle.module; tests keep it equal to the
+// root file): routes (Target), PIDs, Bluetooth ids, report IDs and the allowlist gate (confirmed reads, confirmed
+// write prefixes) come from it. Capability parameters (zones, ranges, effect tables) are still Swift tables that
+// DeviceModelTests holds to the file, until the capability split.
 
 /// A byte written as two hex digits ("0f").
 public struct HexByte: Codable, Hashable, Sendable {
@@ -79,6 +83,61 @@ public struct DeviceModels: Codable, Sendable {
     public func model(_ kind: Battery.Device) -> Model? {
         let found = devices.filter { $0.kind == kind.rawValue }
         return found.count == 1 ? found[0] : nil
+    }
+
+    /// The copy bundled with SquireCore, decoded once. The tests decode the same file, so a broken copy fails
+    /// `swift test` long before it could reach the app; here it stops with the decoding error.
+    /// Where the bundled copy lives (nil only for a broken build).
+    public static var bundledURL: URL? { Bundle.module.url(forResource: "devices", withExtension: "json") }
+
+    public static let bundled: DeviceModels = {
+        guard let url = bundledURL else { fatalError("devices.json missing from the SquireCore bundle") }
+        do {
+            let models = try decode(try Data(contentsOf: url))
+            _ = try models.hidTargets()   // every route the transport needs must be complete
+            return models
+        } catch {
+            fatalError("devices.json: \(error)")
+        }
+    }()
+
+    /// The model of a kind, for code that still keys on keyboard / mouse.
+    public func required(_ kind: Battery.Device) -> Model {
+        guard let model = model(kind) else { fatalError("devices.json: no single \(kind.rawValue) model") }
+        return model
+    }
+
+    /// HID routes of every device, in file order (devices, then routes: Omni first, cable as fallback).
+    /// Bluetooth routes have no vendor collection and are left out (Bluetooth.productIDs).
+    public func hidTargets() throws -> [Target] {
+        func fail(_ text: String) -> DecodingError {
+            DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: text))
+        }
+        return try devices.flatMap { model -> [Target] in
+            guard let device = Battery.Device(rawValue: model.kind) else { throw fail("\(model.id): kind \(model.kind)") }
+            guard let query = model.command(model.capabilities.battery.read)?.bytes?.bytes else {
+                throw fail("\(model.id): no battery read")
+            }
+            return try model.routes.compactMap { route -> Target? in
+                guard let connection = Battery.Connection(rawValue: route.connection) else {
+                    throw fail("\(model.id): connection \(route.connection)")
+                }
+                if connection == .bluetooth { return nil }
+                if let receiverID = route.receiver {
+                    guard let receiver = receiver(receiverID), let reportID = route.reportID else {
+                        throw fail("\(model.id): \(route.connection) route incomplete")
+                    }
+                    return Target(device: device, name: model.name, connection: connection,
+                                  productID: receiver.pid.value, reportID: reportID.value, query: query,
+                                  reportLengths: receiver.reportLengths)
+                }
+                guard let pid = route.pid, let lengths = route.reportLengths, !lengths.isEmpty else {
+                    throw fail("\(model.id): \(route.connection) route incomplete")
+                }
+                return Target(device: device, name: model.name, connection: connection, productID: pid.value,
+                              reportID: route.reportID?.value, query: query, reportLengths: lengths)
+            }
+        }
     }
 
     public func receiver(_ id: String) -> Receiver? { receivers.first { $0.id == id } }

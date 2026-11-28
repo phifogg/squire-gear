@@ -41,7 +41,71 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
     }
 }
 
-/// The Swift tables until the app reads devices.json itself: each must match the file squire.py reads.
+/// The copy SquireCore loads at runtime (Resources/devices.json, Bundle.module) and what it derives from it.
+@Suite struct BundledModelTests {
+    @Test func copyEqualsRootFile() throws {
+        let url = try #require(DeviceModels.bundledURL)
+        #expect(try Data(contentsOf: url) == (try Data(contentsOf: devicesURL())),
+                "macos/Sources/SquireCore/Resources/devices.json differs from devices.json: copy the root file")
+        #expect(DeviceModels.bundled.devices.map(\.id) == (try models()).devices.map(\.id))
+    }
+
+    /// Before / after stage 1b: the hand-written tables the app used until then, value for value.
+    @Test func sameRoutesAsTheHandWrittenTables() {
+        let before = [
+            Target(device: .keyboard, name: "ROG Falchion RX LP", connection: .omni, productID: 0x1ACE,
+                   reportID: 0x02, query: [0x12, 0x01], reportLengths: [64]),
+            Target(device: .keyboard, name: "ROG Falchion RX LP", connection: .wired, productID: 0x1B04,
+                   reportID: nil, query: [0x12, 0x01], reportLengths: [65]),
+            Target(device: .mouse, name: "ROG Keris II Origin", connection: .omni, productID: 0x1ACE,
+                   reportID: 0x03, query: [0x12, 0x07], reportLengths: [64]),
+            Target(device: .mouse, name: "ROG Keris II Origin", connection: .wired, productID: 0x1C0C,
+                   reportID: nil, query: [0x12, 0x07], reportLengths: [65, 64]),
+        ]
+        #expect(Target.all == before)
+        #expect(Target.keyboardTargets == Array(before[0...1]))
+        #expect(Target.mouseTargets == Array(before[2...3]))
+        #expect([Target.omniKeyboard, .wiredKeyboard, .omniMouse, .wiredMouse] == before)
+        #expect(SquireProtocol.vendorID == 0x0B05)
+        #expect(Bluetooth.productIDs == [0x1B08: .keyboard, 0x1C0F: .mouse])
+        #expect(Bluetooth.device(forName: "ROG FALCHION RX LOW PROFILE") == .keyboard)
+        #expect(Bluetooth.device(forName: "ROG Keris II Origin") == .mouse)
+        #expect(Bluetooth.device(forName: "ROG Harpe") == nil)
+        #expect(Bluetooth.device(forName: nil) == nil)
+    }
+
+    @Test func sameAllowlistAsTheHandWrittenTables() {
+        #expect(Allowlist.mouseReads == Set([[0x12, 0x07], [0x12, 0x00], [0x12, 0x04, 0x00], [0x12, 0x04, 0x02],
+                                             [0x12, 0x04, 0x03], [0x12, 0x03, 0x00], [0x12, 0x03, 0x01],
+                                             [0x12, 0x03, 0x02], [0x12, 0x06]]))
+        #expect(Allowlist.keyboardReads == Set([[0x12, 0x01], [0x12, 0x00], [0x12, 0x12]]))
+        #expect(Allowlist.mouseReads == Set([Command.mouseBattery.bytes] + SettingsQuery.allCases.map(\.command.bytes)))
+        #expect(Allowlist.keyboardReads == Set([Command.keyboardBattery.bytes] + KeyboardQuery.allCases.map(\.command.bytes)))
+        #expect(Allowlist.reportIDs == [.keyboard: 0x02, .mouse: 0x03])
+        #expect(Set(Allowlist.writePrefixes[.keyboard] ?? []) == Set([[0x50, 0x55], [0x51, 0x2C], [0x51, 0x38],
+                                                                    [0x51, 0x3A], [0xC0, 0x81]]))
+        #expect(Set(Allowlist.writePrefixes[.mouse] ?? []) == Set([
+            [0x50, 0x03], [0x51, 0x28], [0x51, 0x37], [0x51, 0x31, 0x06], [0x51, 0x31, 0x0B], [0x51, 0x35],
+            [0x51, 0x31, 0x04], [0x51, 0x31, 0x00], [0x51, 0x31, 0x01], [0x51, 0x31, 0x02], [0x51, 0x31, 0x03],
+            [0x51, 0x31, 0x09], [0x51, 0x31, 0x0A]]))
+    }
+
+    /// A command whose status is not "confirmed" is never sent, even when its bytes pass the device's check.
+    @Test func unconfirmedWriteIsRefused() throws {
+        let text = try devicesText()
+        let led = "\"name\": \"led\", \"write\": true, \"prefixes\": [\"51 28\"], \"status\": \"confirmed\""
+        #expect(text.contains(led))
+        let unconfirmed = try DeviceModels.decode(Data(text.replacingOccurrences(
+            of: led, with: led.replacingOccurrences(of: "\"confirmed\"", with: "\"captured\"")).utf8))
+        let write = try Command.setLED(.logo, LEDState(mode: .static, brightness: 100, color: RGB(0, 0, 255)))
+        #expect(Allowlist.isAllowedWrite(write.bytes, for: .mouse))
+        let prefixes = try #require(unconfirmed.model(.mouse)).confirmedWritePrefixes
+        #expect(!Allowlist.isAllowedWrite(write.bytes, for: .mouse, prefixes: prefixes))
+        #expect(!Allowlist.isAllowedWrite(write.bytes, for: .keyboard))   // never the other device's command
+    }
+}
+
+/// Capability tables still written in Swift (until the capability split): each must match the file squire.py reads.
 @Suite struct DeviceModelConsistencyTests {
     @Test func targets() throws {
         let m = try models()
@@ -62,9 +126,6 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
                 #expect(target.reportID == nil)
             }
         }
-        #expect(SquireProtocol.omniReceiverPID == m.receiver("rog-omni")?.pid.value)
-        #expect(SquireProtocol.falchionRXLowProfilePID == (try keyboard()).route(.wired)?.pid?.value)
-        #expect(SquireProtocol.kerisIIOriginPID == (try mouse()).route(.wired)?.pid?.value)
     }
 
     @Test func bluetooth() throws {

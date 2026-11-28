@@ -9,12 +9,19 @@
 // Over Bluetooth there is no charging flag and no low-battery warning level.
 
 public enum Bluetooth {
-    public static let falchionRXLowProfilePID: UInt16 = 0x1B08
-    public static let kerisIIOriginPID: UInt16 = 0x1C0F
-    public static let productIDs: [UInt16: Battery.Device] = [
-        falchionRXLowProfilePID: .keyboard,
-        kerisIIOriginPID: .mouse,
-    ]
+    /// Bluetooth PID -> device, from the bluetooth routes in devices.json (1b08 keyboard, 1c0f mouse).
+    public static let productIDs: [UInt16: Battery.Device] = Dictionary(uniqueKeysWithValues: routes.compactMap { r in
+        r.pid.map { ($0, r.device) }
+    })
+
+    /// GAP name part per device ("FALCHION RX LOW PROFILE", "KERIS II ORIGIN"), from devices.json.
+    static let routes: [(device: Battery.Device, pid: UInt16?, gattName: String?)] =
+        DeviceModels.bundled.devices.compactMap { model in
+            guard let device = Battery.Device(rawValue: model.kind),
+                  let route = model.routes.first(where: { $0.connection == Battery.Connection.bluetooth.rawValue })
+            else { return nil }
+            return (device, route.pid?.value, route.gattName?.uppercased())
+        }
 
     /// GATT UUIDs (16-bit, as strings for CBUUID). Only the Battery Service is read.
     public static let batteryService = "180F"
@@ -23,9 +30,7 @@ public enum Bluetooth {
     /// Device for an advertised / GAP name ("ROG FALCHION RX LOW PROFILE", "ROG KERIS II ORIGIN").
     public static func device(forName name: String?) -> Battery.Device? {
         let upper = (name ?? "").uppercased()
-        if upper.contains("FALCHION RX LOW PROFILE") { return .keyboard }
-        if upper.contains("KERIS II ORIGIN") { return .mouse }
-        return nil
+        return routes.first { r in r.gattName.map { !$0.isEmpty && upper.contains($0) } ?? false }?.device
     }
 
     /// Battery from a 2A19 value. Empty or > 100 = error, 0 = asleep (same rule as the HID replies).

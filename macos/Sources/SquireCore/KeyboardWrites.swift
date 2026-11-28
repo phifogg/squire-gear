@@ -222,7 +222,7 @@ public enum KeyboardLighting {
         // a chunk is echoed as command + effect + chunk index: a late echo of the previous one is not taken for it
         let echo = chunks.count > 1 ? 4 : 2
         return try chunks.map { c in
-            guard Allowlist.isAllowedKeyboardWrite(c) else { throw CommandError.notAllowed(ReplyParser.hex(c)) }
+            guard Allowlist.isAllowedWrite(c, for: .keyboard) else { throw CommandError.notAllowed(ReplyParser.hex(c)) }
             return Command(c, isWrite: true, echoLength: echo)
         }
     }
@@ -253,7 +253,7 @@ extension Command {
     }
 
     private static func keyboardChecked(_ bytes: [UInt8]) throws -> Command {
-        guard Allowlist.isAllowedKeyboardWrite(bytes) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
+        guard Allowlist.isAllowedWrite(bytes, for: .keyboard) else { throw CommandError.notAllowed(ReplyParser.hex(bytes)) }
         return Command(bytes, isWrite: true, echoLength: 2)
     }
 }

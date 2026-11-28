@@ -10,7 +10,9 @@ let package = Package(
     ],
     targets: [
         // UI-free protocol logic: packets, reply parsing, low-battery rules. No IOKit, no AppKit.
-        .target(name: "SquireCore"),
+        // devices.json is a copy of the repo root file (SwiftPM cannot reach ../devices.json); the tests (Swift and
+        // Python) fail when the two differ.
+        .target(name: "SquireCore", resources: [.copy("Resources/devices.json")]),
         // IOKit transport: finds the vendor-defined HID collections and sends the read-only query.
         .target(name: "SquireHID", dependencies: ["SquireCore"],
                 swiftSettings: [.swiftLanguageMode(.v5)]),   // C callbacks + run loop, no concurrency model

@@ -15,6 +15,8 @@ on:
       - .github/release-notes.md
       - macos/scripts/**
       - macos/project.yml
+      - macos/Package.swift
+      - macos/Sources/SquireCore/Resources/**
       - linux/packaging/**
       - linux/build-packages.sh
       - devices.json
