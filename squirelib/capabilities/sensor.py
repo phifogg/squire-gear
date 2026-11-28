@@ -47,10 +47,12 @@ class Sensor(Capability):
 
     def parse(self, s, read: str, p: bytes) -> None:
         if read == READ:
-            s.debounce_index = p[14]
-            s.debounce_ms = 4 + 4 * p[14] if 1 <= p[14] <= 7 else None
-            s.angle_snapping = p[16] == 1
-            angle = u16(p, 18)
+            o = self.params["offsets"]   # [14] debounce, [16] angle snapping, [18..19] angle tuning
+            debounce = p[o["debounce"]]
+            s.debounce_index = debounce
+            s.debounce_ms = 4 + 4 * debounce if 1 <= debounce <= 7 else None
+            s.angle_snapping = p[o["angle_snapping"]] == 1
+            angle = u16(p, o["angle_tuning"])
             s.angle_tuning = angle - 0x10000 if angle & 0x8000 else angle
 
     def snapping_change(self, on: bool) -> Change:

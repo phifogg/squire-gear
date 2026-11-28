@@ -200,6 +200,7 @@ public struct DeviceModels: Codable, Sendable {
         public let save: String
         public let zones: [Zone]
         public let modes: [Mode]
+        public let offsets: [String: Int]
     }
 
     public struct DPI: Codable, Sendable {
@@ -208,6 +209,7 @@ public struct DeviceModels: Codable, Sendable {
         public let min: Int
         public let max: Int
         public let step: Int
+        public let offsets: [String: Int]
     }
 
     public struct Polling: Codable, Sendable {
@@ -218,7 +220,8 @@ public struct DeviceModels: Codable, Sendable {
         public let write: String
         public let readRatesHz: [Int]
         public let rates: [Rate]
-        enum CodingKeys: String, CodingKey { case write, readRatesHz = "read_rates_hz", rates }
+        public let offsets: [String: Int]
+        enum CodingKeys: String, CodingKey { case write, readRatesHz = "read_rates_hz", rates, offsets }
     }
 
     public struct Sensor: Codable, Sendable {
@@ -228,7 +231,8 @@ public struct DeviceModels: Codable, Sendable {
             public let step: Int
         }
         public let angleTuning: Tuning
-        enum CodingKeys: String, CodingKey { case angleTuning = "angle_tuning" }
+        public let offsets: [String: Int]
+        enum CodingKeys: String, CodingKey { case angleTuning = "angle_tuning", offsets }
     }
 
     public struct Surface: Codable, Sendable {
@@ -242,7 +246,8 @@ public struct DeviceModels: Codable, Sendable {
         public let liftoff: [Named]
         public let noSurface: HexByte
         public let surfaces: [Preset]
-        enum CodingKeys: String, CodingKey { case write, read, liftoff, noSurface = "no_surface", surfaces }
+        public let offsets: [String: Int]
+        enum CodingKeys: String, CodingKey { case write, read, liftoff, noSurface = "no_surface", surfaces, offsets }
     }
 
     public struct Power: Codable, Sendable {

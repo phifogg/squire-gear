@@ -1,5 +1,6 @@
 """devices.json: the checker accepts the real file and refuses broken ones; squire.py's tables come from it."""
 import copy
+import dataclasses
 import json
 import tempfile
 import unittest
@@ -85,6 +86,15 @@ class CheckerTests(unittest.TestCase):
         data = self.broken()
         device(data, "keyboard")["capabilities"]["kb_profile"]["profile_base"] = 2
         self.assertProblem(data, "kb_profile.profile_base")
+        data = self.broken()
+        device(data, "mouse")["capabilities"]["dpi"]["offsets"]["dpi_xy"] = 49   # 4 stages x 4 bytes do not fit
+        self.assertProblem(data, "dpi.offsets.dpi_xy")
+        data = self.broken()
+        device(data, "mouse")["capabilities"]["sensor"]["offsets"]["debounce_ms"] = 14
+        self.assertProblem(data, "unknown offset 'debounce_ms'")
+        data = self.broken()
+        del device(data, "mouse")["capabilities"]["surface"]["offsets"]["params"]
+        self.assertProblem(data, "missing 'params'")
 
     def test_unique_pids_ids_and_commands(self):
         data = self.broken()
@@ -202,6 +212,32 @@ class ModelTests(unittest.TestCase):
         wired = squire.MouseSettings("", "wired")
         caps["profile"].parse(wired, "profile", p)
         self.assertEqual((wired.firmware, wired.receiver_firmware), ("07.00.08", None))   # no receiver on the cable
+
+    def test_reply_offsets_come_from_the_model(self):
+        """Every mouse reply parser reads its offsets from devices.json: shift all of them by one in a copy and a
+        reply shifted by one byte parses to the same settings."""
+        captures = json.loads((ROOT / "protocol.json").read_text())["mouse_settings"]["captures"]
+        data = copy.deepcopy(DATA)
+        caps_data = device(data, "mouse")["capabilities"]
+        for name in ("led_zones", "dpi", "polling", "sensor", "surface"):
+            caps_data[name]["offsets"] = {k: v + 1 for k, v in caps_data[name]["offsets"].items()}
+        self.assertEqual(registry.check(data), [])
+        shifted = capabilities.for_device(registry.Registry(data).by_kind("mouse"))
+        checked = 0
+        for capture in captures:
+            read = capture["command"]
+            if read in ("profile", "battery"):
+                continue                                   # the profile capability has its own test
+            p = bytes.fromhex(capture["reply"])[1:]        # payload from the echo on (Omni: report ID first)
+            expected, got = squire.MouseSettings("", "omni"), squire.MouseSettings("", "omni")
+            squire.parse_mouse_settings(expected, read, p)
+            for cap in shifted:
+                if cap.name not in ("battery", "profile", "power"):
+                    cap.parse(got, read, p[:4] + b"\0" + p[4:])
+            self.assertEqual(dataclasses.asdict(got), dataclasses.asdict(expected), read)
+            self.assertNotEqual(dataclasses.asdict(got), dataclasses.asdict(squire.MouseSettings("", "omni")), read)
+            checked += 1
+        self.assertGreaterEqual(checked, 7)
 
     def test_profile_count_limits_the_profile(self):
         p = bytes([0x12, 0x00] + [0] * 8 + [6] + [0] * 53)       # keyboard reports profile 6 of 5

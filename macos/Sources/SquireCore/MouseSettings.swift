@@ -166,6 +166,26 @@ public struct MouseSettings: Equatable, Sendable {
     public static let firmwareOffsetOmni = 14
     public static let firmwareOffsetWired = 4
     public static let receiverFirmwareOffset = 4
+    /// Reply offsets of the other reads (devices.json capabilities.<name>.offsets; DeviceModelTests holds them to the
+    /// file). dpi: 12 00 active stage / stage count, 12 04 00 DPI per stage, 12 04 02 X/Y, 12 04 03 colours.
+    public static let activeStageOffset = 11
+    public static let stageCountOffset = 18
+    public static let dpiOffset = 4
+    public static let dpiXYOffset = 4
+    public static let dpiColorsOffset = 4
+    /// polling + sensor: 12 04 00
+    public static let pollingOffset = 12
+    public static let debounceOffset = 14
+    public static let angleSnappingOffset = 16
+    public static let angleTuningOffset = 18
+    /// led_zones: 12 03 <zone>
+    public static let ledModeOffset = 4
+    public static let ledBrightnessOffset = 5
+    public static let ledColorOffset = 6
+    /// surface: 12 06
+    public static let surfaceOffset = 6
+    public static let liftoffOffset = 7
+    public static let surfaceParamsOffset = 8
 
     /// Stages the DPI button uses (count from 12 00, else all read).
     public var activeDPI: [Int] {
@@ -187,8 +207,9 @@ public struct MouseSettings: Equatable, Sendable {
         switch query {
         case .profile:
             profile = Int(p[Self.profileOffset]) + 1 - Self.profileBase
-            dpiStage = p[11] == 0 ? nil : Int(p[11])
-            dpiStageCount = (1...4).contains(p[18]) ? Int(p[18]) : nil
+            let stage = p[Self.activeStageOffset], count = p[Self.stageCountOffset]
+            dpiStage = stage == 0 ? nil : Int(stage)
+            dpiStageCount = (1...4).contains(count) ? Int(count) : nil
             // Firmware: 3 bytes, build.minor.major (shown major first, like libratbag). On the Keris II Origin the
             // mouse's own version is at [4..6] over the cable; via the Omni [4..6] is the receiver and the mouse
             // moves to [14..16] (same bytes 09 00 01 = 01.00.09 both ways). libratbag's [13..15] is not it here.
@@ -204,27 +225,34 @@ public struct MouseSettings: Equatable, Sendable {
             }
         case .settings:
             // ff ff = not in this reply: separate-X/Y mice (like the Keris) report DPI only in dpi_xy
-            dpi = (0..<4).map { u16(4 + 2 * $0) == 0xFFFF ? nil : dpiValue(u16(4 + 2 * $0)) }
-            pollingRaw = p[12]
-            pollingHz = Self.pollingRatesHz[Int(p[12] & 0x07)]
-            debounceIndex = Int(p[14])
-            debounceMs = (1...7).contains(p[14]) ? 4 + 4 * Int(p[14]) : nil
-            angleSnapping = p[16] == 1
-            let angle = u16(18)
+            let at = Self.dpiOffset
+            dpi = (0..<4).map { u16(at + 2 * $0) == 0xFFFF ? nil : dpiValue(u16(at + 2 * $0)) }
+            let polling = p[Self.pollingOffset], debounce = p[Self.debounceOffset]
+            pollingRaw = polling
+            pollingHz = Self.pollingRatesHz[Int(polling & 0x07)]
+            debounceIndex = Int(debounce)
+            debounceMs = (1...7).contains(debounce) ? 4 + 4 * Int(debounce) : nil
+            angleSnapping = p[Self.angleSnappingOffset] == 1
+            let angle = u16(Self.angleTuningOffset)
             angleTuning = angle & 0x8000 != 0 ? angle - 0x10000 : angle
         case .dpiXY:
-            dpiXY = (0..<4).map { [dpiValue(u16(4 + 4 * $0)), dpiValue(u16(6 + 4 * $0))] }
+            let at = Self.dpiXYOffset
+            dpiXY = (0..<4).map { [dpiValue(u16(at + 4 * $0)), dpiValue(u16(at + 2 + 4 * $0))] }
             if dpi.isEmpty || dpi.contains(where: { $0 == nil }) { dpi = dpiXY.map { $0[0] } }
         case .dpiColors:
-            dpiColors = (0..<4).map { RGB(p[4 + 3 * $0], p[5 + 3 * $0], p[6 + 3 * $0]) }
+            let at = Self.dpiColorsOffset
+            dpiColors = (0..<4).map { RGB(p[at + 3 * $0], p[at + 1 + 3 * $0], p[at + 2 + 3 * $0]) }
         case .ledLogo, .ledWheel, .ledSide:
             let zone: LEDZone = query == .ledLogo ? .logo : query == .ledWheel ? .wheel : .side
-            leds[zone] = LEDState(mode: LEDMode(byte: p[4]), brightness: Int(p[5]), color: RGB(p[6], p[7], p[8]))
+            let c = Self.ledColorOffset
+            leds[zone] = LEDState(mode: LEDMode(byte: p[Self.ledModeOffset]), brightness: Int(p[Self.ledBrightnessOffset]),
+                                  color: RGB(p[c], p[c + 1], p[c + 2]))
         case .liftoff:
             // [6] surface id (ff = none), [7] lift-off, [8..10] surface parameters (Armoury Crate captures)
-            liftoff = p[7] == 0 ? "low" : p[7] == 1 ? "high" : "0x" + ReplyParser.hex([p[7]])
-            surfaceID = p[6]
-            surfaceParams = p[6] == Command.noSurface ? nil : Array(p[8...10])
+            let lift = p[Self.liftoffOffset], surface = p[Self.surfaceOffset], at = Self.surfaceParamsOffset
+            liftoff = lift == 0 ? "low" : lift == 1 ? "high" : "0x" + ReplyParser.hex([lift])
+            surfaceID = surface
+            surfaceParams = surface == Command.noSurface ? nil : Array(p[at..<at + 3])
         }
     }
 }

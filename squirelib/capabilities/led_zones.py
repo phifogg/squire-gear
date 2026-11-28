@@ -22,6 +22,8 @@ class LedZones(Capability):
         self.zones = tuple(z["name"] for z in self.params["zones"])
         self.write_modes = {m["name"]: byte(m["value"]) for m in self.params["modes"] if m["writable"]}
         self.modes = {byte(m["value"]): m["name"] for m in self.params["modes"]}
+        self.zone_reads = {z["read"]: z["name"] for z in self.params["zones"]}   # led_logo -> logo (12 03 <zone>)
+        self.offsets = self.params["offsets"]   # mode, brightness, colour (3 bytes), raw speed
 
     def command(self, zone: str, mode: str, brightness: int, color: str = "#000000") -> bytes:
         """51 28 command for one LED zone. Raises ValueError for anything outside the allowlist."""
@@ -45,10 +47,13 @@ class LedZones(Capability):
                 and command[9:] == b"\0\0\0")
 
     def parse(self, s, read: str, p: bytes) -> None:
-        if read.startswith("led_"):
-            s.leds[read[4:]] = {"mode": self.modes.get(p[4], f"0x{p[4]:02x}"), "brightness": p[5],
-                                "color": "#" + p[6:9].hex()}
-            s.led_speed_raw[read[4:]] = p[12]    # [10..12] direction, random, speed (G-Helper); no effect on the Keris
+        zone = self.zone_reads.get(read)
+        if zone is not None:
+            o = self.offsets
+            mode = p[o["mode"]]
+            s.leds[zone] = {"mode": self.modes.get(mode, f"0x{mode:02x}"), "brightness": p[o["brightness"]],
+                            "color": "#" + p[o["color"]:o["color"] + 3].hex()}
+            s.led_speed_raw[zone] = p[o["speed"]]   # [10..12] direction, random, speed (G-Helper); no effect on the Keris
 
     @staticmethod
     def matches(wanted: dict, actual: Optional[dict]) -> bool:

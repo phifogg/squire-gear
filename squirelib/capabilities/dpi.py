@@ -63,18 +63,23 @@ class Dpi(Capability):
         return False
 
     def parse(self, s, read: str, p: bytes) -> None:
+        o, n = self.params["offsets"], self.stages
         if read == "profile":
-            s.dpi_stage = p[11] if p[11] else None
-            s.dpi_stage_count = p[18] if 1 <= p[18] <= 4 else None
+            stage, count = p[o["active_stage"]], p[o["stage_count"]]   # [11], [18]
+            s.dpi_stage = stage if stage else None
+            s.dpi_stage_count = count if 1 <= count <= n else None
         elif read == "settings":
             # ff ff = not in this reply: mice with separate X/Y DPI (like the Keris) report DPI only in dpi_xy
-            s.dpi = [None if u16(p, 4 + 2 * i) == 0xFFFF else dpi_value(u16(p, 4 + 2 * i)) for i in range(4)]
+            at = o["dpi"]
+            s.dpi = [None if u16(p, at + 2 * i) == 0xFFFF else dpi_value(u16(p, at + 2 * i)) for i in range(n)]
         elif read == "dpi_xy":
-            s.dpi_xy = [[dpi_value(u16(p, 4 + 4 * i)), dpi_value(u16(p, 6 + 4 * i))] for i in range(4)]
+            at = o["dpi_xy"]
+            s.dpi_xy = [[dpi_value(u16(p, at + 4 * i)), dpi_value(u16(p, at + 2 + 4 * i))] for i in range(n)]
             if not s.dpi or None in s.dpi:
                 s.dpi = [x for x, _ in s.dpi_xy]
         elif read == "dpi_colors":
-            s.dpi_colors = ["#" + p[4 + 3 * i:7 + 3 * i].hex() for i in range(4)]
+            at = o["dpi_colors"]
+            s.dpi_colors = ["#" + p[at + 3 * i:at + 3 + 3 * i].hex() for i in range(n)]
 
     def change(self, stage: int, dpi: int, color: Optional[str] = None) -> Change:
         """One DPI stage (1-based), X and Y alike. The stage colour travels in the same command: without `color` the

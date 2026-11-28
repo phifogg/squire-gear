@@ -27,8 +27,9 @@ class Polling(Capability):
 
     def parse(self, s, read: str, p: bytes) -> None:
         if read == READ:
-            s.polling_raw = p[12]
-            s.polling_hz = self.read_rates_hz[p[12] & 0x07]
+            raw = p[self.params["offsets"]["polling"]]   # [12]
+            s.polling_raw = raw
+            s.polling_hz = self.read_rates_hz[raw & 0x07]
 
     def change(self, hz: int) -> Change:
         return Change(self.command(hz), (READ,), lambda s: {"polling_hz": s.polling_hz},

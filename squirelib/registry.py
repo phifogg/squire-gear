@@ -143,7 +143,30 @@ def _check_range(c: _Checker, obj, key: str, w: str, low: int, high: int) -> Opt
     return r
 
 
+# Reply offsets (indices relative to the echoed command) a capability's parser reads, and how many bytes each covers.
+OFFSETS = {
+    "led_zones": {"mode": 1, "brightness": 1, "color": 3, "speed": 1},
+    "dpi": {"active_stage": 1, "stage_count": 1, "dpi": 8, "dpi_xy": 16, "dpi_colors": 12},   # 4 stages
+    "polling": {"polling": 1},
+    "sensor": {"debounce": 1, "angle_snapping": 1, "angle_tuning": 2},
+    "surface": {"surface": 1, "liftoff": 1, "params": 3},
+}
+
+
+def _check_offsets(c, cap, w, name):
+    """cap["offsets"] has exactly the capability's names, each an index whose bytes fit in a 64-byte reply."""
+    offsets = c.field(cap, "offsets", w, dict)
+    if offsets is None:
+        return
+    wanted = OFFSETS[name]
+    for key in sorted(set(offsets) - set(wanted)):
+        c.fail(f"{w}.offsets", f"unknown offset {key!r}")
+    for key, width in wanted.items():
+        c.field(offsets, key, f"{w}.offsets", int, low=0, high=64 - width)
+
+
 def _check_led_zones(c, cap, w, commands):
+    _check_offsets(c, cap, w, "led_zones")
     c.command_ref(cap, "write", w, commands, write=True)
     c.command_ref(cap, "save", w, commands, write=True)
     zones = c.items(cap, "zones", w)
@@ -157,6 +180,7 @@ def _check_led_zones(c, cap, w, commands):
 
 
 def _check_dpi(c, cap, w, commands):
+    _check_offsets(c, cap, w, "dpi")
     c.command_ref(cap, "write", w, commands, write=True)
     c.field(cap, "stages", w, int, low=1, high=8)
     lo = c.field(cap, "min", w, int, low=1, high=100000)
@@ -167,6 +191,7 @@ def _check_dpi(c, cap, w, commands):
 
 
 def _check_polling(c, cap, w, commands):
+    _check_offsets(c, cap, w, "polling")
     c.command_ref(cap, "write", w, commands, write=True)
     rates = c.items(cap, "read_rates_hz", w)
     if len(rates) != 8:
@@ -177,12 +202,14 @@ def _check_polling(c, cap, w, commands):
 
 
 def _check_sensor(c, cap, w, commands):
+    _check_offsets(c, cap, w, "sensor")
     tuning = _check_range(c, cap, "angle_tuning", w, -90, 90)
     if tuning is not None:
         c.field(tuning, "step", f"{w}.angle_tuning", int, low=1, high=90)
 
 
 def _check_surface(c, cap, w, commands):
+    _check_offsets(c, cap, w, "surface")
     c.command_ref(cap, "write", w, commands, write=True)
     c.command_ref(cap, "read", w, commands, write=False)
     c.named_values(cap, "liftoff", w)

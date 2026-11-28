@@ -21,6 +21,7 @@ class Surface(Capability):
         self.read_name = self.params["read"]                               # liftoff (12 06)
         self.no_surface = byte(self.params["no_surface"])                  # "Default (No calibration)" in AC
         self.liftoff_codes = {x["name"]: byte(x["value"]) for x in self.params["liftoff"]}
+        self.liftoff_names = {code: name for name, code in self.liftoff_codes.items()}
         # Armoury Crate's presets (id -> name); most share the parameters 1c 34 16. Ids 02..06 and 09 never appeared.
         self.surfaces = {byte(x["id"]): x["name"] for x in self.params["surfaces"]}
         # Parameters Armoury Crate writes with each preset (captured 2026-11-12); None for "no surface".
@@ -64,9 +65,11 @@ class Surface(Capability):
     def parse(self, s, read: str, p: bytes) -> None:
         if read == self.read_name:
             # [6] surface id (ff = none), [7] lift-off, [8..10] surface parameters (Armoury Crate captures 2026-11-12)
-            s.liftoff = {0: "low", 1: "high"}.get(p[7], f"0x{p[7]:02x}")
-            s.surface_id = p[6]
-            s.surface_params = None if p[6] == self.no_surface else p[8:11].hex(" ")
+            o = self.params["offsets"]
+            surface, liftoff = p[o["surface"]], p[o["liftoff"]]
+            s.liftoff = self.liftoff_names.get(liftoff, f"0x{liftoff:02x}")
+            s.surface_id = surface
+            s.surface_params = None if surface == self.no_surface else p[o["params"]:o["params"] + 3].hex(" ")
 
     @staticmethod
     def _extract(s):

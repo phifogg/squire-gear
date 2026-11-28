@@ -111,16 +111,24 @@ writes with write=True, the device's report ID), exchange, query, read_batteries
 keyboard (was two copies), write_verified. squire.py keeps the old names as bound methods, the settings dataclasses +
 their parse dispatch, Bluetooth, key presets, CLI. Checked: 258 tests, snapshot unchanged, device runs incl. --debug
 traces (same packets, same order) and seven --dry-runs identical to main.
-Step 2 (same day, not committed yet): the profile read 12 00 is data-driven for both devices. devices.json: mouse
+Step 2 (same day, 21455a5, CI green incl. swift test): the profile read 12 00 is data-driven for both devices. devices.json: mouse
 capability `profile` (profile 10, profile_base 0, firmware {omni 14, wired 4}, receiver_firmware 4), kb_profile got
 profile_base 1, firmware {omni 11, wired 4}, receiver_firmware 4 (checker: _check_profile, every key required). Python:
 capabilities/profile.py (Profile; KbProfile subclasses it + the effect); parse_mouse_settings has no special case
 left. Swift (written on Linux, CI compiles): DeviceModels.Profile / FirmwareOffsets, KBProfile got the same fields;
 MouseSettings / KeyboardSettings parse with named offsets (profileOffset, firmwareOffsetOmni, ...) that
 DeviceModelTests holds to the file. Checked: 260 tests, snapshot + device runs identical to main.
-Still hard-coded (Python + Swift): the other reply offsets (12 04 00 DPI / polling / debounce / angles, 12 04 02 / 03,
-12 03 LED, 12 06 surface, DPI active stage [11] / count [18] in 12 00), packet layouts in the builders. Next: those
-offsets the same way (optional), then the Swift capability split (SquireCore types per capability).
+Step 3 (same day, not committed yet): every mouse reply offset is in devices.json: `offsets` in led_zones (mode 4,
+brightness 5, color 6, speed 12), dpi (active_stage 11, stage_count 18 in 12 00; dpi 4, dpi_xy 4, dpi_colors 4),
+polling (12), sensor (debounce 14, angle_snapping 16, angle_tuning 18), surface (surface 6, liftoff 7, params 8).
+Checker: registry.OFFSETS lists the names + byte widths per capability (exactly those names; multi-byte fields must
+fit in 64 bytes). Python parsers read them (LED zones map their read name via zones[].read; DPI loops over `stages`);
+Swift MouseSettings has one named constant per offset, DeviceModels decodes `offsets: [String: Int]`, DeviceModelTests
+compares them (the LED speed byte is not parsed in Swift). Test: all offsets +1 in a copy parse a reply shifted by one
+byte to the same settings (every protocol.json mouse_settings capture). Checked: 261 tests, snapshot unchanged, device
+runs identical to main. Still hard-coded: packet layouts in the builders and byte checks (they follow the command
+names in devices.json, not offsets), keyboard battery-reply guards (len 14 / mouse 20). Next: the Swift capability
+split (SquireCore types per capability, like squirelib/capabilities), then stage 4 (windows on editors).
 Stage 2 state (Python, 2026-11-27): transport / route / protocol split into squirelib (see Layout).
 protocol.exchange() writes only what its `build` callable returns; Sessions.exchange() passes Sessions.packet() (the
 allowlist) since stage 3. Target got `connection` + `interface` (no more

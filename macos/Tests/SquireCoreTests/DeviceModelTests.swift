@@ -129,6 +129,20 @@ private func named(_ table: [(String, UInt8)]) -> [String] { table.map { "\($0.0
         #expect(Dictionary(uniqueKeysWithValues: surface.liftoff.map { ($0.name, $0.value.value) }) == Command.liftoffCodes)
         #expect(surface.noSurface.value == Command.noSurface)
         #expect(Dictionary(uniqueKeysWithValues: surface.surfaces.map { ($0.id.value, $0.name) }) == Command.surfaces)
+        #expect(surface.offsets == ["surface": MouseSettings.surfaceOffset, "liftoff": MouseSettings.liftoffOffset,
+                                    "params": MouseSettings.surfaceParamsOffset])
+        #expect(dpi.offsets == ["active_stage": MouseSettings.activeStageOffset, "stage_count": MouseSettings.stageCountOffset,
+                                "dpi": MouseSettings.dpiOffset, "dpi_xy": MouseSettings.dpiXYOffset,
+                                "dpi_colors": MouseSettings.dpiColorsOffset])
+        #expect(polling.offsets == ["polling": MouseSettings.pollingOffset])
+        let sensor = try #require(caps.sensor)
+        #expect(sensor.offsets == ["debounce": MouseSettings.debounceOffset,
+                                   "angle_snapping": MouseSettings.angleSnappingOffset,
+                                   "angle_tuning": MouseSettings.angleTuningOffset])
+        // Swift does not keep the LED speed byte (no effect on the Keris); the other three must match
+        #expect(leds.offsets["mode"] == MouseSettings.ledModeOffset)
+        #expect(leds.offsets["brightness"] == MouseSettings.ledBrightnessOffset)
+        #expect(leds.offsets["color"] == MouseSettings.ledColorOffset)
         var params: [UInt8: [UInt8]?] = [surface.noSurface.value: nil]
         for s in surface.surfaces { params[s.id.value] = s.params.bytes }
         #expect(params == Command.surfaceParams)
